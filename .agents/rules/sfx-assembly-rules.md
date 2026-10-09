@@ -40,7 +40,7 @@ Rules and technical constraints when writing, parsing, analyzing, or compiling S
 ## 3. FX3 Hardware Constraints
 
 1. **`MERGE` instruction not available**:
-   - SuperFX 3 (FX3 / RP2350B coprocessor) does not implement `ALT2 + MERGE`.
+   - SuperFX 3 (FX3 / RP2350B coprocessor) does not implement `MERGE`.
    - Workaround: Use byte manipulations (`hib`, `lob`, `swap`, `or`). Refer to `condensed_lmult` in `X-GSU/gsu_maths/gsu_vector.i`.
 2. **8 NOP Pipeline Settling**:
    - SuperFX Work RAM writes are pipelined asynchronously.
