@@ -49,7 +49,7 @@ This document specifies invariants and rules for AI coding agents and human deve
 ## 3. SuperFX / X-GSU Assembly Rules
 
 1. **Target Hardware**:
-   - Target is **SuperFX 3 (FX3)** coprocessor running at 21.47 MHz (or RP2350B emulation in Mesen CE).
+   - Target is **SuperFX 3 (FX3)** coprocessor running at nearly 50 MHz on hardware using the FX Pak Pro or about 80 mhz when emulated by MesenCE.
 2. **Critical Hardware Constraints**:
    - **No `MERGE` Instruction**: In FX3, `MERGE` is not implemented in hardware. Always use bit-manipulation workarounds (`hib`, `lob`, `swap`, `or`).
    - **8 NOP Pipeline Settling**: SuperFX Work RAM writes are pipelined asynchronously. Insert **8 NOPs** before halting (`stop`) or testing memory state in emulator Lua scripts.
