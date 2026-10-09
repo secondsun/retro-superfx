@@ -1,0 +1,1 @@
+../../../tools/update-submodules.sh

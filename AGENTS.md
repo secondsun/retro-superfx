@@ -135,6 +135,16 @@ Executes automated tests in `snes-sfx-demo/X-GSU/tests/` using Mesen CE in headl
 ./tools/run-sfx-test.sh vector3_add 10
 ```
 
+### 5. Update & Push Submodules
+Stage modified submodules, generate descriptive commit messages, and push to the active branch on `origin`:
+```bash
+./tools/update-submodules.sh
+# To preview actions without mutating:
+./tools/update-submodules.sh --dry-run
+# To commit each submodule individually:
+./tools/update-submodules.sh --split
+```
+
 ---
 
 ## 5. Future Roadmap & Pipeline Integration
@@ -155,4 +165,5 @@ Workspace customizations are maintained in `.agents/`:
   - [`build-workspace`](.agents/skills/build-workspace/SKILL.md): Build, test, and synchronize local Maven artifacts.
   - [`sfx-macro-language`](.agents/skills/sfx-macro-language/SKILL.md): Reference and syntax for the X-GSU ca65 macro DSL.
   - [`sfx-test-runner`](.agents/skills/sfx-test-runner/SKILL.md): Headless Mesen CE test execution and debugging.
+  - [`update-submodules`](.agents/skills/update-submodules/SKILL.md): Stage, commit, and push updated Git submodules to origin.
 

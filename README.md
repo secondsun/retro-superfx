@@ -200,4 +200,5 @@ This root repository includes agent configuration and automation guides:
   - `build-workspace`: Multi-repo build and install procedures.
   - `sfx-macro-language`: X-GSU ca65 macro language reference (`function`, `call`, `stack`, `control`).
   - `sfx-test-runner`: Automated Mesen CE test execution runbook.
+  - `update-submodules`: Stage, commit, and push updated Git submodules to origin.
 
