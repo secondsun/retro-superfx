@@ -1,0 +1,20 @@
+[submodule "java-language-server"]
+	path = java-language-server
+	url = git@github.com:secondsun/java-language-server
+	branch = master
+[submodule "retro-common"]
+	path = retro-common
+	url = git@github.com:secondsun/retro-common
+	branch = prototype
+[submodule "sfx-optimizer"]
+	path = sfx-optimizer
+	url = git@github.com:secondsun/sfx-optimizer
+	branch = prototype
+[submodule "retro-lsp"]
+	path = retro-lsp
+	url = git@github.com:secondsun/retro-lsp
+	branch = prototype
+[submodule "snes-sfx-demo"]
+	path = snes-sfx-demo
+	url = git@github.com:secondsun/snes-sfx-demo
+	branch = prototype
