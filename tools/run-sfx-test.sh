@@ -25,6 +25,10 @@ fi
 MESEN_BIN=""
 if [ -x "/home/summers/Programs/Mesen" ]; then
     MESEN_BIN="/home/summers/Programs/Mesen"
+elif [ -x "${ROOT_DIR}/../Mesen2/bin/osx-arm64/Release/osx-arm64/publish/Mesen" ]; then
+    MESEN_BIN="${ROOT_DIR}/../Mesen2/bin/osx-arm64/Release/osx-arm64/publish/Mesen"
+elif [ -x "/Applications/Mesen.app/Contents/MacOS/Mesen" ]; then
+    MESEN_BIN="/Applications/Mesen.app/Contents/MacOS/Mesen"
 elif command -v Mesen >/dev/null 2>&1; then
     MESEN_BIN="$(command -v Mesen)"
 elif command -v mesen >/dev/null 2>&1; then

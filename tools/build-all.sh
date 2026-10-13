@@ -40,7 +40,7 @@ if [ "$DO_INSTALL" = true ]; then
     MAVEN_GOAL="install"
 fi
 
-EXTRA_FLAGS="-DskipGpg=true"
+EXTRA_FLAGS="-DskipGpg=true -Dgpg.skip=true"
 if [ "$SKIP_TESTS" = true ]; then
     EXTRA_FLAGS="${EXTRA_FLAGS} -DskipTests=true"
 fi

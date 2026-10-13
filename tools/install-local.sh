@@ -15,7 +15,7 @@ echo ""
 echo ">>> [1/3] Building & installing java-language-server..."
 (
     cd "${ROOT_DIR}/java-language-server"
-    ./mvnw clean install -DskipGpg=true -DskipTests=false
+    ./mvnw clean install -DskipGpg=true -Dgpg.skip=true -DskipTests=false
 )
 
 # 2. retro-common (dev.secondsun:retro-common)
@@ -23,7 +23,7 @@ echo ""
 echo ">>> [2/3] Building & installing retro-common..."
 (
     cd "${ROOT_DIR}/retro-common"
-    ./mvnw clean install -DskipGpg=true -DskipTests=false
+    ./mvnw clean install -DskipGpg=true -Dgpg.skip=true -DskipTests=false
 )
 
 # 3. sfx-optimizer (dev.secondsun:sfx-optimizer)
@@ -31,7 +31,7 @@ echo ""
 echo ">>> [3/3] Building & installing sfx-optimizer..."
 (
     cd "${ROOT_DIR}/sfx-optimizer"
-    ./mvnw clean install -DskipGpg=true -DskipTests=false
+    ./mvnw clean install -DskipGpg=true -Dgpg.skip=true -DskipTests=false
 )
 
 echo ""
