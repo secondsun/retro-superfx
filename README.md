@@ -171,6 +171,37 @@ Then open your browser to `http://localhost:8080`.
 
 ---
 
+### Running the Mesen MCP Server
+
+For AI agent integration and automated emulation/math verification:
+
+```bash
+cd tools/mesen-mcp
+./run-server.sh
+```
+Exposes:
+- `run_sfx_test`: Runs regression tests in `snes-sfx-demo/X-GSU/tests/`.
+- `assert_sfx_math`: Injects inputs into GSURAM/registers and validates math results within epsilon.
+- `capture_sfx_render`: Headlessly captures framebuffers to PNG with bounding boxes and hash metrics.
+
+---
+
+### Running the Retro-LSP MCP Server
+
+To expose SuperFX static analysis tools over stdio for agents:
+
+```bash
+./retro-lsp/dist/linux/bin/launcher --mcp
+```
+Exposes:
+- `sfx_audit_invariants`: Audits 8-NOP pipeline settling before `stop`, word-aligned access, lack of hardware `MERGE`, and modal lifetimes.
+- `sfx_expand_macro`: Expands X-GSU macros (`function`, `for`, `if_lt`, etc.) to ca65 SuperFX instructions.
+- `sfx_lookup_symbol`: Resolves symbol definitions, scopes, and docs.
+- `sfx_analyze_registers`: Live-range intervals, register pressure, and register coloring suggestions.
+
+
+---
+
 ## Submodule Management
 
 - **Fetch and rebase submodules on latest GitHub commits**:
