@@ -68,3 +68,13 @@ This document specifies invariants and rules for AI coding agents and human deve
    - X-GSU defines high-level macros (`function`, `call`, `return`, `stack`, `control`).
    - When writing GSU routines, adhere to the macro conventions documented in `AGENTS.md` and `.agents/skills/sfx-macro-language`.
 
+---
+
+## 5. Documentation & README Maintenance
+
+1. **Keep READMEs Synchronized**:
+   - Whenever adding new features, tools, CLI flags, settings, or making significant architectural changes to any project, always check the affected project's `README.md` (and the umbrella `README.md` if cross-cutting).
+   - Update the documentation concisely to describe new functionality, commands, configuration options, and testing instructions.
+   - Do not consider a feature or significant change complete until its documentation is updated.
+
+
