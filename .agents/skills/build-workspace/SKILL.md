@@ -52,13 +52,13 @@ When modifying `retro-common` or `sfx-optimizer`, install updated artifacts into
 
 ## 3. Individual Project Commands
 
-| Project | Build & Test | Local Install | Spotless Format Check |
-| :--- | :--- | :--- | :--- |
-| **`java-language-server`** | `./mvnw clean test` | `./mvnw clean install -DskipGpg=true` | N/A |
-| **`retro-common`** | `./mvnw clean test` | `./mvnw clean install -DskipGpg=true` | `./mvnw spotless:check` |
-| **`sfx-optimizer`** | `./mvnw clean test` | `./mvnw clean install -DskipGpg=true` | `./mvnw spotless:check` |
-| **`retro-lsp`** | `./mvnw clean test` | N/A (End consumer) | `./mvnw spotless:check` |
-| **`snes-sfx-demo`** | `make -C X-GSU/tests/<name> clean all` | N/A | N/A |
+| Project | Build & Test | Local Install | Spotless Format Check | Javadoc Check |
+| :--- | :--- | :--- | :--- | :--- |
+| **`java-language-server`** | `./mvnw clean test` | `./mvnw clean install -DskipGpg=true` | N/A | `./mvnw javadoc:javadoc` |
+| **`retro-common`** | `./mvnw clean test` | `./mvnw clean install -DskipGpg=true` | `./mvnw spotless:check` | `./mvnw javadoc:javadoc` |
+| **`sfx-optimizer`** | `./mvnw clean test` | `./mvnw clean install -DskipGpg=true` | `./mvnw spotless:check` | `./mvnw javadoc:javadoc` |
+| **`retro-lsp`** | `./mvnw clean test` | N/A (End consumer) | `./mvnw spotless:check` | `./mvnw javadoc:javadoc` |
+| **`snes-sfx-demo`** | `make -C X-GSU/tests/<name> clean all` | N/A | N/A | N/A |
 
 ---
 

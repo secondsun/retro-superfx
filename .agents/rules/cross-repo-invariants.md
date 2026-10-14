@@ -44,6 +44,9 @@ This document specifies invariants and rules for AI coding agents and human deve
    - **Always run Spotless (`./mvnw spotless:apply`) after modifying any Java or Kotlin code** across any subproject (`java-language-server`, `retro-common`, `sfx-optimizer`, `retro-lsp`).
    - Java code enforces Google Java Format; Kotlin enforces KtLint via Spotless.
    - Verify compliance with `./mvnw spotless:check` prior to committing. Never push unformatted JVM code.
+5. **Javadoc Validation (No Javadoc Errors)**:
+   - **Before any work is considered complete, the code must not produce Javadoc errors.**
+   - Verify Javadoc generation across modified JVM subprojects using `./mvnw javadoc:javadoc` (or `./mvnw compile javadoc:jar`). Ensure there are zero fatal Javadoc compilation errors or broken references.
 
 
 ---
