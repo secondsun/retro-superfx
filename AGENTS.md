@@ -178,4 +178,21 @@ Workspace customizations are maintained in `.agents/`:
   - [`sfx-test-runner`](.agents/skills/sfx-test-runner/SKILL.md): Headless Mesen CE test execution and debugging.
   - [`update-submodules`](.agents/skills/update-submodules/SKILL.md): Stage, commit, and push updated Git submodules to origin.
 
+---
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specs live in GitHub Issues using the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Canonical triage roles mapped to standard labels (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Multi-context layout with a root `GLOSSARY-MAP.md` pointing to per-subproject domain glossaries and ADRs. See `docs/agents/domain.md`.
+
+
 
