@@ -40,9 +40,11 @@ This document specifies invariants and rules for AI coding agents and human deve
      ./tools/install-local.sh
      ```
    - Downstream consumers (`sfx-optimizer` and `retro-lsp`) will otherwise fail to resolve modified API symbols.
-4. **Code Formatting**:
-   - Java code enforces Google Java Format via Spotless (`./mvnw spotless:check` / `./mvnw spotless:apply`).
-   - Run formatting checks before committing changes.
+4. **Code Formatting (Mandatory Spotless Rule)**:
+   - **Always run Spotless (`./mvnw spotless:apply`) after modifying any Java or Kotlin code** across any subproject (`java-language-server`, `retro-common`, `sfx-optimizer`, `retro-lsp`).
+   - Java code enforces Google Java Format; Kotlin enforces KtLint via Spotless.
+   - Verify compliance with `./mvnw spotless:check` prior to committing. Never push unformatted JVM code.
+
 
 ---
 
