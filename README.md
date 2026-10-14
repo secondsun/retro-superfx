@@ -173,18 +173,20 @@ Then open your browser to `http://localhost:8080`.
 
 ## Submodule Management
 
-- **Pull latest commits across all submodules**:
+- **Fetch and rebase submodules on latest GitHub commits**:
   ```bash
-  git submodule update --remote --merge
+  ./tools/rebase-submodules.sh
+  # Or with an alternate branch / preview:
+  ./tools/rebase-submodules.sh --branch <branch>
+  ./tools/rebase-submodules.sh --dry-run
+  ```
+- **Stage and commit updated submodule pointers to origin**:
+  ```bash
+  ./tools/update-submodules.sh
   ```
 - **Run a Git command across all submodules**:
   ```bash
   git submodule foreach 'git status -s'
-  ```
-- **Record updated submodule pointers in the root repository**:
-  ```bash
-  git add <submodule-dir>
-  git commit -m "chore: bump <submodule-dir> commit pointer"
   ```
 
 ---
@@ -198,6 +200,7 @@ This root repository includes agent configuration and automation guides:
   - `sfx-assembly-rules.md`: Hardware constraints for the SuperFX 3 (FX3) coprocessor.
 - **[`.agents/skills/`](./.agents/skills/)**:
   - `build-workspace`: Multi-repo build and install procedures.
+  - `rebase-submodules`: Fetch and rebase Git submodules from GitHub.
   - `sfx-macro-language`: X-GSU ca65 macro language reference (`function`, `call`, `stack`, `control`).
   - `sfx-test-runner`: Automated Mesen CE test execution runbook.
   - `update-submodules`: Stage, commit, and push updated Git submodules to origin.

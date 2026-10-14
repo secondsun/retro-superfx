@@ -145,6 +145,16 @@ Stage modified submodules, generate descriptive commit messages, and push to the
 ./tools/update-submodules.sh --split
 ```
 
+### 6. Fetch & Rebase Submodules
+Fetch latest upstream commits from GitHub and rebase submodules on target branch (default: `prototype`, remote: `origin`):
+```bash
+./tools/rebase-submodules.sh
+# To preview actions without mutating:
+./tools/rebase-submodules.sh --dry-run
+# To rebase an alternate branch across submodules:
+./tools/rebase-submodules.sh --branch main
+```
+
 ---
 
 ## 5. Future Roadmap & Pipeline Integration
@@ -163,6 +173,7 @@ Workspace customizations are maintained in `.agents/`:
   - [`.agents/rules/sfx-assembly-rules.md`](.agents/rules/sfx-assembly-rules.md): SuperFX architecture and FX3 constraints.
 - **Skills**:
   - [`build-workspace`](.agents/skills/build-workspace/SKILL.md): Build, test, and synchronize local Maven artifacts.
+  - [`rebase-submodules`](.agents/skills/rebase-submodules/SKILL.md): Fetch and rebase Git submodules from GitHub.
   - [`sfx-macro-language`](.agents/skills/sfx-macro-language/SKILL.md): Reference and syntax for the X-GSU ca65 macro DSL.
   - [`sfx-test-runner`](.agents/skills/sfx-test-runner/SKILL.md): Headless Mesen CE test execution and debugging.
   - [`update-submodules`](.agents/skills/update-submodules/SKILL.md): Stage, commit, and push updated Git submodules to origin.
