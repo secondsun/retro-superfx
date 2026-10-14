@@ -8,29 +8,7 @@ from mesen_mcp.dbg_parser import parse_dbg_file
 from mesen_mcp.mesen import find_mesen
 
 
-def get_repo_root() -> Path:
-    """Find the root directory of the retro-superfx repository."""
-    # mesen_mcp is in tools/mesen-mcp/mesen_mcp -> 3 levels up is root
-    return Path(__file__).resolve().parents[3]
-
-
-def resolve_test_dir(test_name_or_path: str) -> Path:
-    """Resolve test directory by path or name within snes-sfx-demo."""
-    root_dir = get_repo_root()
-    p = Path(test_name_or_path)
-
-    if p.is_dir():
-        return p.resolve()
-
-    cand1 = root_dir / "snes-sfx-demo" / "X-GSU" / "tests" / test_name_or_path
-    if cand1.is_dir():
-        return cand1.resolve()
-
-    cand2 = root_dir / "snes-sfx-demo" / "tests" / test_name_or_path
-    if cand2.is_dir():
-        return cand2.resolve()
-
-    raise FileNotFoundError(f"Test directory not found: '{test_name_or_path}'")
+from mesen_mcp.utils import get_repo_root, resolve_test_dir
 
 
 def _sync_lua_labels(sym_map: Dict[str, int], lua_path: Path) -> None:
@@ -216,3 +194,8 @@ def run_sfx_test(
             "output": (stdout + "\n" + stderr).strip(),
             "symbols": symbols_map,
         }
+
+
+# Re-export key verification and capture APIs
+from mesen_mcp.math_verifier import assert_sfx_math
+from mesen_mcp.render_capture import capture_sfx_render
