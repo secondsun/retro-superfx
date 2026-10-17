@@ -20,6 +20,7 @@ node_modules/
 *.dbg
 *.cpu.sym
 *.log
+nohup.out
 
 # OS files
 .DS_Store

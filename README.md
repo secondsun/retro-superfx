@@ -191,8 +191,12 @@ Exposes:
 To expose SuperFX static analysis tools over stdio for agents:
 
 ```bash
-./retro-lsp/dist/linux/bin/launcher --mcp
+./retro-lsp/dist/linux/bin/launcher --mcp --workspace /path/to/project [--log]
 ```
+
+- **`--workspace <path>` (Required)**: Establishes the project root and workspace sandbox boundary. All file URIs passed to tools must reside within this directory or its subdirectories. Files are indexed lazily on-demand and kept synchronized with disk modifications.
+- **`--log` (Optional)**: Enables file logging using standard Java logging (`java.util.logging`). Outputs plain text logs (INFO level and higher) to a temporary file in `java.io.tmpdir` (`retro-lsp-msp.<date>.<time>.log`).
+
 Exposes:
 - `sfx_audit_invariants`: Audits 8-NOP pipeline settling before `stop`, word-aligned access, lack of hardware `MERGE`, and modal lifetimes.
 - `sfx_expand_macro`: Expands X-GSU macros (`function`, `for`, `if_lt`, etc.) to ca65 SuperFX instructions.
