@@ -82,4 +82,14 @@ This document specifies invariants and rules for AI coding agents and human deve
    - Update the documentation concisely to describe new functionality, commands, configuration options, and testing instructions.
    - Do not consider a feature or significant change complete until its documentation is updated.
 
+---
+
+## 6. MCP Server & Tool Lifecycle Invariant
+
+Whenever an MCP server is created or modified, or a new tool is added to an existing MCP server (e.g. `retro-superfx_mesen`, `retro-superfx_lsp`):
+1. **Audit Custom Skills**: Audit all related custom skills in `.agents/skills/`, subprojects, and plugin directories (`.agents/plugins/retro-superfx/skills/`). Ensure the new MCP tool is explicitly documented with its required JSON argument schema and designated as the primary execution path over raw shell commands.
+2. **Update Agent Guides & Rules**: Update `AGENTS.md` and relevant rule documents to specify the tool's existence, purpose, and invocation semantics.
+3. **Verify Tool Schemas & Registration**: Ensure the tool's JSON schema is registered under `~/.gemini/antigravity/mcp/<server_name>/` and that the server is configured in `mcp_config.json`.
+4. **End-to-End Verification**: Perform a test call of the new MCP tool to verify schema conformance, stdio/socket transport, and execution before considering the task complete.
+
 
