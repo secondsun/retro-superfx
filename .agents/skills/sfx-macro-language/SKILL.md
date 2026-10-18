@@ -118,3 +118,62 @@ nop
           [ca65 / ld65] ──> [ROM .sfc]
      ```
 
+---
+
+## 4. MCP Server Tools (`retro-superfx_lsp`)
+
+Agents should actively utilize the `retro-superfx_lsp` MCP server tools via `call_mcp_tool` when inspecting, verifying, or refactoring SuperFX macros and routines:
+
+### A. Audit Hardware Invariants (`sfx_audit_invariants`)
+Statically audits SuperFX code or files for hardware constraints (8-NOP pipeline settling before `stop`, 16-bit word alignment on `ldw`/`stw`, flagging unsupported hardware `MERGE` instructions on FX3, and modal instruction lifetime scope):
+
+```json
+{
+  "ServerName": "retro-superfx_lsp",
+  "ToolName": "sfx_audit_invariants",
+  "Arguments": {
+    "code": "merge\nstop\n"
+  }
+}
+```
+
+### B. Expand Macros (`sfx_expand_macro`)
+Expands X-GSU macro DSL structures (`function`, `for`, `if_lt`, stack macros) to concrete assembly:
+
+```json
+{
+  "ServerName": "retro-superfx_lsp",
+  "ToolName": "sfx_expand_macro",
+  "Arguments": {
+    "code": "for 4\nnop\nendfor\n"
+  }
+}
+```
+
+### C. Analyze Register Allocation (`sfx_analyze_registers`)
+Computes live-range intervals, interference graphs, and register allocation pressure:
+
+```json
+{
+  "ServerName": "retro-superfx_lsp",
+  "ToolName": "sfx_analyze_registers",
+  "Arguments": {
+    "code": "register a, b\niwt a, #10\niwt b, #20\nadd a\n"
+  }
+}
+```
+
+### D. Look Up Symbols (`sfx_lookup_symbol`)
+Resolves definitions, documentation, and scopes for symbols across the workspace index:
+
+```json
+{
+  "ServerName": "retro-superfx_lsp",
+  "ToolName": "sfx_lookup_symbol",
+  "Arguments": {
+    "symbol": "gsu_stack_push",
+    "uri": "file:///path/to/source.sgs"
+  }
+}
+```
+
