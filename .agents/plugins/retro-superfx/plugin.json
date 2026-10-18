@@ -1,0 +1,12 @@
+{
+  "name": "retro-superfx",
+  "displayName": "Retro SuperFX Development Kit",
+  "version": "1.0.0",
+  "description": "SuperFX RISC coprocessor development suite: ca65 macro DSL, static invariant auditing, register allocation analysis, and headless Mesen emulation tools.",
+  "suggestedPrompts": [
+    "Run the vector3_add unit test headlessly in Mesen",
+    "Audit SuperFX hardware invariants in my assembly routine",
+    "Analyze SuperFX register allocation and live ranges"
+  ]
+}
+
