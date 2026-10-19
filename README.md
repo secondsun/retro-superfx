@@ -198,7 +198,7 @@ To expose SuperFX static analysis tools over stdio for agents:
 - **`--log` (Optional)**: Enables file logging using standard Java logging (`java.util.logging`). Outputs plain text logs (INFO level and higher) to a temporary file in `java.io.tmpdir` (`retro-lsp-msp.<date>.<time>.log`).
 
 Exposes:
-- `sfx_audit_invariants`: Audits 8-NOP pipeline settling before `stop`, word-aligned access, lack of hardware `MERGE`, and modal lifetimes.
+- `sfx_audit_diagnostics`: Audits syntax errors, block structure (`function`/`endfunction`), stack cleanup (`Δ_SP == 0`), and hardware invariants (8-NOP settling before `stop`, word alignment, no hardware `MERGE`, modal lifetimes). Alias `sfx_audit_invariants` is retained for backwards compatibility.
 - `sfx_expand_macro`: Expands X-GSU macros (`function`, `for`, `if_lt`, etc.) to ca65 SuperFX instructions.
 - `sfx_lookup_symbol`: Resolves symbol definitions, scopes, and docs.
 - `sfx_analyze_registers`: Live-range intervals, register pressure, and register coloring suggestions.

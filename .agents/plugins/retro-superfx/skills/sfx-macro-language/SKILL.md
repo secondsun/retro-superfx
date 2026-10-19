@@ -124,13 +124,13 @@ nop
 
 Agents should actively utilize the `retro-superfx_lsp` MCP server tools via `call_mcp_tool` when inspecting, verifying, or refactoring SuperFX macros and routines:
 
-### A. Audit Hardware Invariants (`sfx_audit_invariants`)
-Statically audits SuperFX code or files for hardware constraints (8-NOP pipeline settling before `stop`, 16-bit word alignment on `ldw`/`stw`, flagging unsupported hardware `MERGE` instructions on FX3, and modal instruction lifetime scope):
+### A. Audit Diagnostics and Invariants (`sfx_audit_diagnostics`)
+Statically audits SuperFX code or files for syntax errors (block balancing for `function`/`endfunction`, `for`/`endfor`, `.if`/`.endif`, instruction and macro arity, duplicate symbols), hardware constraints (8-NOP pipeline settling before `stop`, 16-bit word alignment on `ldw`/`stw`, unsupported `MERGE` on FX3, modal instruction lifetimes), and stack displacement invariants (return leaks, divergent branches). Note that `sfx_audit_invariants` remains available as an alias:
 
 ```json
 {
   "ServerName": "retro-superfx_lsp",
-  "ToolName": "sfx_audit_invariants",
+  "ToolName": "sfx_audit_diagnostics",
   "Arguments": {
     "code": "merge\nstop\n"
   }

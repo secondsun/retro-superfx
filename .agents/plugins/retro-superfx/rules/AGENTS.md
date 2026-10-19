@@ -142,7 +142,8 @@ Agents should **prioritize calling the MCP tools** on `retro-superfx_mesen` via 
 
 ### 5. SuperFX Language & Analysis Tools (`retro-superfx_lsp` MCP)
 Agents should actively utilize the `retro-superfx_lsp` MCP tools via `call_mcp_tool` for assembly authoring, analysis, and verification:
-- **`sfx_audit_invariants`**: Audits assembly code/files against FX3 hardware invariants (8-NOP settling before `stop`, word alignment on `ldw`/`stw`, no hardware `MERGE`, modal lifetimes).
+- **`sfx_audit_diagnostics`**: Unified static diagnostics tool validating syntax errors (block balancing for `function`/`endfunction`, `for`/`endfor`, `.if`/`.endif`, `.proc`/`.endproc`, instruction and macro arity, duplicate symbols), FX3 hardware invariants (8-NOP settling before `stop`, word alignment on `ldw`/`stw`, no hardware `MERGE`, modal lifetimes), and stack displacement invariants (return leaks, divergent branch depths).
+- **`sfx_audit_invariants`**: Backward-compatible alias for `sfx_audit_diagnostics`.
 - **`sfx_expand_macro`**: Expands X-GSU macro DSL directives (`function`, `call`, `for`, `if_lt`, stack ops) into concrete instruction streams.
 - **`sfx_analyze_registers`**: Chaitin-Briggs graph coloring, live-range intervals, CFG basic blocks, and register pressure.
 - **`sfx_lookup_symbol`**: Queries workspace index for symbol definitions, documentation, and scopes.

@@ -11,7 +11,7 @@ An Antigravity plugin bundling tools, skills, rules, and MCP servers for SNES an
    - `capture_sfx_render`: Headless render capture to PNG with bounding boxes, non-black pixel counts, and perceptual hashes.
 
 2. **`retro-superfx_lsp`** (`retro-lsp`):
-   - `sfx_audit_invariants`: Audits SuperFX hardware invariants (8-NOP settling before `stop`, word alignment, no hardware `MERGE`, modal lifetimes).
+   - `sfx_audit_diagnostics`: Audits SuperFX code for syntax errors, block structure (`function`/`endfunction`), stack cleanup (`Δ_SP == 0`), and hardware invariants (8-NOP settling before `stop`, word alignment, no hardware `MERGE`, modal lifetimes). Alias `sfx_audit_invariants` is retained for backwards compatibility.
    - `sfx_expand_macro`: Expands X-GSU macro DSL directives (`function`, `call`, `for`, `if_lt`, etc.) to ca65 assembly.
    - `sfx_lookup_symbol`: Resolves symbol definitions, scopes, and documentation across the workspace.
    - `sfx_analyze_registers`: Chaitin-Briggs graph coloring register allocation, live ranges, and interference graphs.
