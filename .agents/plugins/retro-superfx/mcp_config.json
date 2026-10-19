@@ -1,16 +1,12 @@
 {
   "mcpServers": {
     "mesen": {
-      "command": "/home/summers/Projects/retro-superfx/tools/mesen-mcp/run-server.sh"
+      "command": "./tools/mesen-mcp/run-server.sh",
+      "cwd": "../../../"
     },
     "lsp": {
-      "command": "/home/summers/Projects/retro-superfx/retro-lsp/dist/linux/bin/launcher",
-      "args": [
-        "--mcp",
-        "--workspace",
-        "/home/summers/Projects/retro-superfx"
-      ]
+      "command": "./tools/run-lsp-mcp.sh",
+      "cwd": "../../../"
     }
   }
 }
-

@@ -34,7 +34,7 @@ def find_mesen(
     candidates = [
         Path("/home/summers/Programs/Mesen"),
         Path(__file__).resolve().parents[3] / ".." / "Mesen2" / "bin" / "osx-arm64" / "Release" / "osx-arm64" / "publish" / "Mesen",
-        Path("/Applications/Mesen.app/Contents/MacOS/Mesen"),
+        Path("/Users/summerspittman/Downloads/Mesen/Contents/MacOS/Mesen"),
     ]
 
     for cand in candidates:
