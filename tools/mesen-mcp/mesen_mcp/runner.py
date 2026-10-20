@@ -61,13 +61,14 @@ def run_sfx_test(
     timeout_seconds: int = 15,
     mesen_path: Optional[str] = None,
     runner: Optional[MesenRunner] = None,
+    skip_compile: bool = False,
 ) -> Dict[str, Any]:
     """Compile and headlessly execute a SuperFX unit test in Mesen."""
     try:
         session = SfxTestSession.from_test_name(
             test_name, runner=runner, mesen_path=mesen_path
         )
-        session.compile()
+        session.compile(skip=skip_compile)
     except FileNotFoundError as e:
         return {
             "status": "FAIL",

@@ -78,3 +78,25 @@ def test_sfx_test_session_with_fake_runner(tmp_path):
     assert str(sfc_file) in runner.last_cmd
     assert str(lua_file) in runner.last_cmd
 
+
+def test_fake_runner_default_mesen_path(tmp_path):
+    test_dir = tmp_path / "fake_test_default_path"
+    test_dir.mkdir()
+    sfc_file = test_dir / "Test.sfc"
+    sfc_file.write_bytes(b"\x00" * 10)
+    lua_file = test_dir / "test.lua"
+    lua_file.write_text("local foo = 1\n")
+
+    runner = FakeMesenRunner(stdout="TEST PASSED\n", returncode=0)
+    # mesen_path is None; should default to "mesen" without find_mesen error
+    session = SfxTestSession(test_dir=test_dir, test_name="fake_test", runner=runner, mesen_path=None)
+
+    # compile() should skip without throwing even without a Makefile
+    session.compile()
+
+    proc = session.run_lua(lua_file, timeout_seconds=5)
+    assert proc.returncode == 0
+    assert runner.last_cmd[0] == "mesen"
+    assert runner.last_cmd[1] == "--testrunner"
+
+

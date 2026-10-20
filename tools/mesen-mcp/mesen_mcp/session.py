@@ -198,8 +198,11 @@ class SfxTestSession:
             mesen_path=mesen_path,
         )
 
-    def compile(self) -> None:
+    def compile(self, force: bool = False, skip: bool = False) -> None:
         """Compiles the test ROM using make clean all in test_dir."""
+        if skip or (not isinstance(self.runner, SubprocessMesenRunner) and not force):
+            return
+
         res = subprocess.run(
             ["make", "-C", str(self.test_dir), "clean", "all"],
             capture_output=True,
@@ -280,8 +283,8 @@ class SfxTestSession:
         self, lua_script_path: Path, timeout_seconds: int = 15
     ) -> subprocess.CompletedProcess:
         """Executes Mesen with the given Lua script against the session's ROM."""
-        if self.mesen_path and not isinstance(self.runner, SubprocessMesenRunner):
-            mesen_bin = Path(self.mesen_path)
+        if not isinstance(self.runner, SubprocessMesenRunner):
+            mesen_bin = Path(self.mesen_path or "mesen")
         else:
             mesen_bin = find_mesen(override_path=self.mesen_path)
 

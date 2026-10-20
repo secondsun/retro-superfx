@@ -23,7 +23,7 @@ for proj in "${PROJECTS[@]}"; do
         continue
     fi
 
-    if [ -d "${proj_dir}/.git" ]; then
+    if [ -e "${proj_dir}/.git" ]; then
         branch="$(git -C "${proj_dir}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "detached")"
         head_commit="$(git -C "${proj_dir}" log -1 --oneline 2>/dev/null || echo "no commits")"
         dirty="$(git -C "${proj_dir}" status --porcelain 2>/dev/null)"
@@ -42,7 +42,8 @@ for proj in "${PROJECTS[@]}"; do
 
     # Check Maven or Make details
     if [ -f "${proj_dir}/pom.xml" ]; then
-        version="$(grep -m 1 -oP '(?<=<version>)[^<]+' "${proj_dir}/pom.xml" || echo "unknown")"
+        version="$(sed -n 's/.*<version>\([^<]*\)<\/version>.*/\1/p' "${proj_dir}/pom.xml" | head -n 1)"
+        [ -z "${version}" ] && version="unknown"
         echo "  Maven Version: ${version}"
     fi
 done

@@ -18,7 +18,8 @@ def _compute_image_metrics(png_path: Path) -> Dict[str, Any]:
     with Image.open(png_path) as img:
         img_rgb = img.convert("RGB")
         width, height = img_rgb.size
-        pixels = list(img_rgb.getdata())
+        get_pixels = getattr(img_rgb, "get_flattened_data", img_rgb.getdata)
+        pixels = list(get_pixels())
 
     # Count non-black pixels and compute bounding box
     non_black = 0
@@ -50,7 +51,8 @@ def _compute_image_metrics(png_path: Path) -> Dict[str, Any]:
     # Perceptual average hash (8x8 grayscale)
     with Image.open(png_path) as img:
         small = img.convert("L").resize((8, 8), Image.Resampling.BILINEAR)
-        p_pixels = list(small.getdata())
+        get_p_pixels = getattr(small, "get_flattened_data", small.getdata)
+        p_pixels = list(get_p_pixels())
         avg = sum(p_pixels) / len(p_pixels)
         bits = "".join(["1" if p > avg else "0" for p in p_pixels])
         p_hash = f"{int(bits, 2):016x}"
