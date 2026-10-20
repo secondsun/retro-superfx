@@ -1,23 +1,29 @@
-import os
+"""SuperFX unit test runner using headless Mesen."""
+
 from pathlib import Path
-import re
 import subprocess
 from typing import Any, Dict, Optional
 
-from mesen_mcp.dbg_parser import parse_dbg_file
-from mesen_mcp.mesen import find_mesen
+from mesen_mcp.session import MesenRunner, SfxTestSession
+from mesen_mcp.utils import resolve_test_dir
 
 
-from mesen_mcp.utils import get_repo_root, resolve_test_dir
-
-
-def _sync_lua_labels(sym_map: Dict[str, int], lua_path: Path) -> None:
-    """Synchronize variable assignments in test.lua with resolved symbol offsets."""
-    if not lua_path.is_file():
+def _sync_lua_labels(sym_map: Any, lua_path: Path) -> None:
+    """Backward compatibility wrapper for synchronizing Lua labels."""
+    if hasattr(sym_map, "get_offset"):
+        from mesen_mcp.session import SymbolTable
+        table = sym_map
+    elif isinstance(sym_map, dict):
+        from mesen_mcp.session import SymbolTable
+        table = SymbolTable(symbols=sym_map)
+    else:
         return
 
     content = lua_path.read_text(encoding="utf-8")
-    var_pattern = re.compile(r"^(\s*(?:local\s+)?([A-Za-z0-9_]+)\s*=\s*)(0x[0-9A-Fa-f]+|\d+)(.*)$")
+    import re
+    var_pattern = re.compile(
+        r"^(\s*(?:local\s+)?([A-Za-z0-9_]+)\s*=\s*)(0x[0-9A-Fa-f]+|\d+)(.*)$"
+    )
     lines = content.splitlines()
     updated_lines = []
 
@@ -25,28 +31,16 @@ def _sync_lua_labels(sym_map: Dict[str, int], lua_path: Path) -> None:
         m = var_pattern.match(line)
         if m:
             prefix, var_name, current_val_str, suffix = m.groups()
-            sym_name = var_name
+            target_offset = table.get_offset(var_name)
 
-            # Map alias names if needed
-            test_dir_name = lua_path.parent.name.lower()
-            if sym_name not in sym_map and sym_name == "OUTPUT":
-                for candidate in (
-                    "VECTOR_SUBTRACT_OUT",
-                    "VECTOR_ADD_OUT",
-                    "VECTOR_NEGATE_OUT",
-                    "VECTOR_CROSS_OUT",
-                    "VECTOR_TRANSFORM_OUT",
-                    "vector_normalize_out",
-                ):
-                    if candidate in sym_map:
-                        sym_name = candidate
-                        break
-
-            if sym_name in sym_map:
-                target_offset = sym_map[sym_name]
+            if target_offset is not None:
                 target_hex = f"0x{target_offset:04X}"
                 try:
-                    current_val = int(current_val_str, 16) if current_val_str.startswith(("0x", "0X")) else int(current_val_str)
+                    current_val = (
+                        int(current_val_str, 16)
+                        if current_val_str.startswith(("0x", "0X"))
+                        else int(current_val_str)
+                    )
                 except ValueError:
                     current_val = None
 
@@ -66,10 +60,14 @@ def run_sfx_test(
     test_name: str,
     timeout_seconds: int = 15,
     mesen_path: Optional[str] = None,
+    runner: Optional[MesenRunner] = None,
 ) -> Dict[str, Any]:
     """Compile and headlessly execute a SuperFX unit test in Mesen."""
     try:
-        test_dir = resolve_test_dir(test_name)
+        session = SfxTestSession.from_test_name(
+            test_name, runner=runner, mesen_path=mesen_path
+        )
+        session.compile()
     except FileNotFoundError as e:
         return {
             "status": "FAIL",
@@ -77,103 +75,38 @@ def run_sfx_test(
             "error": str(e),
             "output": "",
         }
-
-    # 1. Compile test ROM via make clean all
-    make_res = subprocess.run(
-        ["make", "-C", str(test_dir), "clean", "all"],
-        capture_output=True,
-        text=True,
-    )
-    if make_res.returncode != 0:
+    except RuntimeError as e:
         return {
             "status": "FAIL",
             "test": test_name,
-            "exit_code": make_res.returncode,
+            "exit_code": 1,
             "error": "Compilation failed",
-            "output": make_res.stdout + "\n" + make_res.stderr,
+            "output": str(e),
         }
 
-    # 2. Parse symbols from Test.dbg if generated
-    dbg_file = test_dir / "Test.dbg"
-    symbols_map: Dict[str, int] = {}
-    if dbg_file.is_file():
-        try:
-            dbg_data = parse_dbg_file(dbg_file)
-            for name, sym in dbg_data.symbols.items():
-                symbols_map[name] = sym.offset
-        except Exception:
-            pass
-
-    # Fallback to Test.cpu.sym if dbg missing
-    if not symbols_map:
-        sym_file = test_dir / "Test.cpu.sym"
-        if sym_file.is_file():
-            sym_pattern = re.compile(r"^al\s+([0-9A-Fa-f]{6})\s+\.([A-Za-z0-9_@]+)")
-            with open(sym_file, "r", encoding="utf-8") as f:
-                for line in f:
-                    m = sym_pattern.match(line.strip())
-                    if m:
-                        full_val = int(m.group(1), 16)
-                        symbols_map[m.group(2)] = full_val & 0xFFFF
-
-    # 3. Locate Lua test script and synchronize symbols
-    lua_script = test_dir / "test.lua"
+    # Locate Lua test script and synchronize symbols
+    lua_script = session.test_dir / "test.lua"
     if not lua_script.is_file():
-        lua_candidates = list(test_dir.glob("*.lua"))
+        lua_candidates = list(session.test_dir.glob("*.lua"))
         if lua_candidates:
             lua_script = lua_candidates[0]
         else:
             return {
                 "status": "FAIL",
                 "test": test_name,
-                "error": f"No Lua test script found in {test_dir}",
-                "output": make_res.stdout,
+                "error": f"No Lua test script found in {session.test_dir}",
+                "output": "",
             }
 
-    if symbols_map:
-        _sync_lua_labels(symbols_map, lua_script)
-
-    # 4. Locate ROM
-    sfc_file = test_dir / "Test.sfc"
-    if not sfc_file.is_file():
-        return {
-            "status": "FAIL",
-            "test": test_name,
-            "error": f"Test ROM {sfc_file} was not generated.",
-            "output": make_res.stdout,
-        }
-
-    # 5. Resolve Mesen executable
-    try:
-        mesen_bin = find_mesen(override_path=mesen_path)
-    except FileNotFoundError as e:
-        return {
-            "status": "FAIL",
-            "test": test_name,
-            "error": str(e),
-            "output": "",
-        }
-
-    # 6. Execute Mesen in testrunner mode
-    cmd = [
-        str(mesen_bin),
-        "--testrunner",
-        f"--timeout={timeout_seconds}",
-        str(lua_script),
-        str(sfc_file),
-    ]
+    session.sync_lua_script(lua_script)
 
     try:
-        proc = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=timeout_seconds + 5,
-        )
+        proc = session.run_lua(lua_script, timeout_seconds=timeout_seconds)
         combined_output = proc.stdout + (("\n" + proc.stderr) if proc.stderr else "")
         status = (
             "PASS"
-            if proc.returncode == 0 and ("TEST PASSED" in proc.stdout or "All tests passed" in proc.stdout)
+            if proc.returncode == 0
+            and ("TEST PASSED" in proc.stdout or "All tests passed" in proc.stdout)
             else "FAIL"
         )
         return {
@@ -181,7 +114,7 @@ def run_sfx_test(
             "test": test_name,
             "exit_code": proc.returncode,
             "output": combined_output.strip(),
-            "symbols": symbols_map,
+            "symbols": session.symbols.symbols,
         }
     except subprocess.TimeoutExpired as te:
         stdout = te.stdout or ""
@@ -192,7 +125,15 @@ def run_sfx_test(
             "exit_code": -1,
             "error": f"Test execution timed out after {timeout_seconds} seconds",
             "output": (stdout + "\n" + stderr).strip(),
-            "symbols": symbols_map,
+            "symbols": session.symbols.symbols,
+        }
+    except Exception as e:
+        return {
+            "status": "FAIL",
+            "test": test_name,
+            "error": str(e),
+            "output": "",
+            "symbols": session.symbols.symbols,
         }
 
 

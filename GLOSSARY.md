@@ -17,3 +17,10 @@ A mechanism whereby the MCP server generates ephemeral or templated Lua harnesse
 ### Render Capture
 Extraction of the SNES PPU / SuperFX framebuffer into an image (PNG) along with quantitative scene metrics (active bounding box, non-black pixel count) for agent visual and rasterization verification.
 
+### SfxTestSession
+A deep execution and lifecycle module in `mesen_mcp.session` that encapsulates SuperFX test compilation (`make clean all`), compiled ROM locating, `.dbg` symbol parsing with `.cpu.sym` fallback, `OUTPUT` alias resolution, and headless Mesen subprocess execution behind a unified interface.
+
+### MesenRunner
+A port/adapter interface (`Protocol`) in `mesen_mcp.session` decoupling Mesen CLI execution from caller tools, supporting `SubprocessMesenRunner` for real headless execution and `FakeMesenRunner` for fast, in-memory unit testing.
+
+
