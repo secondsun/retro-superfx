@@ -63,6 +63,8 @@ class SymbolTable:
     sizes: Dict[str, int] = field(default_factory=dict)
 
     OUTPUT_ALIASES = (
+        "TEST_OUTPUT",
+        "test_output",
         "VECTOR_SUBTRACT_OUT",
         "VECTOR_ADD_OUT",
         "VECTOR_NEGATE_OUT",
