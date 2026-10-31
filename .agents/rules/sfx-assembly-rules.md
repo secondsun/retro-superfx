@@ -58,6 +58,14 @@ Rules and technical constraints when writing, parsing, analyzing, or compiling S
      ```
 3. **Word Alignment**:
    - All 16-bit word loads (`ldw`) and stores (`stw`) must be 16-bit word aligned (even addresses).
+4. **Dual `rpix` Pixel Cache Flush**:
+   - SuperFX `plot` buffers pixels in dual 8-pixel caches (primary and secondary).
+   - Execute **two `rpix` instructions** (`rpix; rpix`) before the 8 settling `nop`s and `stop` to flush both pixel caches to Work RAM.
+5. **GSURAM-Only `ldw` / `ldb` Addressing**:
+   - `ldw (Rn)` and `ldb (Rn)` always read from `GSURAM` (`$700000`, masked to 8 KB `$1FFF`).
+   - Tables or constants defined in `.segment "GSUCODE"`, `.segment "RODATA"`, or `.segment "ROM*"` reside in ROM (`>= $8000`) when executing from ROM banks; read them via `romb` + `r14` + `getb`/`getbh` or copy them into `.segment "GSURAM"` before using `ldw`/`ldb`.
+6. **`R1..R15`-Only Register Operands (`and`, `bic`, `or`, `xor`, `mult`, `umult`)**:
+   - The register forms of `and`, `bic`, `or`, `xor`, `mult`, and `umult` only encode `R1`–`R15` (since opcode `$70` is `merge` rather than `and r0`). Keep operand registers in `R1`–`R15` or place `R0` as `Sreg`/`Dreg` via `from r0` / `with r0`.
 
 ---
 

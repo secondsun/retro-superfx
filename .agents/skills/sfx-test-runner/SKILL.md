@@ -96,10 +96,9 @@ When executing tests under the hood (or via fallback CLI):
 4. Mesen --testrunner --timeout=<sec> test.lua Test.sfc
 ```
 
-### Critical Mesen Flags
-- Always pass `--testrunner` (all lowercase, no hyphen).
-- Passing `--test-runner` with a hyphen inadvertently launches interactive GUI mode.
-- Mesen binary is located at `/home/summers/Programs/Mesen`.
+### Critical Mesen & Python Environment Notes
+- Always pass `--testrunner` (all lowercase, no hyphen). Passing `--test-runner` with a hyphen inadvertently launches interactive GUI mode.
+- For Python helper scripts requiring `PIL` (`Pillow`) or `pytest` (such as image comparison or perceptual hashing), use `./tools/mesen-mcp/.venv/bin/python` rather than system `python3`.
 
 ---
 

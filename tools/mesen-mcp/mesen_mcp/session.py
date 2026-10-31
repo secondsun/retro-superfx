@@ -61,6 +61,7 @@ class SymbolTable:
 
     symbols: Dict[str, int] = field(default_factory=dict)
     sizes: Dict[str, int] = field(default_factory=dict)
+    label_symbols: Dict[str, int] = field(default_factory=dict)
 
     OUTPUT_ALIASES = (
         "TEST_OUTPUT",
@@ -114,10 +115,15 @@ class SymbolTable:
         if dbg_file.is_file():
             try:
                 dbg_data = parse_dbg_file(dbg_file)
+                label_map: Dict[str, int] = {}
                 for name, sym in dbg_data.symbols.items():
                     symbols_map[name] = sym.offset
+                    if sym.type == "lab":
+                        label_map[name] = sym.offset
             except Exception:
-                pass
+                label_map = {}
+        else:
+            label_map = {}
 
         if not symbols_map:
             sym_file = test_dir / "Test.cpu.sym"
@@ -138,7 +144,11 @@ class SymbolTable:
                             symbols_map[m.group(2)] = full_val & 0xFFFF
 
         sizes = cls._estimate_symbol_sizes(dbg_data)
-        return cls(symbols=symbols_map, sizes=sizes)
+        return cls(
+            symbols=symbols_map,
+            sizes=sizes,
+            label_symbols=label_map if label_map else symbols_map,
+        )
 
     @staticmethod
     def _estimate_symbol_sizes(dbg_data: Optional[DbgData]) -> Dict[str, int]:

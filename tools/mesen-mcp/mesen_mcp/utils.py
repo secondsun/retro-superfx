@@ -19,6 +19,10 @@ def resolve_test_dir(test_name_or_path: str) -> Path:
     if cand1.is_dir():
         return cand1.resolve()
 
+    cand_xgsu = root_dir / "snes-sfx-demo" / "X-GSU" / test_name_or_path
+    if cand_xgsu.is_dir():
+        return cand_xgsu.resolve()
+
     cand2 = root_dir / "snes-sfx-demo" / "tests" / test_name_or_path
     if cand2.is_dir():
         return cand2.resolve()

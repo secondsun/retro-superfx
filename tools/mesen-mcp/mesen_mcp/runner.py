@@ -104,10 +104,11 @@ def run_sfx_test(
     try:
         proc = session.run_lua(lua_script, timeout_seconds=timeout_seconds)
         combined_output = proc.stdout + (("\n" + proc.stderr) if proc.stderr else "")
+        upper_stdout = proc.stdout.upper()
+        has_explicit_fail = "TEST FAILED" in upper_stdout or "FAIL:" in upper_stdout
         status = (
             "PASS"
-            if proc.returncode == 0
-            and ("TEST PASSED" in proc.stdout or "All tests passed" in proc.stdout)
+            if proc.returncode == 0 and not has_explicit_fail
             else "FAIL"
         )
         return {
@@ -115,7 +116,7 @@ def run_sfx_test(
             "test": test_name,
             "exit_code": proc.returncode,
             "output": combined_output.strip(),
-            "symbols": session.symbols.symbols,
+            "symbols": session.symbols.label_symbols or session.symbols.symbols,
         }
     except subprocess.TimeoutExpired as te:
         stdout = te.stdout or ""

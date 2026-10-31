@@ -120,11 +120,14 @@ emu.addMemoryCallback(function(address, value)
 end, emu.callbackType.exec, 0x{test_stop_addr:04X}, 0x{test_stop_addr:04X}, 4, emu.memType.gsuWorkRam)
 """
 
+    has_test_stop_lua = "true" if test_stop_addr is not None else "false"
     lua_code = f"""-- Ephemeral Mesen Render Capture Script
 local target_png = "{escaped_png_path}"
 local frameCount = 0
+local postStopFrames = 0
 local captured = false
 local gsu_stopped = false
+local has_test_stop = {has_test_stop_lua}
 
 function doCapture()
     if captured then return end
@@ -143,7 +146,14 @@ end
 
 emu.addEventCallback(function()
     frameCount = frameCount + 1
-    if gsu_stopped or frameCount >= 15 then
+    if gsu_stopped then
+        postStopFrames = postStopFrames + 1
+        if postStopFrames >= 8 then
+            doCapture()
+        end
+    elseif not has_test_stop and frameCount >= 15 then
+        doCapture()
+    elseif frameCount >= 120 then
         doCapture()
     end
 end, emu.eventType.endFrame)

@@ -66,6 +66,7 @@ The `X-GSU` directory (`snes-sfx-demo/X-GSU/common/`) defines a high-level macro
 - **`call <name> [args]`**: Emits `link #4` (stores return address in `R11`) and branches to `<name>_function`.
 - **`return`**: Pops return address from stack into `R15` (`PC`) with `nop` in delay slot.
 - **`endfunction`**: Closes `.endscope`.
+- **Unit Test Requirement**: Authoring a new X-GSU `function` in `snes-sfx-demo/X-GSU/` requires creating and passing a headless unit test in `snes-sfx-demo/X-GSU/tests/<name>/` before completion; see [`.agents/plugins/retro-superfx/skills/create-gsu-test/SKILL.md`](.agents/plugins/retro-superfx/skills/create-gsu-test/SKILL.md).
 
 ### B. High-Level Variables & `sfx-optimizer` Keywords
 - **`register <var1>, <var2>`**: Declares pseudo-variables to be mapped to hardware registers.
@@ -100,6 +101,8 @@ When writing or optimizing SuperFX code:
 3. **8 NOP Pipeline Settling**: SuperFX Work RAM writes are pipelined asynchronously. Insert **8 NOPs** before halting (`stop`) or testing memory in emulator scripts.
 4. **16-Bit Word Alignment**: All `ldw`/`stw` memory operations must target 16-bit word aligned (even) addresses.
 5. **Modal Instruction Scope**: `with`, `to`, `from` modify registers for the **single immediately following instruction only**. Subsequent arithmetic resets `Sreg` and `Dreg` back to `R0`.
+6. **Dual `rpix` Pixel Cache Flush**: `plot` buffers pixels in dual 8-pixel caches (primary and secondary). Execute two `rpix` instructions (`rpix; rpix`) before the 8 settling NOPs and `stop` to flush all plotted pixels to Work RAM.
+7. **GSURAM-Only `ldw` / `ldb` Addressing**: `ldw (Rn)` and `ldb (Rn)` only access `GSURAM` (`$700000`, masked to `$1FFF`). Read ROM-resident tables in `.segment "GSUCODE"` or `.segment "ROM*"` via `romb` + `r14` + `getb`/`getbh`.
 
 ---
 

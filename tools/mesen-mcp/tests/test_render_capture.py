@@ -81,3 +81,27 @@ def test_capture_sfx_render_nonexistent():
     assert result["status"] == "FAIL"
     assert "not found" in result["error"].lower()
     assert result["png_path"] is None
+
+
+def test_capture_sfx_render_plot_texel():
+    result = capture_sfx_render(
+        scene_test_name="plot_texel",
+        timeout_seconds=15,
+    )
+    assert result["status"] == "SUCCESS"
+    assert result["png_path"] is not None
+
+    png_path = Path(result["png_path"])
+    assert png_path.is_file()
+    assert png_path.stat().st_size > 0
+
+    metrics = result["metrics"]
+    assert metrics["width"] == 256
+    assert metrics["height"] == 224
+    assert metrics["non_black_pixels"] == 5056
+    assert metrics["bounding_box"] == [0, 0, 63, 94]
+
+    try:
+        os.remove(png_path)
+    except OSError:
+        pass

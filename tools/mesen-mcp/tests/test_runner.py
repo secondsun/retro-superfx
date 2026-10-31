@@ -8,6 +8,10 @@ def test_resolve_test_dir():
     assert sqrt_dir.is_dir()
     assert (sqrt_dir / "Test.s").exists()
 
+    iso_dir = resolve_test_dir("IsoEngine")
+    assert iso_dir.is_dir()
+    assert (iso_dir / "SuperFX.s").exists()
+
     with pytest.raises(FileNotFoundError):
         resolve_test_dir("nonexistent_test_12345")
 
@@ -18,6 +22,7 @@ def test_run_sfx_test_sqrt():
     assert result["test"] == "sqrt"
     assert "TEST PASSED" in result["output"]
     assert result["symbols"]["test_stop"] == 0x0020
+    assert len(result["symbols"]) < 200
 
 
 def test_run_sfx_test_transform():
