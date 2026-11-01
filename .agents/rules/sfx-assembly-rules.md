@@ -32,7 +32,10 @@ Rules and technical constraints when writing, parsing, analyzing, or compiling S
      | `with Rn` | `Rn` | `Rn` | In-place modification (`with r1; add #2`) | **Destructive to `Rn`**: modifies `Rn` directly. Do NOT use for non-destructive comparisons! |
      | `from Rn` | `Rn` | `R0` | Read operand, test/compare against immediate or register (`from r8; sub #1; beq ...`) | Leaves `Rn` intact; writes result into accumulator `R0` and updates flags. |
      | `to Rn` | `R0` | `Rn` | Compute into destination register (`to r3; add #5`) | Reads operand from `R0` and stores output into `Rn`. |
-   - **Critical Warning**: Never write `with Rn` followed by `sub #k` or `cmp` if you intend to preserve `Rn`. Because `with` sets `Dreg = Rn`, the subtraction result overwrites `Rn`! Use `from Rn; sub #k` or `cmp Rn` instead.
+   - **Critical Warning (`sub` vs `cmp`)**:
+     - Never use `with Rn; sub #k` or `with Rn; sub Rm` for non-destructive comparisons: because `with` sets `Dreg = Rn`, `sub` overwrites `Rn` in-place!
+     - In contrast, `cmp` does **NOT** modify the destination register (`Dreg`)—it only computes `Sreg - Rm` and updates processor flags (`Z`, `CY`, `S`, `OV`). Therefore, `cmp` is non-destructive and safe to use.
+     - Remember that `sub` always writes to `Dreg`: under `with Rn` it modifies `Rn`, and under `from Rn` it writes to `R0`. In sequential comparisons, `from r0; sub r1` will overwrite `R0`, corrupting subsequent checks against `R0` unless `R0` is preserved or `cmp` is used.
 2. **Branch Delay Slots**:
    - Every branch (`bra`, `beq`, `bne`, `bmi`, `bge`, `blt`) has a 1-instruction delay slot.
    - Insert `nop` in the delay slot unless deliberately placing an instruction to execute during the branch pipeline.
