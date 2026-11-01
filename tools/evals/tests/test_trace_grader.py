@@ -269,12 +269,14 @@ def test_all_seven_real_tier1_yaml_cases_pass_verify_graders() -> None:
         "p0_modal_nondestructive_compare",
         "p0_stop_pipeline_settling_and_rpix",
         "p0_loop_stack_and_cache_discipline",
+        "p0_diagnosing_bugs_skill_and_loop_first",
         "p1_cross_repo_install_local",
+        "p1_no_mcp_internals_reverse_engineering",
     }
     actual_ids = {c.case_id for c in report.cases}
     assert actual_ids == expected_ids
-    assert report.total_cases == 7
-    assert report.passed_cases == 7
+    assert report.total_cases == 9
+    assert report.passed_cases == 9
     assert report.passed is True
     for c in report.cases:
         assert c.passing_fixture_passed is True, f"{c.case_id} passing fixture failed: {c.checks}"
@@ -345,8 +347,8 @@ def test_cli_tier1_verify_graders_and_baseline_compare(tmp_path: Path) -> None:
     payload = json.loads(proc.stdout)
     assert payload["passed"] is True
     assert payload["tier1"]["passed"] is True
-    assert payload["tier1"]["total_cases"] == 7
-    assert payload["tier1"]["passed_cases"] == 7
+    assert payload["tier1"]["total_cases"] == 9
+    assert payload["tier1"]["passed_cases"] == 9
     assert baseline_path.is_file()
 
     # Now run with --priority P0 and --compare against baseline
@@ -369,7 +371,7 @@ def test_cli_tier1_verify_graders_and_baseline_compare(tmp_path: Path) -> None:
     )
     assert cmp_proc.returncode == 0
     cmp_payload = json.loads(cmp_proc.stdout)
-    assert cmp_payload["tier1"]["total_cases"] == 6
+    assert cmp_payload["tier1"]["total_cases"] == 7
     assert "tier1_pass_rate_delta" in cmp_payload["comparison"]
     assert cmp_payload["comparison"]["tier1_pass_rate_delta"] == 0.0
 
@@ -497,6 +499,99 @@ def test_cli_changed_flag_routes_modified_files_to_matching_tier1_cases(
     assert payload["tier0"]["lint"]["passed"] is True
     assert payload["tier1"]["total_cases"] == 1
     assert payload["tier1"]["cases"][0]["case_id"] == "p1_cross_repo_install_local"
+
+
+def test_transcript_normalization_and_audit(tmp_path: Path) -> None:
+    import json
+
+    grader = TraceAndSnippetGrader()
+
+    # Verify compact transcript.jsonl double-encoded call_mcp_tool unwrapping
+    bad_transcript = tmp_path / "bad_transcript.jsonl"
+    bad_lines = [
+        {
+            "step_index": 0,
+            "type": "USER_INPUT",
+            "content": "<USER_REQUEST>\nWhen the IsoEngine model is displayed, ramparts disappear. Please review and fix.\n</USER_REQUEST>",
+        },
+        {
+            "step_index": 1,
+            "type": "PLANNER_RESPONSE",
+            "tool_calls": [
+                {
+                    "name": "run_command",
+                    "args": {
+                        "CommandLine": '"grep -n \\"back_ns_mask\\" snes-sfx-demo/X-GSU/IsoEngine/map_grid.i"'
+                    },
+                },
+                {
+                    "name": "write_file",
+                    "args": {
+                        "Path": '"/tmp/scratch/capture.py"',
+                        "Content": '"img.save(\\"/tmp/scratch/yaw_30.png\\")"',
+                    },
+                },
+            ],
+        },
+    ]
+    bad_transcript.write_text(
+        "\n".join(json.dumps(x) for x in bad_lines) + "\n", encoding="utf-8"
+    )
+    bad_rep = grader.audit_transcript(bad_transcript)
+    assert bad_rep.passed is False
+    failed_types = {c.grader_type for c in bad_rep.checks if not c.passed}
+    assert "tool_forbidden" in failed_types
+    assert "skill_activated" in failed_types
+    assert "multimodal_render_inspection" in failed_types
+
+    # Verify clean transcript passes all checks
+    good_transcript = tmp_path / "good_transcript.jsonl"
+    good_lines = [
+        {
+            "step_index": 0,
+            "type": "USER_INPUT",
+            "content": "<USER_REQUEST>\nWhen the IsoEngine model is displayed, ramparts disappear. Please review and fix.\n</USER_REQUEST>",
+        },
+        {
+            "step_index": 1,
+            "type": "PLANNER_RESPONSE",
+            "tool_calls": [
+                {
+                    "name": "read_file",
+                    "args": {
+                        "Path": '"/Users/summerspittman/Projects/retro-superfx/.agents/skills/diagnosing-bugs/SKILL.md"'
+                    },
+                },
+                {
+                    "name": "call_mcp_tool",
+                    "args": {
+                        "ServerName": '"retro-superfx_lsp"',
+                        "ToolName": '"sfx_lookup_symbol"',
+                        "Arguments": '{"symbol":"map_stamp_edge_panel"}',
+                    },
+                },
+                {
+                    "name": "write_file",
+                    "args": {
+                        "Path": '"/tmp/scratch/capture.py"',
+                        "Content": '"img.save(\\"/tmp/scratch/yaw_30.png\\")"',
+                    },
+                },
+                {
+                    "name": "read_file",
+                    "args": {"Path": '"/tmp/scratch/yaw_30.png"'},
+                },
+            ],
+        },
+    ]
+    good_transcript.write_text(
+        "\n".join(json.dumps(x) for x in good_lines) + "\n", encoding="utf-8"
+    )
+    good_rep = grader.audit_transcript(good_transcript)
+    assert good_rep.passed is True
+    assert good_rep.skills_read == ["diagnosing-bugs"]
+    assert good_rep.mcp_calls_by_tool == {"retro-superfx_lsp:sfx_lookup_symbol": 1}
+
 
 
 

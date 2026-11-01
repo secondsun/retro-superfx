@@ -1,0 +1,54 @@
+id: p0_diagnosing_bugs_skill_and_loop_first
+tier: 1
+priority: P0
+targets:
+  - AGENTS.md
+  - .agents/skills/diagnosing-bugs/**
+  - .agents/rules/sfx-assembly-rules.md
+prompt: >
+  When the IsoEngine model is displayed, at the 90 degrees boundary on the textures
+  for the ramparts (things at the top that are transparent) on the fort will appear
+  and disappear. (Check the ones at the corners.) Please review and fix.
+graders:
+  - type: tool_called
+    tool: read_file
+    args_match:
+      Path: 'diagnosing-bugs/SKILL\.md$'
+  - type: tool_called
+    server: retro-superfx_lsp
+    tool: sfx_lookup_symbol
+  - type: tool_forbidden
+    tool: run_command
+    args_pattern: '\b(grep|rg)\b.*\.(s|sgs|i|inc)\b'
+    reason: Do not grep .s/.sgs/.i/.inc sources during bug diagnosis; use sfx_lookup_symbol or sfx_find_references.
+  - type: tool_forbidden
+    tool: run_command
+    args_pattern: '\b(grep|rg)\b.*\.(sym|dbg)\b'
+    reason: Do not grep .cpu.sym or .dbg files for addresses; use sfx_resolve_address.
+replay_fixtures:
+  passing:
+    tool_calls:
+      - tool: read_file
+        args:
+          Path: "/Users/summerspittman/Projects/retro-superfx/.agents/skills/diagnosing-bugs/SKILL.md"
+      - server: retro-superfx_lsp
+        tool: sfx_lookup_symbol
+        args:
+          symbol: map_stamp_edge_panel
+          path: snes-sfx-demo/X-GSU/IsoEngine/
+      - server: retro-superfx_mesen
+        tool: sfx_resolve_address
+        args:
+          project: IsoEngine
+          symbol: ISO_CAM
+    code: ""
+  failing:
+    tool_calls:
+      - tool: run_command
+        args:
+          CommandLine: "grep -n -C 10 \"back_ns_mask\" snes-sfx-demo/X-GSU/IsoEngine/map_grid.i"
+      - tool: run_command
+        args:
+          CommandLine: "grep -E \"(ISO_CAM|CACHED_YAW)\" snes-sfx-demo/X-GSU/IsoEngine/SuperFX.cpu.sym"
+    code: ""
+

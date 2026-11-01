@@ -70,12 +70,17 @@ class EvalScorecard:
     tier0: dict[str, Any] = field(default_factory=dict)
     tier1: dict[str, Any] = field(default_factory=dict)
     tier2: dict[str, Any] = field(default_factory=dict)
+    transcript: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        data: dict[str, Any] = {
             "passed": self.passed,
             "tier0": self.tier0,
             "tier1": self.tier1,
             "tier2": self.tier2,
         }
+        if self.transcript:
+            data["transcript"] = self.transcript
+        return data
+
 

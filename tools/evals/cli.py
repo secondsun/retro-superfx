@@ -60,6 +60,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Live agent command template for Tier 1/2 execution",
     )
     parser.add_argument(
+        "--transcript",
+        default=None,
+        help="Audit an Antigravity conversation ID or transcript.jsonl path against harness invariants",
+    )
+    parser.add_argument(
         "--save-baseline",
         type=Path,
         default=None,
@@ -195,6 +200,21 @@ def _format_human_summary(scorecard: EvalScorecard, comparison: dict[str, Any] |
                     if not chk.get("passed"):
                         lines.append(f"      * ({chk.get('grader_type')}) {chk.get('message')}")
 
+    if scorecard.transcript:
+        tr = scorecard.transcript
+        tr_status = "PASS" if tr.get("passed") else "FAIL"
+        checks = tr.get("checks", [])
+        passed_chk = sum(1 for c in checks if c.get("passed"))
+        lines.append(
+            f"[Transcript Audit / {tr.get('conversation_id')}] {tr_status} — "
+            f"{passed_chk}/{len(checks)} checks passed "
+            f"(steps={tr.get('total_steps')}, tool_calls={tr.get('total_tool_calls')}, "
+            f"skills_read={tr.get('skills_read')}, mcp_calls={tr.get('mcp_calls_by_tool')})"
+        )
+        for chk in checks:
+            c_status = "PASS" if chk.get("passed") else "FAIL"
+            lines.append(f"  - [{c_status}] ({chk.get('grader_type')}) {chk.get('message')}")
+
     if comparison is not None:
         lines.append(
             f"[Baseline Compare] token_delta={comparison.get('token_delta', 0):+d}, "
@@ -260,8 +280,21 @@ def run_evals(argv: Sequence[str] | None = None) -> int:
     tier0_data: dict[str, Any] = {}
     tier1_data: dict[str, Any] = {}
     tier2_data: dict[str, Any] = {}
+    transcript_data: dict[str, Any] = {}
 
-    run_t0 = args.tier in ("0", "all") or args.changed
+    if args.transcript is not None:
+        grader = TraceAndSnippetGrader(workspace_root=workspace_root)
+        tr_report = grader.audit_transcript(
+            transcript_target=args.transcript,
+            case_id=args.case_id,
+        )
+        transcript_data = tr_report.to_dict()
+        if not tr_report.passed:
+            overall_passed = False
+
+    run_t0 = (args.tier in ("0", "all") or args.changed) and (
+        args.transcript is None or args.tier == "all"
+    )
     if run_t0:
         t0_passed, tier0_data = _run_tier0(
             workspace_root=workspace_root,
@@ -310,6 +343,7 @@ def run_evals(argv: Sequence[str] | None = None) -> int:
         tier0=tier0_data,
         tier1=tier1_data,
         tier2=tier2_data,
+        transcript=transcript_data,
     )
     payload = scorecard.to_dict()
 

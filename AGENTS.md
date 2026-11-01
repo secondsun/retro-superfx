@@ -172,14 +172,17 @@ Agents should actively utilize the `retro-superfx_lsp` MCP tools via `call_mcp_t
 - **`sfx_find_references`**: Finds usages and references of CA65/X-GSU symbols across the workspace index. Understands `call` to `function`, macro invocations, and scoped symbols; skips comments and string literals; supports `path`, `maxResults`, `includeDefinitions`, and `contextLines`.
 - **`sfx_pack_textures`**: Packs, updates, or validates a SuperFX Texture Atlas (`.sfxproj`), exporting companion binaries (`.bin`, `.pal`), ca65 assembly index (`.i`), and layout PNG, or imports bitmap graphics with Median-Cut color quantization.
 
-#### When to use `sfx_lookup_symbol` vs. `sfx_find_references` vs. `grep`
+#### Mandatory Skill & Tool Routing by Task Type
 
-| Need | Use |
+| Task / Trigger | First Action (Mandatory) |
 |---|---|
-| Where a label / `function` / macro / struct / struct field / constant is **defined**, plus its doc comment (In/Out/Clobbers) | `sfx_lookup_symbol` |
-| Where a symbol is **used** (references) | `sfx_find_references` |
-| Linker address of a symbol, or what lives at an address (`.sym` / `.dbg`) | `sfx_resolve_address` on `retro-superfx_mesen` |
-| Plain text, regex, Lua/Python/cfg files, `.build/*.opt.sgs` output | `grep` |
+| Bug report, visual glitch, broken behavior, or regression ("review and fix", "appears/disappears", "failing") | Read [`.agents/skills/diagnosing-bugs/SKILL.md`](.agents/skills/diagnosing-bugs/SKILL.md) **first** and build a tight red-capable reproducer loop before reading assembly to form hypotheses. |
+| Running Mesen tests, resolving `.cpu.sym`/`.dbg` addresses, or capturing scene renders | Read [`.agents/skills/sfx-test-runner/SKILL.md`](.agents/skills/sfx-test-runner/SKILL.md) and call `retro-superfx_mesen` MCP tools directly (never read `tools/mesen-mcp/` Python internals to learn CLI flags). |
+| Inspecting captured `.png` screenshots (from `capture_sfx_render` or Mesen Lua scripts) | Call `read_file` directly on the `.png` path for multimodal visual inspection instead of writing blind pixel-diff or ASCII scripts. |
+| Finding where a label / `function` / macro / struct / field / constant is **defined**, plus its doc comment (In/Out/Clobbers) | Call `sfx_lookup_symbol` on `retro-superfx_lsp` (never `grep` `.s`/`.sgs`/`.i`/`.inc` files). |
+| Finding where a symbol is **used** (references, calls, reads, writes) | Call `sfx_find_references` on `retro-superfx_lsp` (never `grep` `.s`/`.sgs`/`.i`/`.inc` files). |
+| Resolving the linker address of a symbol, or what lives at an address (`.cpu.sym` / `.dbg`) | Call `sfx_resolve_address` on `retro-superfx_mesen` (never `grep` `.cpu.sym` or `.dbg` files). |
+| Plain text, regex, Lua/Python/cfg files, `.build/*.opt.sgs` output | Use `grep`. |
 
 > **Mandatory:** Do not `grep` `.s`/`.sgs`/`.i`/`.inc` sources for a symbol's definition or usages, and do not `grep` `.cpu.sym`/`.dbg` for addresses. Call `sfx_lookup_symbol`, `sfx_find_references`, or `sfx_resolve_address` first. Fall back to `grep` only if the tool is unavailable or returns nothing, and say so. If these tools are missing from your tool list, the MCP servers are stale: tell the user to run `./tools/build-all.sh --install` and restart them.
 
@@ -193,6 +196,11 @@ Ready-to-copy calls (the tools are lazy-loaded; no need to read their schemas fi
 ```json
 { "ServerName": "retro-superfx_lsp", "ToolName": "sfx_find_references",
   "Arguments": { "symbol": "iso_camera_set_yaw", "path": "snes-sfx-demo/X-GSU/" } }
+```
+
+```json
+{ "ServerName": "retro-superfx_mesen", "ToolName": "sfx_resolve_address",
+  "Arguments": { "project": "snes-sfx-demo/X-GSU/IsoEngine", "symbol": "ISO_CAM" } }
 ```
 
 Result fields: `location.path` / `references[].path` (workspace-relative), `location.lineNumber` / `references[].lineNumber` (**1-based**, matches `grep -n` / `read_file`; `line` is the legacy 0-based value), `documentation`, `totalReferences`, `references[].kind` (`call`, `read`, `write`, `macro-invocation`, `use`), `references[].text` (when `contextLines > 0`). Real sources rank above fixture copies under `src/test/resources/`, `.build/`, and `build_tools/`.
@@ -226,6 +234,8 @@ Validate harness links/symlinks, skill parity, context token budgets, MCP contra
 ./tools/run-evals.sh --changed
 # Verify all Tier 0, Tier 1, and Tier 2 graders against built-in pass/fail fixtures
 ./tools/run-evals.sh --tier all --verify-graders
+# Audit a real Antigravity conversation transcript against harness invariants
+./tools/run-evals.sh --transcript <conversation-id-or-path>
 ```
 
 ---

@@ -349,7 +349,7 @@ def test_cli_tier2_and_tier_all_verify_graders_end_to_end(tmp_path: Path) -> Non
     assert payload_all["tier0"]["lint"]["passed"] is True
     assert payload_all["tier0"]["mcp_smoke"]["passed"] is True
     assert payload_all["tier1"]["passed"] is True
-    assert payload_all["tier1"]["total_cases"] == 7
+    assert payload_all["tier1"]["total_cases"] == 9
     assert payload_all["tier2"]["passed"] is True
     assert payload_all["tier2"]["total_cases"] == 3
     assert baseline_path.is_file()

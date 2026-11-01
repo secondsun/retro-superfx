@@ -71,6 +71,173 @@ class Tier1EvalReport:
         }
 
 
+@dataclass
+class TranscriptAuditReport:
+    conversation_id: str
+    transcript_path: str
+    passed: bool
+    user_prompt: str
+    total_steps: int
+    total_tool_calls: int
+    skills_read: list[str] = field(default_factory=list)
+    mcp_calls_by_tool: dict[str, int] = field(default_factory=dict)
+    checks: list[GraderCheckResult] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "conversation_id": self.conversation_id,
+            "transcript_path": self.transcript_path,
+            "passed": self.passed,
+            "user_prompt": self.user_prompt,
+            "total_steps": self.total_steps,
+            "total_tool_calls": self.total_tool_calls,
+            "skills_read": self.skills_read,
+            "mcp_calls_by_tool": self.mcp_calls_by_tool,
+            "checks": [c.to_dict() for c in self.checks],
+        }
+
+
+def _unquote_compact_value(val: Any) -> Any:
+    """Unwrap double-quoted strings or JSON-encoded strings from compact transcript.jsonl."""
+    if not isinstance(val, str):
+        return val
+    stripped = val.strip()
+    if len(stripped) >= 2 and stripped.startswith('"') and stripped.endswith('"'):
+        try:
+            loaded = json.loads(stripped)
+            return loaded
+        except json.JSONDecodeError:
+            return stripped[1:-1]
+    if (stripped.startswith("{") and stripped.endswith("}")) or (
+        stripped.startswith("[") and stripped.endswith("]")
+    ):
+        try:
+            return json.loads(stripped)
+        except json.JSONDecodeError:
+            return val
+    return val
+
+
+def normalize_tool_call(raw_call: dict[str, Any]) -> dict[str, Any]:
+    """Normalize an Antigravity transcript tool_call or eval fixture tool_call into a canonical dict."""
+    call_name = _unquote_compact_value(
+        raw_call.get("tool") or raw_call.get("ToolName") or raw_call.get("name") or ""
+    )
+    call_server = _unquote_compact_value(
+        raw_call.get("server") or raw_call.get("ServerName") or ""
+    )
+    raw_args = (
+        raw_call.get("args")
+        or raw_call.get("Arguments")
+        or raw_call.get("arguments")
+        or {}
+    )
+    if isinstance(raw_args, str):
+        raw_args = _unquote_compact_value(raw_args)
+    if isinstance(raw_args, dict):
+        clean_args = {k: _unquote_compact_value(v) for k, v in raw_args.items()}
+    else:
+        clean_args = {}
+
+    if call_name == "call_mcp_tool":
+        mcp_server = str(
+            clean_args.get("ServerName") or clean_args.get("server") or call_server or ""
+        )
+        mcp_tool = str(
+            clean_args.get("ToolName") or clean_args.get("tool") or ""
+        )
+        inner_args = clean_args.get("Arguments") or clean_args.get("args") or {}
+        if isinstance(inner_args, str):
+            inner_args = _unquote_compact_value(inner_args)
+        if not isinstance(inner_args, dict):
+            inner_args = {}
+        return {
+            "server": mcp_server,
+            "tool": mcp_tool,
+            "name": mcp_tool,
+            "args": inner_args,
+            "raw_name": "call_mcp_tool",
+        }
+
+    return {
+        "server": str(call_server) if call_server else None,
+        "tool": str(call_name),
+        "name": str(call_name),
+        "args": clean_args,
+    }
+
+
+def resolve_transcript_path(target: str | Path) -> Path:
+    """Resolve a conversation UUID or file/directory path to a transcript.jsonl file."""
+    candidate = Path(target).expanduser()
+    if candidate.is_file():
+        return candidate.resolve()
+    if candidate.is_dir():
+        jsonl = candidate / ".system_generated" / "logs" / "transcript.jsonl"
+        if jsonl.is_file():
+            return jsonl.resolve()
+        direct = candidate / "transcript.jsonl"
+        if direct.is_file():
+            return direct.resolve()
+
+    brain_dir = Path.home() / ".gemini" / "antigravity" / "brain" / str(target)
+    jsonl = brain_dir / ".system_generated" / "logs" / "transcript.jsonl"
+    if jsonl.is_file():
+        return jsonl.resolve()
+    raise FileNotFoundError(f"Could not resolve transcript path for '{target}'")
+
+
+def parse_transcript_jsonl(
+    transcript_path: str | Path,
+) -> tuple[str, int, list[dict[str, Any]], str]:
+    """Parse an Antigravity transcript.jsonl into (user_prompt, step_count, normalized_tool_calls, sfx_code)."""
+    path = resolve_transcript_path(transcript_path)
+    user_prompt = ""
+    step_count = 0
+    tool_calls: list[dict[str, Any]] = []
+    code_parts: list[str] = []
+
+    for raw_line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            step = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(step, dict):
+            continue
+        step_count += 1
+
+        if step.get("type") == "USER_INPUT" and not user_prompt:
+            content = str(step.get("content", ""))
+            m_req = re.search(
+                r"<USER_REQUEST>\s*(.*?)\s*</USER_REQUEST>", content, re.DOTALL
+            )
+            user_prompt = m_req.group(1).strip() if m_req else content.strip()
+
+        raw_calls = step.get("tool_calls")
+        if isinstance(raw_calls, list):
+            for rc in raw_calls:
+                if not isinstance(rc, dict):
+                    continue
+                norm = normalize_tool_call(rc)
+                tool_calls.append(norm)
+                tname = norm.get("tool")
+                targs = norm.get("args", {})
+                if tname in ("write_file", "edit_file") and isinstance(targs, dict):
+                    fpath = str(targs.get("Path", ""))
+                    if fpath.endswith((".s", ".sgs", ".i", ".inc")):
+                        snippet = str(
+                            targs.get("Content") or targs.get("Replacement") or ""
+                        )
+                        if snippet:
+                            code_parts.append(snippet)
+
+    return user_prompt, step_count, tool_calls, "\n".join(code_parts)
+
+
+
 def default_sfx_audit_runner(code: str) -> list[dict[str, Any]]:
     """Fast deterministic SuperFX static diagnostic auditor for Tier 1 snippet grading."""
     diagnostics: list[dict[str, Any]] = []
@@ -311,9 +478,10 @@ class TraceAndSnippetGrader:
         args_match: dict[str, Any] = spec.get("args_match", {}) or {}
 
         for call in tool_calls:
-            call_server = call.get("server") or call.get("ServerName")
-            call_tool = call.get("tool") or call.get("ToolName") or call.get("name")
-            call_args = call.get("args") or call.get("Arguments") or call.get("arguments") or {}
+            norm = normalize_tool_call(call)
+            call_server = norm.get("server")
+            call_tool = norm.get("tool")
+            call_args = norm.get("args") or {}
 
             if expected_server and call_server != expected_server:
                 continue
@@ -367,10 +535,11 @@ class TraceAndSnippetGrader:
         reason = spec.get("reason", f"Forbidden tool call '{forbidden_tool}'")
 
         for call in tool_calls:
-            call_tool = call.get("tool") or call.get("ToolName") or call.get("name")
+            norm = normalize_tool_call(call)
+            call_tool = norm.get("tool")
             if call_tool != forbidden_tool:
                 continue
-            call_args = call.get("args") or call.get("Arguments") or call.get("arguments") or {}
+            call_args = norm.get("args") or {}
             serialized = (
                 json.dumps(call_args, sort_keys=True)
                 if not isinstance(call_args, str)
@@ -701,4 +870,179 @@ class TraceAndSnippetGrader:
             passed_cases=passed_count,
             cases=results,
         )
+
+    def audit_transcript(
+        self,
+        transcript_target: str | Path,
+        case_id: str | None = None,
+    ) -> TranscriptAuditReport:
+        """Audit a real Antigravity conversation transcript against universal harness invariants and optional case."""
+        path = resolve_transcript_path(transcript_target)
+        conv_id = str(transcript_target)
+        for part in path.parts:
+            if re.match(
+                r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                part,
+            ):
+                conv_id = part
+                break
+
+        user_prompt, total_steps, tool_calls, sfx_code = parse_transcript_jsonl(path)
+
+        skills_read: list[str] = []
+        mcp_calls_by_tool: dict[str, int] = {}
+        pngs_written: set[str] = set()
+        pngs_read: set[str] = set()
+
+        for call in tool_calls:
+            tname = str(call.get("tool") or "")
+            tserver = call.get("server")
+            targs = call.get("args") or {}
+
+            if tserver:
+                qual = f"{tserver}:{tname}"
+                mcp_calls_by_tool[qual] = mcp_calls_by_tool.get(qual, 0) + 1
+
+            if tname == "read_file" and isinstance(targs, dict):
+                rpath = str(targs.get("Path", ""))
+                if rpath.endswith("SKILL.md"):
+                    skill_name = Path(rpath).parent.name
+                    if skill_name not in skills_read:
+                        skills_read.append(skill_name)
+                if rpath.lower().endswith(".png"):
+                    pngs_read.add(Path(rpath).name)
+
+            if tname == "write_file" and isinstance(targs, dict):
+                wpath = str(targs.get("Path", ""))
+                cnt = str(targs.get("Content", ""))
+                for m_png in re.findall(r"([A-Za-z0-9_.-]+\.png)", cnt):
+                    pngs_written.add(m_png)
+                if wpath.lower().endswith(".png"):
+                    pngs_written.add(Path(wpath).name)
+
+        checks: list[GraderCheckResult] = []
+
+        # 1. Universal P0: No grep/rg on .s/.sgs/.i/.inc sources for symbols
+        checks.append(
+            self._eval_tool_forbidden(
+                {
+                    "tool": "run_command",
+                    "args_pattern": r"\b(grep|rg)\b.*\.(s|sgs|i|inc)\b",
+                    "reason": "[P0 Symbol/Ref Policy] Do not grep .s/.sgs/.i/.inc sources; use sfx_lookup_symbol or sfx_find_references on retro-superfx_lsp",
+                },
+                tool_calls,
+            )
+        )
+
+        # 2. Universal P0: No grep/rg on .sym/.dbg for linker addresses
+        checks.append(
+            self._eval_tool_forbidden(
+                {
+                    "tool": "run_command",
+                    "args_pattern": r"\b(grep|rg)\b.*\.(sym|dbg)\b",
+                    "reason": "[P0 Address Policy] Do not grep .cpu.sym or .dbg files; use sfx_resolve_address on retro-superfx_mesen",
+                },
+                tool_calls,
+            )
+        )
+
+        # 3. Universal P1: Do not reverse-engineer tools/mesen-mcp internals during SuperFX tasks
+        prompt_mentions_mcp = bool(
+            re.search(r"(mesen-mcp|mcp_server|render_capture\.py|session\.py)", user_prompt, re.IGNORECASE)
+        )
+        if not prompt_mentions_mcp:
+            checks.append(
+                self._eval_tool_forbidden(
+                    {
+                        "tool": "read_file",
+                        "args_pattern": r"tools/mesen-mcp/mesen_mcp/",
+                        "reason": "[P1 MCP Tool Hygiene] Do not read internal tools/mesen-mcp/ Python implementation during SuperFX tasks; read sfx-test-runner/SKILL.md or call retro-superfx_mesen MCP tools directly",
+                    },
+                    tool_calls,
+                )
+            )
+            checks.append(
+                self._eval_tool_forbidden(
+                    {
+                        "tool": "run_command",
+                        "args_pattern": r"\b(cat|grep|rg)\b.*tools/mesen-mcp/",
+                        "reason": "[P1 MCP Tool Hygiene] Do not grep/cat internal tools/mesen-mcp/ Python implementation during SuperFX tasks; read sfx-test-runner/SKILL.md or call retro-superfx_mesen MCP tools directly",
+                    },
+                    tool_calls,
+                )
+            )
+
+        # 4. Bug Diagnosis Skill Activation Check
+        is_bug_task = bool(
+            re.search(
+                r"\b(fix|bug|broken|disappear|glitch|wrong|failing|regression|diagnose|debug)\b",
+                user_prompt,
+                re.IGNORECASE,
+            )
+        )
+        if is_bug_task:
+            if "diagnosing-bugs" in skills_read:
+                checks.append(
+                    GraderCheckResult(
+                        grader_type="skill_activated",
+                        passed=True,
+                        message="Activated 'diagnosing-bugs' skill on bug-fix task",
+                    )
+                )
+            else:
+                checks.append(
+                    GraderCheckResult(
+                        grader_type="skill_activated",
+                        passed=False,
+                        message="[P0 Skill Routing] Bug-fix task did not read '.agents/skills/diagnosing-bugs/SKILL.md' before investigating",
+                    )
+                )
+
+        # 5. Multimodal Visual Inspection Check (if scratch PNGs were generated)
+        if pngs_written:
+            if pngs_read:
+                checks.append(
+                    GraderCheckResult(
+                        grader_type="multimodal_render_inspection",
+                        passed=True,
+                        message=f"Inspected captured PNG(s) with read_file: {sorted(pngs_read)}",
+                    )
+                )
+            else:
+                checks.append(
+                    GraderCheckResult(
+                        grader_type="multimodal_render_inspection",
+                        passed=False,
+                        message=(
+                            f"[P1 Visual Inspection] Generated PNG captures {sorted(pngs_written)} "
+                            "in scratch scripts but never viewed them with read_file"
+                        ),
+                    )
+                )
+
+        # 6. FX3 Static Audit on any authored/edited SuperFX assembly
+        if sfx_code.strip():
+            checks.append(self._eval_lsp_audit_clean({}, sfx_code))
+
+        # 7. Optional specific case graders
+        if case_id:
+            all_cases = self.load_cases()
+            matched_cases = [c for c in all_cases if str(c.get("id")) == case_id]
+            for mc in matched_cases:
+                for g in mc.get("graders", []) or []:
+                    checks.append(self.evaluate_grader(g, tool_calls=tool_calls, code=sfx_code))
+
+        overall_passed = all(c.passed for c in checks)
+        return TranscriptAuditReport(
+            conversation_id=conv_id,
+            transcript_path=str(path),
+            passed=overall_passed,
+            user_prompt=user_prompt,
+            total_steps=total_steps,
+            total_tool_calls=len(tool_calls),
+            skills_read=skills_read,
+            mcp_calls_by_tool=mcp_calls_by_tool,
+            checks=checks,
+        )
+
 

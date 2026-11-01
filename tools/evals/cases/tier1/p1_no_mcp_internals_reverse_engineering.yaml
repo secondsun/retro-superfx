@@ -1,0 +1,48 @@
+id: p1_no_mcp_internals_reverse_engineering
+tier: 1
+priority: P1
+targets:
+  - AGENTS.md
+  - .agents/skills/sfx-test-runner/**
+  - .agents/plugins/retro-superfx/skills/sfx-test-runner/**
+  - tools/mesen-mcp/**
+prompt: >
+  Capture a headless screenshot of `IsoEngine` at yaw=30 in Mesen CE and inspect
+  the rendered corner ramparts.
+graders:
+  - type: tool_called
+    tool: read_file
+    args_match:
+      Path: 'sfx-test-runner/SKILL\.md$'
+  - type: tool_forbidden
+    tool: read_file
+    args_pattern: 'tools/mesen-mcp/mesen_mcp/'
+    reason: Do not read internal tools/mesen-mcp/ Python implementation during SuperFX tasks; read sfx-test-runner/SKILL.md or call retro-superfx_mesen MCP tools directly.
+  - type: tool_forbidden
+    tool: run_command
+    args_pattern: '\b(cat|grep|rg)\b.*tools/mesen-mcp/'
+    reason: Do not grep/cat internal tools/mesen-mcp/ Python implementation during SuperFX tasks; read sfx-test-runner/SKILL.md or call retro-superfx_mesen MCP tools directly.
+replay_fixtures:
+  passing:
+    tool_calls:
+      - tool: read_file
+        args:
+          Path: "/Users/summerspittman/Projects/retro-superfx/.agents/skills/sfx-test-runner/SKILL.md"
+      - server: retro-superfx_mesen
+        tool: capture_sfx_render
+        args:
+          scene_test_name: IsoEngine
+      - tool: read_file
+        args:
+          Path: "/tmp/iso_yaw30.png"
+    code: ""
+  failing:
+    tool_calls:
+      - tool: read_file
+        args:
+          Path: "/Users/summerspittman/Projects/retro-superfx/tools/mesen-mcp/mesen_mcp/render_capture.py"
+      - tool: run_command
+        args:
+          CommandLine: "grep -rn \"mesen\" tools/mesen-mcp/mesen_mcp/session.py"
+    code: ""
+

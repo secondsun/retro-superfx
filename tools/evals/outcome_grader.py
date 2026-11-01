@@ -91,8 +91,11 @@ class OutcomeGrader(TraceAndSnippetGrader):
         return super().evaluate_grader(grader_spec, tool_calls=tool_calls, code=code)
 
     def _call_matches_token(self, call: dict[str, Any], token: str) -> bool:
-        call_server = str(call.get("server") or call.get("ServerName") or "")
-        call_tool = str(call.get("tool") or call.get("ToolName") or call.get("name") or "")
+        from evals.trace_grader import normalize_tool_call
+
+        norm = normalize_tool_call(call)
+        call_server = str(norm.get("server") or "")
+        call_tool = str(norm.get("tool") or "")
 
         for alt in token.split("|"):
             alt = alt.strip()
