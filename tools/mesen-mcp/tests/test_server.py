@@ -11,6 +11,7 @@ async def test_server_list_tools():
     assert "run_sfx_test" in tool_names
     assert "assert_sfx_math" in tool_names
     assert "capture_sfx_render" in tool_names
+    assert "profile_sfx_execution" in tool_names
 
 
 @pytest.mark.asyncio
@@ -67,3 +68,26 @@ async def test_server_call_capture_sfx_render(tmp_path):
     assert "metrics" in payload
     assert payload["metrics"]["width"] == 256
     assert payload["metrics"]["height"] == 224
+
+
+@pytest.mark.asyncio
+async def test_server_call_profile_sfx_execution():
+    server = create_server()
+    result = await server.call_tool(
+        "profile_sfx_execution",
+        {
+            "target_name": "sqrt",
+            "inputs": {"INPUT": 100},
+            "max_cycles": 5000,
+            "timeout_seconds": 15,
+        },
+    )
+    assert not result.is_error
+    assert len(result.content) > 0
+    payload = json.loads(result.content[0].text)
+    assert payload["status"] == "PASS"
+    assert payload["passed"] is True
+    assert payload["summary"]["total_cycles"] > 0
+    assert any(
+        h["symbol"] == "gsu_sqrt32" for h in payload["hotspots_by_function"]
+    )

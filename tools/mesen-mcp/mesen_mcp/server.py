@@ -9,6 +9,7 @@ except ImportError:
     from mcp.server.fastmcp import FastMCP
 
 from mesen_mcp.math_verifier import assert_sfx_math as execute_assert_sfx_math
+from mesen_mcp.profiler import profile_sfx_execution as execute_profile_sfx_execution
 from mesen_mcp.render_capture import capture_sfx_render as execute_capture_sfx_render
 from mesen_mcp.runner import run_sfx_test as execute_run_sfx_test
 
@@ -82,6 +83,42 @@ def create_server() -> FastMCP:
         return execute_capture_sfx_render(
             scene_test_name=scene_test_name,
             output_png_path=output_png_path,
+            timeout_seconds=timeout_seconds,
+        )
+
+    @app.tool()
+    def profile_sfx_execution(
+        target_name: str,
+        warmup_runs: int = 0,
+        sample_runs: int = 1,
+        max_cycles: Optional[int] = None,
+        inputs: Optional[Dict[str, int]] = None,
+        top_n: int = 15,
+        timeout_seconds: int = 15,
+    ) -> Dict[str, Any]:
+        """Profile SuperFX (GSU) execution cycles, function/label hotspots, cache residency, and VBlank FPS.
+
+        Args:
+            target_name: Name of the test or scene directory (e.g. 'sqrt', 'IsoEngine', 'SpriteScale').
+            warmup_runs: Number of GSU invocations to skip before recording metrics (default: 0).
+            sample_runs: Number of GSU invocations to profile (default: 1).
+            max_cycles: Optional maximum allowed average GSU cycles per invocation budget.
+            inputs: Optional mapping of symbol/register names to integer values to inject before execution.
+            top_n: Maximum number of hotspot functions and labels to return (default: 15).
+            timeout_seconds: Maximum execution time in seconds (default: 15).
+
+        Returns:
+            Structured profiling results including 'passed', 'summary' (total/average cycles,
+            cached_execution_pct, vblanks_per_full_frame, effective_fps, pass_breakdown),
+            'hotspots_by_function', and 'hotspots_by_label'.
+        """
+        return execute_profile_sfx_execution(
+            target_name=target_name,
+            warmup_runs=warmup_runs,
+            sample_runs=sample_runs,
+            max_cycles=max_cycles,
+            inputs=inputs,
+            top_n=top_n,
             timeout_seconds=timeout_seconds,
         )
 

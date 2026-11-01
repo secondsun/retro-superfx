@@ -29,4 +29,7 @@ Thumbs.db
 # Subagent worktrees
 wt-*
 
+# Render captures in root
+/*.png
+
 

@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Pre-commit guardrail for the JVM repos (java-language-server, retro-common,
+# sfx-optimizer, retro-lsp). Runs in whichever repo is committing.
+# Install with ./tools/install-git-hooks.sh. Bypass only with an explicit reason: git commit --no-verify.
+set -euo pipefail
+
+root="$(git rev-parse --show-toplevel)"
+cd "$root"
+
+# Only repos with a Maven wrapper are checked (the umbrella repo and snes-sfx-demo are skipped).
+[ -x ./mvnw ] || exit 0
+
+# Skip when no JVM sources are staged.
+if ! git diff --cached --name-only --diff-filter=ACMR | grep -qE '\.(kt|java|kts)$|(^|/)pom\.xml$'; then
+  exit 0
+fi
+
+echo "[pre-commit] spotless:check"
+./mvnw -q spotless:check || {
+  echo "[pre-commit] Format violations. Run './mvnw spotless:apply', re-stage, and commit again." >&2
+  exit 1
+}
+
+echo "[pre-commit] test"
+./mvnw -q test || {
+  echo "[pre-commit] Tests failed." >&2
+  exit 1
+}
+

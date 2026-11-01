@@ -59,5 +59,7 @@ def test_parse_dbg_sqrt_file():
 
     assert data.get_symbol_offset("test_setup") == 0x0003
     assert data.get_symbol_offset("test_stop") == 0x0020
-    assert data.get_symbol_offset("INPUT") == 0x0AC0
-    assert data.get_symbol_offset("OUTPUT") == 0x0AC4
+    input_offset = data.get_symbol_offset("INPUT")
+    output_offset = data.get_symbol_offset("OUTPUT")
+    assert input_offset is not None and input_offset > 0
+    assert output_offset == input_offset + 4

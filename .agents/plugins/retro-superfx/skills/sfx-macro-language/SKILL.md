@@ -78,6 +78,21 @@ endfor
 ```
 - **Rule**: Never push values onto the stack inside `for ... endfor` without popping them before `endfor`, because `endfor` executes `restoreloop` which pops `R13` and `R12` directly from the top of stack.
 
+### Hardware Loops with Instruction Cache (`cache`)
+For long-running, compute-heavy leaf loops (e.g. rasterization, matrix transformations, buffer clearing), place `cache` immediately before capturing the loop entry point into `R13`:
+```assembly
+    cache
+    move r13, r15       ; Set R13 to loop entry point directly following cache
+loop_start:
+    ; loop body (< 512 bytes)
+    loop
+    nop
+```
+- **Guidelines**:
+  - Only cache leaf loops with high iteration counts (> 20 iterations).
+  - Never place `cache` inside loop bodies or inside subroutines called from cached blocks—changing `CBR` forces a 512-byte flush and line-fill penalty.
+  - Subroutines (`call`, `jmp`) called from cached blocks preserve the caller's cache residency upon return.
+
 ### Conditionals (`control.i`)
 
 ```assembly

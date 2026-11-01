@@ -31,6 +31,9 @@ def _sync_lua_labels(sym_map: Any, lua_path: Path) -> None:
         m = var_pattern.match(line)
         if m:
             prefix, var_name, current_val_str, suffix = m.groups()
+            if var_name.lower() in ("index", "fail_count", "i", "j", "k"):
+                updated_lines.append(line)
+                continue
             target_offset = table.get_offset(var_name)
 
             if target_offset is not None:
@@ -139,6 +142,7 @@ def run_sfx_test(
         }
 
 
-# Re-export key verification and capture APIs
+# Re-export key verification, capture, and profiling APIs
 from mesen_mcp.math_verifier import assert_sfx_math
+from mesen_mcp.profiler import profile_sfx_execution
 from mesen_mcp.render_capture import capture_sfx_render

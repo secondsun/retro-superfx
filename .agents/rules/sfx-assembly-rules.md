@@ -66,6 +66,16 @@ Rules and technical constraints when writing, parsing, analyzing, or compiling S
    - Tables or constants defined in `.segment "GSUCODE"`, `.segment "RODATA"`, or `.segment "ROM*"` reside in ROM (`>= $8000`) when executing from ROM banks; read them via `romb` + `r14` + `getb`/`getbh` or copy them into `.segment "GSURAM"` before using `ldw`/`ldb`.
 6. **`R1..R15`-Only Register Operands (`and`, `bic`, `or`, `xor`, `mult`, `umult`)**:
    - The register forms of `and`, `bic`, `or`, `xor`, `mult`, and `umult` only encode `R1`–`R15` (since opcode `$70` is `merge` rather than `and r0`). Keep operand registers in `R1`–`R15` or place `R0` as `Sreg`/`Dreg` via `from r0` / `with r0`.
+7. **512-Byte Instruction Cache vs Dual 8-Pixel Plot Cache**:
+   - The GSU has a 512-byte on-chip instruction cache (32 lines of 16 bytes each), distinct from the dual 8-pixel plot cache flushed by `rpix; rpix`.
+   - Instructions running inside the cache execute in 1 clock cycle (21.47 MHz on FX3), freeing external buses for concurrent RAM writes or ROM prefetching.
+   - **`CACHE` Opcode**: When `CACHE` executes and `CBR != (R15 & $FFF0)`, it updates `CBR = R15 & $FFF0` and clears all 32 cache line valid flags. Subsequent misses fetch 16 bytes across the bus (~48–96 cycles).
+   - **Subroutine Residency**: `call`, `jmp`, and `bra` **do not invalidate or flush the cache**. If a target subroutine is outside `[CBR, CBR + 511]`, it executes at normal bus speeds, and returning to the caller immediately resumes 1-cycle cache hits.
+   - **Anti-Pattern (Over-Invalidation / Cache Spraying)**: Never place `cache` inside a loop or inner helper function. Changing `CBR` forces a cold cache reload on every iteration. Use `cache` only before compute-heavy leaf loops with high iteration counts (e.g. rasterization, large memory clears, vertex transform batches):
+     ```assembly
+     cache
+     move r13, r15   ; Entry point for loop
+     ```
 
 ---
 

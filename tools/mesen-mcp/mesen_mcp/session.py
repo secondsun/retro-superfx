@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
-from typing import Dict, List, Optional, Protocol
+from typing import Dict, List, Optional, Protocol, Tuple
 
 from mesen_mcp.dbg_parser import DbgData, parse_dbg_file
 from mesen_mcp.mesen import find_mesen
@@ -62,6 +62,9 @@ class SymbolTable:
     symbols: Dict[str, int] = field(default_factory=dict)
     sizes: Dict[str, int] = field(default_factory=dict)
     label_symbols: Dict[str, int] = field(default_factory=dict)
+    function_spans: List[Tuple[int, int, str]] = field(default_factory=list)
+    label_spans: List[Tuple[int, int, str, str]] = field(default_factory=list)
+    function_entries: Dict[str, int] = field(default_factory=dict)
 
     OUTPUT_ALIASES = (
         "TEST_OUTPUT",
@@ -73,6 +76,96 @@ class SymbolTable:
         "VECTOR_TRANSFORM_OUT",
         "vector_normalize_out",
     )
+
+    def __post_init__(self) -> None:
+        if not self.label_symbols and self.symbols:
+            self.label_symbols = dict(self.symbols)
+        if not self.function_spans and self.label_symbols:
+            self._build_spans_from_symbol_dict(self.label_symbols)
+        elif self.function_spans and not self.function_entries:
+            for start, _end, func_name in self.function_spans:
+                if func_name not in self.function_entries:
+                    self.function_entries[func_name] = start
+
+    def _build_spans_from_symbol_dict(self, sym_dict: Dict[str, int]) -> None:
+        """Builds fallback function and label intervals from a flat symbol->offset map."""
+        filtered = [
+            (name, offset & 0xFFFF)
+            for name, offset in sym_dict.items()
+            if "LOCAL-MACRO" not in name and not name.startswith("__")
+        ]
+        if not filtered:
+            return
+        filtered.sort(key=lambda item: (item[1], item[0].startswith("@")))
+
+        # Identify function-level anchors (*_function or GSU_Code)
+        func_anchors: List[Tuple[int, str]] = []
+        seen_func_offsets = set()
+        for name, offset in filtered:
+            if name.endswith("_function"):
+                clean_name = name[: -len("_function")]
+            elif name in ("GSU_Code", "GSU_Entry", "main"):
+                clean_name = name
+            else:
+                continue
+            if offset not in seen_func_offsets:
+                seen_func_offsets.add(offset)
+                func_anchors.append((offset, clean_name))
+                self.function_entries[clean_name] = offset
+
+        if not func_anchors:
+            # Fallback: treat all non-local labels as function anchors
+            for name, offset in filtered:
+                if not name.startswith("@") and offset not in seen_func_offsets:
+                    seen_func_offsets.add(offset)
+                    func_anchors.append((offset, name))
+                    self.function_entries[name] = offset
+
+        func_anchors.sort(key=lambda item: item[0])
+        for i, (start, func_name) in enumerate(func_anchors):
+            end = (
+                func_anchors[i + 1][0]
+                if i + 1 < len(func_anchors)
+                else min(0x10000, start + 0x1000)
+            )
+            if end > start:
+                self.function_spans.append((start, end, func_name))
+
+        # Build label spans
+        dedup_labels: List[Tuple[int, str]] = []
+        seen_label_offsets = set()
+        for name, offset in filtered:
+            if offset not in seen_label_offsets:
+                seen_label_offsets.add(offset)
+                dedup_labels.append((offset, name))
+
+        dedup_labels.sort(key=lambda item: item[0])
+        for i, (start, label_name) in enumerate(dedup_labels):
+            end = (
+                dedup_labels[i + 1][0]
+                if i + 1 < len(dedup_labels)
+                else min(0x10000, start + 0x0400)
+            )
+            if end > start:
+                enclosing = self.resolve_function(start)
+                self.label_spans.append((start, end, label_name, enclosing))
+
+    def resolve_function(self, offset: int) -> str:
+        """Resolves a 16-bit GSU PC offset to its enclosing function name."""
+        pc = offset & 0xFFFF
+        for start, end, func_name in self.function_spans:
+            if start <= pc < end:
+                return func_name
+        return f"0x{pc:04X}"
+
+    def resolve_label(self, offset: int) -> Tuple[str, str]:
+        """Resolves a 16-bit GSU PC offset to (label_name, enclosing_function)."""
+        pc = offset & 0xFFFF
+        for start, end, label_name, enclosing_func in self.label_spans:
+            if start <= pc < end:
+                return (label_name, enclosing_func)
+        func_name = self.resolve_function(pc)
+        return (func_name, func_name)
 
     def get_offset(self, name: str) -> Optional[int]:
         """Resolves symbol offset with case-insensitive fallback and OUTPUT aliases."""
@@ -144,11 +237,109 @@ class SymbolTable:
                             symbols_map[m.group(2)] = full_val & 0xFFFF
 
         sizes = cls._estimate_symbol_sizes(dbg_data)
+        func_spans, lbl_spans, func_entries = cls._build_dbg_spans(dbg_data)
         return cls(
             symbols=symbols_map,
             sizes=sizes,
             label_symbols=label_map if label_map else symbols_map,
+            function_spans=func_spans,
+            label_spans=lbl_spans,
+            function_entries=func_entries,
         )
+
+    @staticmethod
+    def _build_dbg_spans(
+        dbg_data: Optional[DbgData],
+    ) -> Tuple[List[Tuple[int, int, str]], List[Tuple[int, int, str, str]], Dict[str, int]]:
+        func_spans: List[Tuple[int, int, str]] = []
+        label_spans: List[Tuple[int, int, str, str]] = []
+        func_entries: Dict[str, int] = {}
+        if not dbg_data:
+            return func_spans, label_spans, func_entries
+
+        gsu_seg = next(
+            (s for s in dbg_data.segments.values() if s.name == "GSUCODE"),
+            None,
+        )
+        if gsu_seg is None:
+            return func_spans, label_spans, func_entries
+
+        seg_start = gsu_seg.start & 0xFFFF
+        seg_end = min(0x10000, seg_start + max(gsu_seg.size, 1))
+
+        gsu_syms = [
+            sym
+            for sym in dbg_data.all_symbols
+            if sym.seg == gsu_seg.id
+            and sym.type == "lab"
+            and "LOCAL-MACRO" not in sym.name
+            and not sym.name.startswith("__")
+        ]
+        if not gsu_syms:
+            return func_spans, label_spans, func_entries
+
+        gsu_syms.sort(
+            key=lambda s: (
+                s.offset,
+                0 if s.name.endswith("_function") or s.name == "GSU_Code" else 1,
+                s.name.startswith("@"),
+            )
+        )
+
+        # Build function-level spans from *_function scopes and GSU_Code entry
+        func_anchors: List[Tuple[int, str, Optional[int]]] = []
+        seen_func_offsets = set()
+        for sym in gsu_syms:
+            if sym.name.endswith("_function"):
+                clean_name = sym.name[: -len("_function")]
+                sc = dbg_data.get_scope(clean_name)
+                sc_size = sc.size if (sc and sc.size > 0) else None
+                if sym.offset not in seen_func_offsets:
+                    seen_func_offsets.add(sym.offset)
+                    func_anchors.append((sym.offset, clean_name, sc_size))
+                    func_entries[clean_name] = sym.offset
+            elif sym.name in ("GSU_Code", "GSU_Entry", "main"):
+                if sym.offset not in seen_func_offsets:
+                    seen_func_offsets.add(sym.offset)
+                    func_anchors.append((sym.offset, sym.name, None))
+                    func_entries[sym.name] = sym.offset
+
+        func_anchors.sort(key=lambda item: item[0])
+        for i, (start, func_name, sc_size) in enumerate(func_anchors):
+            next_start = func_anchors[i + 1][0] if i + 1 < len(func_anchors) else seg_end
+            end = min(next_start, start + sc_size) if sc_size else next_start
+            if end > start:
+                func_spans.append((start, end, func_name))
+
+        def _resolve_func_for_offset(pc: int) -> str:
+            for f_start, f_end, f_name in func_spans:
+                if f_start <= pc < f_end:
+                    return f_name
+            return "GSU_Code"
+
+        # Build fine-grained label spans within GSUCODE
+        dedup_syms = []
+        seen_lbl_offsets = set()
+        for sym in gsu_syms:
+            if sym.offset not in seen_lbl_offsets:
+                seen_lbl_offsets.add(sym.offset)
+                dedup_syms.append(sym)
+
+        for i, sym in enumerate(dedup_syms):
+            start = sym.offset
+            end = dedup_syms[i + 1].offset if i + 1 < len(dedup_syms) else seg_end
+            if end <= start:
+                continue
+            sc = dbg_data.scopes.get(sym.scope)
+            enclosing_func = (
+                sc.name if (sc and sc.name) else _resolve_func_for_offset(start)
+            )
+            label_name = sym.name
+            if label_name.endswith("_function"):
+                label_name = label_name[: -len("_function")]
+            label_spans.append((start, end, label_name, enclosing_func))
+
+        return func_spans, label_spans, func_entries
 
     @staticmethod
     def _estimate_symbol_sizes(dbg_data: Optional[DbgData]) -> Dict[str, int]:
@@ -267,6 +458,9 @@ class SfxTestSession:
             m = var_pattern.match(line)
             if m:
                 prefix, var_name, current_val_str, suffix = m.groups()
+                if var_name.lower() in ("index", "fail_count", "i", "j", "k"):
+                    updated_lines.append(line)
+                    continue
                 target_offset = self.symbols.get_offset(var_name)
 
                 if target_offset is not None:

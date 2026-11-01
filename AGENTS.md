@@ -103,6 +103,16 @@ When writing or optimizing SuperFX code:
 5. **Modal Instruction Scope**: `with`, `to`, `from` modify registers for the **single immediately following instruction only**. Subsequent arithmetic resets `Sreg` and `Dreg` back to `R0`.
 6. **Dual `rpix` Pixel Cache Flush**: `plot` buffers pixels in dual 8-pixel caches (primary and secondary). Execute two `rpix` instructions (`rpix; rpix`) before the 8 settling NOPs and `stop` to flush all plotted pixels to Work RAM.
 7. **GSURAM-Only `ldw` / `ldb` Addressing**: `ldw (Rn)` and `ldb (Rn)` only access `GSURAM` (`$700000`, masked to `$1FFF`). Read ROM-resident tables in `.segment "GSUCODE"` or `.segment "ROM*"` via `romb` + `r14` + `getb`/`getbh`.
+8. **512-Byte Instruction Cache vs Pixel Cache**:
+   - The GSU features a **512-byte on-chip instruction cache** (32 lines of 16 bytes each), distinct from the dual 8-pixel plot cache.
+   - When executing inside the cache, opcodes run at single-cycle speed (21.47 MHz on FX3) and free external buses for concurrent RAM writes or ROM prefetching.
+   - **`CACHE` opcode behavior**: If `CBR != (R15 & $FFF0)`, sets `CBR = R15 & $FFF0` and clears all 32 valid flags. If `CBR` matches, tags are preserved.
+   - **Subroutine residency**: Subroutines (`call`, `jmp`, `bra`) **do not invalidate or flush the cache**. If a target is outside the current 512-byte window, it executes at un-cached bus speeds, and returning to the caller immediately resumes 1-cycle cache hits.
+   - **Avoid Over-Invalidation / Cache Spraying**: Never put `cache` inside a loop or inside helper functions, as changing `CBR` invalidates all 512 bytes on every iteration. Reserve `cache` for heavy, high-iteration leaf kernels (e.g. rasterization loops, batch transforms, framebuffer clears) using the canonical idiom:
+     ```assembly
+     cache
+     move r13, r15
+     ```
 
 ---
 
@@ -195,6 +205,10 @@ Workspace customizations are maintained in `.agents/`:
   - [`update-submodules`](.agents/skills/update-submodules/SKILL.md): Stage, commit, and push updated Git submodules to origin.
 
 ---
+
+## Guardrails & standards
+
+Run `./tools/install-git-hooks.sh` once per clone to install the pre-commit hook (spotless + tests for the JVM repos). Review judgement calls live in [`CODING_STANDARDS.md`](CODING_STANDARDS.md); `sfx-optimizer` compile/CLI steps are in `sfx-optimizer/AGENTS.md` §5.
 
 ## Agent skills
 
