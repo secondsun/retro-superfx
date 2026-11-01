@@ -20,3 +20,9 @@ Read during review, not implementation. Mechanical rules (formatting, tests) are
 
 - Every transformation states the hardware condition that makes it safe (delay slots, modal prefix lifetime, sign extension, flag consumers). A rewrite that changes semantics, such as `mult #2` to `add`, is called out in the ADR or the pass's KDoc.
 
+## Hardware loop invariants (`forR` / `loop`)
+
+- `forR Rn` uses hardware counter `R12` and back-edge target `R13`.
+- Subroutines that clobber `R12` or `R13` (such as `compile_face_traps`, complex rasterizers, or math kernels) must NEVER be called inside `forR` loops without `backuploop` / `restoreloop` shielding or caller-saved stack preservation.
+- Calling a routine that mutates `R12`/`R13` inside a loop without preservation prematurely terminates or corrupts the outer loop.
+

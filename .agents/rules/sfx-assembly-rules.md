@@ -88,4 +88,16 @@ Rules and technical constraints when writing, parsing, analyzing, or compiling S
    - `for` / `forR` macro automatically pushes `R12` and `R13` onto the stack (`backuploop`).
    - `endfor` executes `loop; nop; restoreloop` which pops `R13` and `R12`.
    - **Never push un-popped data to the stack inside a `for` ... `endfor` block**, or `restoreloop` will pop corrupted loop pointers.
+3. **Hardware Loop Invariants (`forR` / `loop`)**:
+   - `forR Rn` uses hardware counter `R12` and back-edge target `R13`.
+   - Subroutines that clobber `R12` or `R13` (such as `compile_face_traps`, complex rasterizers, or math kernels) must NEVER be called inside `forR` loops without `backuploop` / `restoreloop` shielding or caller-saved stack preservation.
+   - Calling a routine that mutates `R12`/`R13` inside a loop without preservation prematurely terminates or corrupts the outer loop.
+
+---
+
+## 5. Mandatory Framebuffer Capture Gate for Scene Optimizations
+
+- **Full Scene Verification Gate**: Any optimization, refactoring, or pipeline change affecting full-scene demos (`IsoEngine`, `SpriteScale`) MUST execute the `capture_sfx_render` MCP tool on `retro-superfx_mesen` (or verify via headless screenshot) to confirm `non_black_pixels > 0` before declaring the task complete.
+- **Subroutine Isolation vs Integration**: Passing isolated subroutine unit tests (`draw_textured_triangle`, `test_cached_trap`) is necessary but NOT sufficient to verify full scene integration.
+
 

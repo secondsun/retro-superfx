@@ -14,6 +14,10 @@ elif [ -d "${ROOT_DIR}/snes-sfx-demo/X-GSU/tests/${TEST_ARG}" ]; then
     TEST_DIR="${ROOT_DIR}/snes-sfx-demo/X-GSU/tests/${TEST_ARG}"
 elif [ -d "${ROOT_DIR}/snes-sfx-demo/tests/${TEST_ARG}" ]; then
     TEST_DIR="${ROOT_DIR}/snes-sfx-demo/tests/${TEST_ARG}"
+elif [ -d "${ROOT_DIR}/snes-sfx-demo/X-GSU/${TEST_ARG}" ]; then
+    TEST_DIR="${ROOT_DIR}/snes-sfx-demo/X-GSU/${TEST_ARG}"
+elif [ -d "${ROOT_DIR}/snes-sfx-demo/${TEST_ARG}" ]; then
+    TEST_DIR="${ROOT_DIR}/snes-sfx-demo/${TEST_ARG}"
 else
     echo "Error: Test directory not found: ${TEST_ARG}" >&2
     echo "Available tests in snes-sfx-demo/X-GSU/tests/:" >&2
@@ -53,42 +57,68 @@ echo ">>> [1/3] Compiling test ROM..."
 make -C "${TEST_DIR}" clean all
 
 # 2. Check and report symbol addresses, then sync test.lua
-SYM_FILE="${TEST_DIR}/Test.cpu.sym"
-LUA_SCRIPT="${TEST_DIR}/test.lua"
-if [ ! -f "${LUA_SCRIPT}" ]; then
-    ALT_LUA="$(find "${TEST_DIR}" -maxdepth 1 -name "*.lua" | head -n 1 || true)"
+SYM_FILE=""
+if [ -f "${TEST_DIR}/Test.cpu.sym" ]; then
+    SYM_FILE="${TEST_DIR}/Test.cpu.sym"
+elif [ -f "${TEST_DIR}/SuperFX.cpu.sym" ]; then
+    SYM_FILE="${TEST_DIR}/SuperFX.cpu.sym"
+elif [ -f "${TEST_DIR}/$(basename "${TEST_DIR}").cpu.sym" ]; then
+    SYM_FILE="${TEST_DIR}/$(basename "${TEST_DIR}").cpu.sym"
+else
+    ALT_SYM="$(find "${TEST_DIR}" -maxdepth 1 -name "*.cpu.sym" | head -n 1 || true)"
+    if [ -n "${ALT_SYM}" ]; then
+        SYM_FILE="${ALT_SYM}"
+    fi
+fi
+
+LUA_SCRIPT=""
+if [ -f "${TEST_DIR}/test.lua" ]; then
+    LUA_SCRIPT="${TEST_DIR}/test.lua"
+elif [ -f "${TEST_DIR}/test_controller.lua" ]; then
+    LUA_SCRIPT="${TEST_DIR}/test_controller.lua"
+else
+    ALT_LUA="$(find "${TEST_DIR}" -maxdepth 1 -name "test_*.lua" | head -n 1 || true)"
+    if [ -z "${ALT_LUA}" ]; then
+        ALT_LUA="$(find "${TEST_DIR}" -maxdepth 1 -name "*.lua" | head -n 1 || true)"
+    fi
     if [ -n "${ALT_LUA}" ]; then
         LUA_SCRIPT="${ALT_LUA}"
     fi
+fi
+
+if [ -z "${LUA_SCRIPT}" ] || [ ! -f "${LUA_SCRIPT}" ]; then
+    echo "Error: No .lua test script found in ${TEST_DIR}" >&2
+    exit 1
 fi
 
 SYNC_SCRIPT="${ROOT_DIR}/snes-sfx-demo/.agents/skills/run-gsu-test/scripts/sync_test_labels.py"
 EXTRACT_SCRIPT="${ROOT_DIR}/snes-sfx-demo/.agents/skills/create-gsu-test/scripts/extract_syms.py"
 
-if [ -f "${SYM_FILE}" ] && [ -f "${LUA_SCRIPT}" ] && [ -f "${SYNC_SCRIPT}" ]; then
+if [ -n "${SYM_FILE}" ] && [ -f "${SYM_FILE}" ] && [ "$(basename "${LUA_SCRIPT}")" = "test.lua" ] && [ -f "${SYNC_SCRIPT}" ]; then
     echo ">>> [2/3] Synchronizing symbol addresses in $(basename "${LUA_SCRIPT}")..."
     python3 "${SYNC_SCRIPT}" "${SYM_FILE}" "${LUA_SCRIPT}" || true
-elif [ -f "${SYM_FILE}" ] && [ -f "${EXTRACT_SCRIPT}" ]; then
+elif [ -n "${SYM_FILE}" ] && [ -f "${SYM_FILE}" ] && [ -f "${EXTRACT_SCRIPT}" ]; then
     echo ">>> [2/3] Extracting symbol map..."
     python3 "${EXTRACT_SCRIPT}" "${SYM_FILE}" || true
 fi
 
 # 3. Execute via Mesen CE test runner
-LUA_SCRIPT="${TEST_DIR}/test.lua"
-if [ ! -f "${LUA_SCRIPT}" ]; then
-    # Some tests use test_<name>.lua
-    ALT_LUA="$(find "${TEST_DIR}" -maxdepth 1 -name "*.lua" | head -n 1 || true)"
-    if [ -n "${ALT_LUA}" ]; then
-        LUA_SCRIPT="${ALT_LUA}"
-    else
-        echo "Error: No .lua test script found in ${TEST_DIR}" >&2
-        exit 1
+SFC_FILE=""
+if [ -f "${TEST_DIR}/Test.sfc" ]; then
+    SFC_FILE="${TEST_DIR}/Test.sfc"
+elif [ -f "${TEST_DIR}/SuperFX.sfc" ]; then
+    SFC_FILE="${TEST_DIR}/SuperFX.sfc"
+elif [ -f "${TEST_DIR}/$(basename "${TEST_DIR}").sfc" ]; then
+    SFC_FILE="${TEST_DIR}/$(basename "${TEST_DIR}").sfc"
+else
+    ALT_SFC="$(find "${TEST_DIR}" -maxdepth 1 -name "*.sfc" | head -n 1 || true)"
+    if [ -n "${ALT_SFC}" ]; then
+        SFC_FILE="${ALT_SFC}"
     fi
 fi
 
-SFC_FILE="${TEST_DIR}/Test.sfc"
-if [ ! -f "${SFC_FILE}" ]; then
-    echo "Error: Test ROM ${SFC_FILE} was not generated." >&2
+if [ -z "${SFC_FILE}" ] || [ ! -f "${SFC_FILE}" ]; then
+    echo "Error: Test ROM was not generated in ${TEST_DIR}." >&2
     exit 1
 fi
 
