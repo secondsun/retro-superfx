@@ -70,11 +70,22 @@ def _compute_image_metrics(png_path: Path) -> Dict[str, Any]:
 def capture_sfx_render(
     scene_test_name: str,
     output_png_path: Optional[str] = None,
+    settle_frames: int = 0,
     timeout_seconds: int = 15,
     mesen_path: Optional[str] = None,
     runner: Optional[MesenRunner] = None,
 ) -> Dict[str, Any]:
-    """Execute a SuperFX scene or test ROM headlessly and capture its framebuffer."""
+    """Execute a SuperFX scene or test ROM headlessly and capture its framebuffer.
+
+    Args:
+        scene_test_name: Name of the scene demo or test directory (e.g. 'SpriteScale', 'IsoEngine', 'sqrt').
+        output_png_path: Optional target file path for the captured PNG.
+        settle_frames: Minimum frame count to wait before capturing (default: 0).
+            When 0, defaults to 60 for continuous scenes without test_stop, or 8 post-stop frames for tests.
+        timeout_seconds: Maximum execution time in seconds (default: 15).
+        mesen_path: Optional explicit path to Mesen executable.
+        runner: Optional MesenRunner instance.
+    """
     try:
         session = SfxTestSession.from_test_name(
             scene_test_name, runner=runner, mesen_path=mesen_path
@@ -128,6 +139,7 @@ local postStopFrames = 0
 local captured = false
 local gsu_stopped = false
 local has_test_stop = {has_test_stop_lua}
+local min_frames = {settle_frames}
 
 function doCapture()
     if captured then return end
@@ -148,12 +160,12 @@ emu.addEventCallback(function()
     frameCount = frameCount + 1
     if gsu_stopped then
         postStopFrames = postStopFrames + 1
-        if postStopFrames >= 8 then
+        if postStopFrames >= 8 and frameCount >= min_frames then
             doCapture()
         end
-    elseif not has_test_stop and frameCount >= 60 then
+    elseif not has_test_stop and frameCount >= (min_frames > 0 and min_frames or 60) then
         doCapture()
-    elseif frameCount >= 120 then
+    elseif frameCount >= (min_frames > 0 and min_frames or 120) then
         doCapture()
     end
 end, emu.eventType.endFrame)

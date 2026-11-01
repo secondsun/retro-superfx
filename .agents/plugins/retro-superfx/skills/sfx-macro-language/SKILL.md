@@ -179,7 +179,7 @@ Computes live-range intervals, interference graphs, and register allocation pres
 ```
 
 ### D. Look Up Symbols (`sfx_lookup_symbol`)
-Resolves definitions, documentation, and scopes for symbols across the workspace index:
+Use this **instead of `grep`** to find where a symbol is defined and read its doc comment. Not for usages (use `sfx_find_references`), linker addresses / layout (use `sfx_resolve_address` on `retro-superfx_mesen`), or plain text (use `grep`). Optional `path` (workspace-relative prefix) and `maxResults` narrow the results; `location.lineNumber` is 1-based.
 
 ```json
 {
@@ -188,6 +188,21 @@ Resolves definitions, documentation, and scopes for symbols across the workspace
   "Arguments": {
     "symbol": "gsu_stack_push",
     "uri": "file:///path/to/source.sgs"
+  }
+}
+```
+
+### E. Find References (`sfx_find_references`)
+Finds usages and references of an assembly symbol across the workspace. Understands function/call pairs, macro invocations, and scoped symbols while excluding comments and string literals:
+
+```json
+{
+  "ServerName": "retro-superfx_lsp",
+  "ToolName": "sfx_find_references",
+  "Arguments": {
+    "symbol": "iso_camera_set_yaw",
+    "path": "snes-sfx-demo/X-GSU/",
+    "contextLines": 1
   }
 }
 ```

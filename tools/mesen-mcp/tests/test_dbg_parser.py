@@ -11,6 +11,7 @@ scope\tid=0,name="",mod=0,size=48,span=0
 scope\tid=1,name="gsu_sqrt32",mod=0,size=63,parent=0,span=1
 span\tid=0,seg=0,start=0,size=2,type=0
 span\tid=1,seg=0,start=2,size=4,type=1
+line\tid=10,file=0,line=42
 sym\tid=0,name="test_setup",addrsize=absolute,scope=0,def=10,val=0x700003,seg=0,type=lab
 sym\tid=1,name="test_stop",addrsize=absolute,scope=0,def=20,val=0x700020,seg=0,type=lab
 sym\tid=2,name="INPUT",addrsize=absolute,scope=0,def=30,val=0x700AC0,seg=0,type=lab
@@ -37,6 +38,13 @@ def test_parse_dbg_string():
     assert data.get_symbol_offset("test_stop") == 0x0020
     assert data.get_symbol_offset("INPUT") == 0x0AC0
     assert data.get_symbol_offset("OUTPUT") == 0x0AC4
+
+    assert len(data.lines) == 1
+    assert data.lines[10].line == 42
+    sym = data.get_symbol("test_setup")
+    assert sym is not None
+    loc = data.get_symbol_def_location(sym)
+    assert loc == {"path": "Test.s", "lineNumber": 42}
 
 
 def test_parse_dbg_sqrt_file():

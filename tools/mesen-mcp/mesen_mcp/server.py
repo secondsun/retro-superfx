@@ -1,13 +1,14 @@
 import argparse
 import json
 import sys
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 
 try:
     from mcp.server.mcpserver import MCPServer as FastMCP
 except ImportError:
     from mcp.server.fastmcp import FastMCP
 
+from mesen_mcp.address_resolver import resolve_address as execute_resolve_address
 from mesen_mcp.math_verifier import assert_sfx_math as execute_assert_sfx_math
 from mesen_mcp.profiler import profile_sfx_execution as execute_profile_sfx_execution
 from mesen_mcp.render_capture import capture_sfx_render as execute_capture_sfx_render
@@ -68,13 +69,16 @@ def create_server() -> FastMCP:
     def capture_sfx_render(
         scene_test_name: str,
         output_png_path: Optional[str] = None,
+        settle_frames: int = 0,
         timeout_seconds: int = 15,
     ) -> Dict[str, Any]:
         """Execute a SuperFX scene or test ROM headlessly and capture its framebuffer.
 
         Args:
-            scene_test_name: Name of the scene demo or test directory (e.g. 'SpriteScale', 'sqrt').
+            scene_test_name: Name of the scene demo or test directory (e.g. 'SpriteScale', 'IsoEngine', 'sqrt').
             output_png_path: Optional target file path for the captured PNG.
+            settle_frames: Minimum frame count to wait before capturing (default: 0).
+                When 0, defaults to 60 for continuous scenes without test_stop, or 8 post-stop frames for tests.
             timeout_seconds: Maximum execution time in seconds (default: 15).
 
         Returns:
@@ -83,6 +87,7 @@ def create_server() -> FastMCP:
         return execute_capture_sfx_render(
             scene_test_name=scene_test_name,
             output_png_path=output_png_path,
+            settle_frames=settle_frames,
             timeout_seconds=timeout_seconds,
         )
 
@@ -120,6 +125,38 @@ def create_server() -> FastMCP:
             inputs=inputs,
             top_n=top_n,
             timeout_seconds=timeout_seconds,
+        )
+
+    @app.tool()
+    def sfx_resolve_address(
+        project: str,
+        symbol: Optional[str] = None,
+        address: Optional[Union[str, int]] = None,
+        prefix: Optional[str] = None,
+        range: Optional[str] = None,
+        max_results: int = 20,
+    ) -> Dict[str, Any]:
+        """Resolve symbol <-> address and inspect memory layout from ld65 build outputs (.dbg/.cpu.sym).
+
+        Args:
+            project: Path or name of the demo or test directory (e.g. 'snes-sfx-demo/X-GSU/IsoEngine' or 'sqrt').
+            symbol: Symbol name to look up (with or without leading '.').
+            address: Address as hex string or int, or bank:offset (e.g. '80:9DA6', '700B1A', 0x700B1A).
+            prefix: Prefix string to find matching symbols (e.g. 'ISO_CAM').
+            range: Address range string (e.g. '700000-701FFF') to list symbols sorted by address.
+            max_results: Maximum number of list items to return (default: 20).
+
+        Returns:
+            Structured resolution results including symbol addresses, deltas, memory regions,
+            nearestBefore/nearestAfter, and file definitions.
+        """
+        return execute_resolve_address(
+            project=project,
+            symbol=symbol,
+            address=address,
+            prefix=prefix,
+            range=range,
+            max_results=max_results,
         )
 
     return app

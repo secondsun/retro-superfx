@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 import os
 from pathlib import Path
 import re
-from typing import Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 
 @dataclass
@@ -45,6 +45,15 @@ class Scope:
 
 
 @dataclass
+class LineRecord:
+    id: int
+    file: int
+    line: int
+    type: Optional[int] = None
+    count: Optional[int] = None
+
+
+@dataclass
 class Symbol:
     id: int
     name: str
@@ -55,6 +64,7 @@ class Symbol:
     seg: Optional[int] = None
     def_lines: List[int] = field(default_factory=list)
     ref_lines: List[int] = field(default_factory=list)
+    exp: Optional[int] = None
 
     @property
     def offset(self) -> int:
@@ -79,9 +89,27 @@ class DbgData:
     segments: Dict[int, Segment] = field(default_factory=dict)
     scopes: Dict[int, Scope] = field(default_factory=dict)
     spans: Dict[int, Span] = field(default_factory=dict)
+    lines: Dict[int, LineRecord] = field(default_factory=dict)
     symbols: Dict[str, Symbol] = field(default_factory=dict)
     symbols_by_id: Dict[int, Symbol] = field(default_factory=dict)
     all_symbols: List[Symbol] = field(default_factory=list)
+
+    def get_symbol_def_location(self, sym: Symbol) -> Optional[Dict[str, Any]]:
+        """Get file path and line number where symbol is defined."""
+        def_lines = sym.def_lines
+        if not def_lines and sym.exp and sym.exp in self.symbols_by_id:
+            def_lines = self.symbols_by_id[sym.exp].def_lines
+        if not def_lines:
+            return None
+        line_rec = self.lines.get(def_lines[0])
+        if not line_rec:
+            return None
+        file_rec = self.files.get(line_rec.file)
+        file_path = file_rec.name if file_rec else "unknown"
+        return {
+            "path": file_path,
+            "lineNumber": line_rec.line,
+        }
 
     def get_symbol(self, name: str) -> Optional[Symbol]:
         return self.symbols.get(name)
@@ -208,12 +236,27 @@ def parse_dbg_string(content: str) -> DbgData:
                 spans=_parse_int_list(fields.get("span", "")),
             )
 
+        elif rec_type == "line":
+            line_id = _parse_int(fields.get("id", "0"))
+            file_id = _parse_int(fields.get("file", "0"))
+            line_no = _parse_int(fields.get("line", "0"))
+            type_val = _parse_int(fields["type"]) if "type" in fields else None
+            count_val = _parse_int(fields["count"]) if "count" in fields else None
+            data.lines[line_id] = LineRecord(
+                id=line_id,
+                file=file_id,
+                line=line_no,
+                type=type_val,
+                count=count_val,
+            )
+
         elif rec_type == "sym":
             sym_id = _parse_int(fields.get("id", "0"))
             name = fields.get("name", "")
             val = _parse_int(fields.get("val", "0"))
             scope_id = _parse_int(fields.get("scope", "0"))
             seg_id = _parse_int(fields["seg"]) if "seg" in fields else None
+            exp_id = _parse_int(fields["exp"]) if "exp" in fields else None
 
             symbol = Symbol(
                 id=sym_id,
@@ -225,6 +268,7 @@ def parse_dbg_string(content: str) -> DbgData:
                 seg=seg_id,
                 def_lines=_parse_int_list(fields.get("def", "")),
                 ref_lines=_parse_int_list(fields.get("ref", "")),
+                exp=exp_id,
             )
             data.symbols_by_id[sym_id] = symbol
             data.all_symbols.append(symbol)

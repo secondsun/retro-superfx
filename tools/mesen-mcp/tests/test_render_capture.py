@@ -105,3 +105,23 @@ def test_capture_sfx_render_plot_texel():
         os.remove(png_path)
     except OSError:
         pass
+
+
+def test_capture_sfx_render_with_settle_frames():
+    result = capture_sfx_render(
+        scene_test_name="plot_texel",
+        settle_frames=10,
+        timeout_seconds=15,
+    )
+    assert result["status"] == "SUCCESS"
+    assert result["png_path"] is not None
+
+    png_path = Path(result["png_path"])
+    assert png_path.is_file()
+    assert png_path.stat().st_size > 0
+    assert result["metrics"]["non_black_pixels"] > 0
+
+    try:
+        os.remove(png_path)
+    except OSError:
+        pass

@@ -2,7 +2,7 @@
 name: sfx-test-runner
 description: >-
   Run, verify, and debug automated SuperFX unit tests using Mesen CE in headless mode.
-  Instructs agents to prioritize invoking the retro-superfx_mesen MCP tools (run_sfx_test, assert_sfx_math, capture_sfx_render),
+  Instructs agents to prioritize invoking the retro-superfx_mesen MCP tools (run_sfx_test, assert_sfx_math, capture_sfx_render, profile_sfx_execution, sfx_resolve_address),
   with fallback to CLI scripts.
 ---
 
@@ -62,6 +62,59 @@ Runs a SuperFX graphical demo or scene headlessly and captures a PNG of the fram
     "scene_test_name": "SpriteScale",
     "output_png_path": "/tmp/spritescale_render.png",
     "timeout_seconds": 15
+  }
+}
+```
+
+### D. Execution Profiling (`profile_sfx_execution`)
+Profiles GSU cycle counts, hotspots by function and label, instruction cache residency, and VBlank FPS:
+
+```json
+{
+  "ServerName": "retro-superfx_mesen",
+  "ToolName": "profile_sfx_execution",
+  "Arguments": {
+    "target_name": "sqrt",
+    "sample_runs": 1,
+    "top_n": 10
+  }
+}
+```
+
+### E. Symbol & Address Resolution (`sfx_resolve_address`)
+Resolves symbol names to linker addresses, PC addresses to nearest enclosing functions or labels with deltas, and memory layout ranges from `.dbg` and `.cpu.sym` build outputs:
+
+```json
+{
+  "ServerName": "retro-superfx_mesen",
+  "ToolName": "sfx_resolve_address",
+  "Arguments": {
+    "project": "snes-sfx-demo/X-GSU/IsoEngine",
+    "symbol": "GSU_JOYPAD"
+  }
+}
+```
+
+Resolve address to nearest label / function within the same memory region:
+```json
+{
+  "ServerName": "retro-superfx_mesen",
+  "ToolName": "sfx_resolve_address",
+  "Arguments": {
+    "project": "snes-sfx-demo/X-GSU/IsoEngine",
+    "address": "80:9DA6"
+  }
+}
+```
+
+Inspect memory layout in a range (sorted ascending, duplicates collapsed):
+```json
+{
+  "ServerName": "retro-superfx_mesen",
+  "ToolName": "sfx_resolve_address",
+  "Arguments": {
+    "project": "snes-sfx-demo/X-GSU/IsoEngine",
+    "range": "700000-701FFF"
   }
 }
 ```

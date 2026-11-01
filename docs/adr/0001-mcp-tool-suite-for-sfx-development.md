@@ -21,7 +21,7 @@ Directly running bash scripts or manual inspection is slow and prone to silent e
    - Migrate JSON serialization from Gson to **Jackson 3 / Tools Jackson** required by the Java MCP SDK.
    - Support both direct stdio CLI launching (`retro-lsp --mcp`) and VS Code configuration (`retroca65.enableMcp`) with an extension restart trigger.
    - Remove the buggy `Uses : ...` register liveness hover from `HoverFeature.java`. Move register live-range analysis into a dedicated, thoroughly tested MCP tool (`sfx_analyze_registers`).
-   - Expose 4 focused static analysis tools: `sfx_audit_invariants`, `sfx_expand_macro`, `sfx_lookup_symbol`, and `sfx_analyze_registers`.
+   - Expose focused static analysis tools: `sfx_audit_diagnostics` (alias `sfx_audit_invariants`), `sfx_expand_macro`, `sfx_lookup_symbol`, `sfx_find_references`, and `sfx_analyze_registers`.
 
 2. **Mesen MCP**:
    - Build a standalone Python 3 MCP server in `tools/mesen-mcp/`.
@@ -30,6 +30,8 @@ Directly running bash scripts or manual inspection is slow and prone to silent e
      - Tool A: `run_sfx_test(test_name)`: Runs established human-readable demo tests (e.g. `snes-sfx-demo/X-GSU/tests/*`) as regression and educational demonstrations.
      - Tool B: `assert_sfx_math(test_name, input_overrides, expected_outputs)`: Parameterizes an existing test suite by injecting runtime vectors via an ephemeral Lua overlay harness without modifying the base demo source.
    - Provide framebuffer capture (`capture_sfx_render`) producing PNGs and quantitative metrics (bounding box, drawn pixel count, perceptual hash).
+   - Profile SuperFX execution cycles, hotspots, and cache residency (`profile_sfx_execution`).
+   - Resolve symbol <-> address mappings, memory regions, nearest labels with deltas, and memory layout from `.dbg` and `.cpu.sym` (`sfx_resolve_address`).
    - Explicitly defer `edge_table` inspection until that subsystem matures.
 
 3. **Rollout & Upstream Migration Strategy**:

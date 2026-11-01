@@ -12,6 +12,7 @@ async def test_server_list_tools():
     assert "assert_sfx_math" in tool_names
     assert "capture_sfx_render" in tool_names
     assert "profile_sfx_execution" in tool_names
+    assert "sfx_resolve_address" in tool_names
 
 
 @pytest.mark.asyncio
@@ -57,6 +58,7 @@ async def test_server_call_capture_sfx_render(tmp_path):
         {
             "scene_test_name": "sqrt",
             "output_png_path": str(output_png),
+            "settle_frames": 5,
             "timeout_seconds": 15,
         },
     )

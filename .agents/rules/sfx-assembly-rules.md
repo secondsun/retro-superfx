@@ -100,4 +100,13 @@ Rules and technical constraints when writing, parsing, analyzing, or compiling S
 - **Full Scene Verification Gate**: Any optimization, refactoring, or pipeline change affecting full-scene demos (`IsoEngine`, `SpriteScale`) MUST execute the `capture_sfx_render` MCP tool on `retro-superfx_mesen` (or verify via headless screenshot) to confirm `non_black_pixels > 0` before declaring the task complete.
 - **Subroutine Isolation vs Integration**: Passing isolated subroutine unit tests (`draw_textured_triangle`, `test_cached_trap`) is necessary but NOT sufficient to verify full scene integration.
 
+---
+
+## Symbol Lookup vs. References vs. grep
+
+- To find where an assembly symbol (label, X-GSU `function`, macro, struct, field, constant) is **defined**, or to read its In/Out/Clobbers doc, call `sfx_lookup_symbol` on `retro-superfx_lsp` before reaching for `grep`. Pass `path` to scope to a folder.
+- To find where an assembly symbol is **used** (references, calls, reads, writes), call `sfx_find_references` on `retro-superfx_lsp`. It understands `call` to `function`, macro invocations, and struct field scoping while excluding comments and string literals.
+- To resolve linker addresses of symbols or find what symbol/function lives at a given PC/memory address from build artifacts (`.dbg` / `.cpu.sym`), call `sfx_resolve_address` on `retro-superfx_mesen`.
+- Use `grep` for regex/plain-text search, non-assembly files, and `.build/` output.
+- Trust `location.path` / `references[].path` + `lineNumber` (1-based). Ignore hits under `src/test/resources/` unless you are working on those fixtures.
 

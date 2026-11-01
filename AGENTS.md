@@ -147,6 +147,8 @@ Agents should **prioritize calling the MCP tools** on `retro-superfx_mesen` via 
 - **`run_sfx_test`**: Headless test execution in Mesen CE (`test_name`, `timeout_seconds`).
 - **`assert_sfx_math`**: Dynamic parameter injection and mathematical output assertions in GSURAM/registers.
 - **`capture_sfx_render`**: Headless framebuffer capture to PNG for visual inspection or perceptual hashing.
+- **`profile_sfx_execution`**: Profiles GSU execution cycles, hotspots, cache residency, and VBlank FPS.
+- **`sfx_resolve_address`**: Resolves symbol <-> address, nearest label with delta, memory regions, and layout ranges from `.dbg` and `.cpu.sym`.
 
 *Fallback CLI:*
 ```bash
@@ -159,7 +161,33 @@ Agents should actively utilize the `retro-superfx_lsp` MCP tools via `call_mcp_t
 - **`sfx_audit_invariants`**: Backward-compatible alias for `sfx_audit_diagnostics`.
 - **`sfx_expand_macro`**: Expands X-GSU macro DSL directives (`function`, `call`, `for`, `if_lt`, stack ops) into concrete instruction streams.
 - **`sfx_analyze_registers`**: Chaitin-Briggs graph coloring, live-range intervals, CFG basic blocks, and register pressure.
-- **`sfx_lookup_symbol`**: Queries workspace index for symbol definitions, documentation, and scopes.
+- **`sfx_lookup_symbol`**: Finds where a symbol is **defined** (path, 1-based line, doc comment). Prefer it over `grep` for definition/doc lookups; accepts `path` and `maxResults`. Not for usages, linker addresses, or plain text.
+- **`sfx_find_references`**: Finds usages and references of CA65/X-GSU symbols across the workspace index. Understands `call` to `function`, macro invocations, and scoped symbols; skips comments and string literals; supports `path`, `maxResults`, `includeDefinitions`, and `contextLines`.
+
+#### When to use `sfx_lookup_symbol` vs. `sfx_find_references` vs. `grep`
+
+| Need | Use |
+|---|---|
+| Where a label / `function` / macro / struct / struct field / constant is **defined**, plus its doc comment (In/Out/Clobbers) | `sfx_lookup_symbol` |
+| Where a symbol is **used** (references) | `sfx_find_references` |
+| Linker address of a symbol, or what lives at an address (`.sym` / `.dbg`) | `sfx_resolve_address` on `retro-superfx_mesen` |
+| Plain text, regex, Lua/Python/cfg files, `.build/*.opt.sgs` output | `grep` |
+
+> **Mandatory:** Do not `grep` `.s`/`.sgs`/`.i`/`.inc` sources for a symbol's definition or usages, and do not `grep` `.cpu.sym`/`.dbg` for addresses. Call `sfx_lookup_symbol`, `sfx_find_references`, or `sfx_resolve_address` first. Fall back to `grep` only if the tool is unavailable or returns nothing, and say so. If these tools are missing from your tool list, the MCP servers are stale: tell the user to run `./tools/build-all.sh --install` and restart them.
+
+Ready-to-copy calls (the tools are lazy-loaded; no need to read their schemas first):
+
+```json
+{ "ServerName": "retro-superfx_lsp", "ToolName": "sfx_lookup_symbol",
+  "Arguments": { "symbol": "map_compile_quad_face", "path": "snes-sfx-demo/X-GSU/IsoEngine/" } }
+```
+
+```json
+{ "ServerName": "retro-superfx_lsp", "ToolName": "sfx_find_references",
+  "Arguments": { "symbol": "iso_camera_set_yaw", "path": "snes-sfx-demo/X-GSU/" } }
+```
+
+Result fields: `location.path` / `references[].path` (workspace-relative), `location.lineNumber` / `references[].lineNumber` (**1-based**, matches `grep -n` / `read_file`; `line` is the legacy 0-based value), `documentation`, `totalReferences`, `references[].kind` (`call`, `read`, `write`, `macro-invocation`, `use`), `references[].text` (when `contextLines > 0`). Real sources rank above fixture copies under `src/test/resources/`, `.build/`, and `build_tools/`.
 
 ### 6. Update & Push Submodules
 Stage modified submodules, generate descriptive commit messages, and push to the active branch on `origin`:

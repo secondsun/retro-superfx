@@ -183,6 +183,8 @@ Exposes:
 - `run_sfx_test`: Runs regression tests in `snes-sfx-demo/X-GSU/tests/`.
 - `assert_sfx_math`: Injects inputs into GSURAM/registers and validates math results within epsilon.
 - `capture_sfx_render`: Headlessly captures framebuffers to PNG with bounding boxes and hash metrics.
+- `profile_sfx_execution`: Profiles GSU execution cycles, hotspots, cache residency, and VBlank FPS.
+- `sfx_resolve_address`: Resolves symbol <-> address, memory region, nearest label with delta, and layout ranges from `.dbg` and `.cpu.sym`.
 
 ---
 
@@ -201,6 +203,7 @@ Exposes:
 - `sfx_audit_diagnostics`: Audits syntax errors, block structure (`function`/`endfunction`), stack cleanup (`Δ_SP == 0`), and hardware invariants (8-NOP settling before `stop`, word alignment, no hardware `MERGE`, modal lifetimes). Alias `sfx_audit_invariants` is retained for backwards compatibility.
 - `sfx_expand_macro`: Expands X-GSU macros (`function`, `for`, `if_lt`, etc.) to ca65 SuperFX instructions.
 - `sfx_lookup_symbol`: Resolves symbol definitions, scopes, and docs.
+- `sfx_find_references`: Finds references and usages of symbols across the workspace index (understands `call`, macros, scopes; skips comments and strings).
 - `sfx_analyze_registers`: Live-range intervals, register pressure, and register coloring suggestions.
 
 
