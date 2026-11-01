@@ -151,7 +151,7 @@ emu.addEventCallback(function()
         if postStopFrames >= 8 then
             doCapture()
         end
-    elseif not has_test_stop and frameCount >= 15 then
+    elseif not has_test_stop and frameCount >= 60 then
         doCapture()
     elseif frameCount >= 120 then
         doCapture()
