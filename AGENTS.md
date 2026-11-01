@@ -163,6 +163,7 @@ Agents should actively utilize the `retro-superfx_lsp` MCP tools via `call_mcp_t
 - **`sfx_analyze_registers`**: Chaitin-Briggs graph coloring, live-range intervals, CFG basic blocks, and register pressure.
 - **`sfx_lookup_symbol`**: Finds where a symbol is **defined** (path, 1-based line, doc comment). Prefer it over `grep` for definition/doc lookups; accepts `path` and `maxResults`. Not for usages, linker addresses, or plain text.
 - **`sfx_find_references`**: Finds usages and references of CA65/X-GSU symbols across the workspace index. Understands `call` to `function`, macro invocations, and scoped symbols; skips comments and string literals; supports `path`, `maxResults`, `includeDefinitions`, and `contextLines`.
+- **`sfx_pack_textures`**: Packs, updates, or validates a SuperFX Texture Atlas (`.sfxproj`), exporting companion binaries (`.bin`, `.pal`), ca65 assembly index (`.i`), and layout PNG, or imports bitmap graphics with Median-Cut color quantization.
 
 #### When to use `sfx_lookup_symbol` vs. `sfx_find_references` vs. `grep`
 
@@ -230,6 +231,7 @@ Workspace customizations are maintained in `.agents/`:
   - [`rebase-submodules`](.agents/skills/rebase-submodules/SKILL.md): Fetch and rebase Git submodules from GitHub.
   - [`sfx-macro-language`](.agents/skills/sfx-macro-language/SKILL.md): Reference and syntax for the X-GSU ca65 macro DSL.
   - [`sfx-test-runner`](.agents/skills/sfx-test-runner/SKILL.md): Headless Mesen CE test execution and debugging.
+  - [`texture-atlas`](.agents/skills/texture-atlas/SKILL.md): Author, pack, update, and validate SuperFX texture atlases and companion files.
   - [`update-submodules`](.agents/skills/update-submodules/SKILL.md): Stage, commit, and push updated Git submodules to origin.
 
 ---
