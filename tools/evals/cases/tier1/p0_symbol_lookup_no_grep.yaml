@@ -1,0 +1,36 @@
+id: p0_symbol_lookup_no_grep
+tier: 1
+priority: P0
+targets:
+  - AGENTS.md
+  - .agents/rules/sfx-assembly-rules.md
+  - .agents/plugins/retro-superfx/rules/AGENTS.md
+  - retro-lsp/**
+prompt: >
+  Find the definition and documentation comment (In/Out/Clobbers) for the
+  SuperFX function `map_compile_quad_face` in `snes-sfx-demo/X-GSU/IsoEngine/`.
+graders:
+  - type: tool_called
+    server: retro-superfx_lsp
+    tool: sfx_lookup_symbol
+    args_match:
+      symbol: map_compile_quad_face
+  - type: tool_forbidden
+    tool: run_command
+    args_pattern: '\b(grep|rg)\b.*\.(s|sgs|i|inc)\b'
+    reason: Do not grep .s/.sgs/.i/.inc sources for symbol definitions; use sfx_lookup_symbol.
+replay_fixtures:
+  passing:
+    tool_calls:
+      - server: retro-superfx_lsp
+        tool: sfx_lookup_symbol
+        args:
+          symbol: map_compile_quad_face
+          path: snes-sfx-demo/X-GSU/IsoEngine/
+    code: ""
+  failing:
+    tool_calls:
+      - tool: run_command
+        args:
+          CommandLine: "grep -rn map_compile_quad_face snes-sfx-demo/X-GSU/IsoEngine/map.sgs"
+    code: ""

@@ -49,7 +49,7 @@ Every step ends on a **completion criterion**, the condition that tells the agen
 - **Clarity**: can the agent tell done from not-done? A vague bound ("understanding reached") invites **premature completion**: ending the step before it is genuinely done, attention slipping to _being done_. The visible steps still ahead (the **post-completion steps**) supply the pull; the criterion's clarity is the resistance. Defend in order: **sharpen the bound first** (local and cheap); only if it is irreducibly fuzzy _and_ you observe the rush, hide the later steps by splitting the sequence. Hiding only works across a real context boundary (a hand-off or a subagent dispatch; an inline call leaves the later steps in context and clears nothing).
 - **Demand**: how much it requires. "Every modified model accounted for" forces thorough work where "produce a change list" does not. Demand drives **legwork** (the digging the agent does within the work, latent in the wording rather than written as its own step), and it is not step-bound: "every rule applied" binds a body of flat reference just as "every step done" binds a sequence, which is how an all-reference document still carries an exhaustiveness bar.
 
-The strongest criteria are both checkable and exhaustive.
+The strongest criteria are both checkable and exhaustive. When editing `AGENTS.md`, `.agents/rules/`, or any `SKILL.md` in this workspace, the completion criterion is `./tools/run-evals.sh --changed` exiting `0` (verifying symlink/link integrity, shared skill parity, context token budget, and targeted eval graders).
 
 ## When to split
 

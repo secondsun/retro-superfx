@@ -1,0 +1,37 @@
+id: p0_resolve_address_no_grep
+tier: 1
+priority: P0
+targets:
+  - AGENTS.md
+  - .agents/rules/sfx-assembly-rules.md
+  - .agents/skills/sfx-test-runner/**
+  - .agents/plugins/retro-superfx/skills/sfx-test-runner/**
+  - tools/mesen-mcp/**
+prompt: >
+  Resolve the linked ROM/RAM address of symbol `gsu_stack_ram` in the `IsoEngine`
+  build artifacts without grepping `.sym` or `.dbg` files.
+graders:
+  - type: tool_called
+    server: retro-superfx_mesen
+    tool: sfx_resolve_address
+    args_match:
+      query: gsu_stack_ram
+  - type: tool_forbidden
+    tool: run_command
+    args_pattern: '\b(grep|rg)\b.*\.(sym|dbg)\b'
+    reason: Do not grep .cpu.sym or .dbg files for linker addresses; use sfx_resolve_address.
+replay_fixtures:
+  passing:
+    tool_calls:
+      - server: retro-superfx_mesen
+        tool: sfx_resolve_address
+        args:
+          test_name: IsoEngine
+          query: gsu_stack_ram
+    code: ""
+  failing:
+    tool_calls:
+      - tool: run_command
+        args:
+          CommandLine: "grep gsu_stack_ram snes-sfx-demo/X-GSU/IsoEngine/IsoEngine.cpu.sym"
+    code: ""

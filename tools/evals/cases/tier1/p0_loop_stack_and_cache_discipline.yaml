@@ -1,0 +1,51 @@
+id: p0_loop_stack_and_cache_discipline
+tier: 1
+priority: P0
+targets:
+  - AGENTS.md
+  - .agents/rules/sfx-assembly-rules.md
+  - .agents/rules/cross-repo-invariants.md
+  - .agents/skills/sfx-macro-language/**
+  - .agents/plugins/retro-superfx/skills/sfx-macro-language/**
+  - snes-sfx-demo/X-GSU/**
+prompt: >
+  Write a cached SuperFX loop inside `function transform_batch` that iterates 8
+  times using `for #8 ... endfor`, temporarily pushes `r1` onto the stack inside
+  the loop body, and restores it before `endfor`.
+graders:
+  - type: code_invariant
+    must_match:
+      - pattern: 'cache\s*\n(?:.*?\n)*?\s*for(?:R)?\b'
+        reason: Place 'cache' once before entering the high-iteration loop.
+      - pattern: 'for(?:R)?\b.*?gsu_stack_push\s+r1.*?gsu_stack_pop\s+r1.*?endfor\b'
+        reason: Every stack push inside a 'for ... endfor' block must be balanced by a pop before 'endfor'.
+    must_not_match:
+      - pattern: 'for(?:R)?\b(?:(?!endfor).)*?\bcache\b'
+        reason: Never place 'cache' inside a loop body (causes CBR invalidation on every iteration).
+  - type: lsp_audit_clean
+replay_fixtures:
+  passing:
+    tool_calls: []
+    code: |
+      function transform_batch
+          cache
+          for #8
+              gsu_stack_push r1
+              with r1
+              add r1
+              gsu_stack_pop r1
+          endfor
+          return
+      endfunction
+  failing:
+    tool_calls: []
+    code: |
+      function transform_batch
+          for #8
+              cache
+              gsu_stack_push r1
+              with r1
+              add r1
+          endfor
+          return
+      endfunction

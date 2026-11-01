@@ -1,0 +1,44 @@
+id: p1_cross_repo_install_local
+tier: 1
+priority: P1
+targets:
+  - AGENTS.md
+  - .agents/rules/cross-repo-invariants.md
+  - .agents/skills/build-workspace/**
+  - .agents/plugins/retro-superfx/skills/build-workspace/**
+  - tools/install-local.sh
+  - retro-common/**
+  - sfx-optimizer/**
+  - retro-lsp/**
+prompt: >
+  You modified an AST class in `retro-common`. Format the JVM code, synchronize
+  the local Maven artifact to `~/.m2`, and then run the downstream `retro-lsp`
+  unit tests.
+graders:
+  - type: tool_called
+    tool: run_command
+    args_match:
+      CommandLine: 'spotless:apply'
+  - type: tool_called
+    tool: run_command
+    args_match:
+      CommandLine: '(?:install-local\.sh|mvnw.*install)'
+replay_fixtures:
+  passing:
+    tool_calls:
+      - tool: run_command
+        args:
+          CommandLine: "./mvnw spotless:apply"
+      - tool: run_command
+        args:
+          CommandLine: "./tools/install-local.sh"
+      - tool: run_command
+        args:
+          CommandLine: "./mvnw test"
+    code: ""
+  failing:
+    tool_calls:
+      - tool: run_command
+        args:
+          CommandLine: "./mvnw test"
+    code: ""

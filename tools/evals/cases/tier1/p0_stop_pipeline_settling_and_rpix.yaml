@@ -1,0 +1,56 @@
+id: p0_stop_pipeline_settling_and_rpix
+tier: 1
+priority: P0
+targets:
+  - AGENTS.md
+  - .agents/rules/sfx-assembly-rules.md
+  - .agents/rules/cross-repo-invariants.md
+  - .agents/plugins/retro-superfx/rules/AGENTS.md
+  - snes-sfx-demo/X-GSU/**
+prompt: >
+  Write a SuperFX routine `finish_frame_plot` that plots a pixel, flushes both
+  8-pixel plot caches to Work RAM, waits for the asynchronous RAM write pipeline
+  to settle, and halts the GSU with `stop`.
+graders:
+  - type: code_invariant
+    must_match:
+      - pattern: 'rpix\s*(?:;|\n)\s*rpix'
+        reason: Must execute two 'rpix' instructions ('rpix; rpix') to flush primary and secondary pixel caches.
+      - pattern: '(?:nop\s*(?:;|\n)\s*){8}stop\b'
+        reason: Must insert 8 consecutive 'nop' instructions before 'stop' for FX3 RAM pipeline settling.
+    must_not_match:
+      - pattern: '\bmerge\b'
+        reason: Hardware 'merge' is not implemented on SuperFX 3 (FX3).
+      - pattern: '\b(?:ldw|stw)\s*\(\s*#?\$[0-9a-fA-F]*[13579bBdDfF]\s*\)'
+        reason: 16-bit word loads/stores ('ldw'/'stw') must be word-aligned to even addresses.
+  - type: lsp_audit_clean
+replay_fixtures:
+  passing:
+    tool_calls: []
+    code: |
+      function finish_frame_plot
+          plot
+          rpix
+          rpix
+          nop
+          nop
+          nop
+          nop
+          nop
+          nop
+          nop
+          nop
+          stop
+          return
+      endfunction
+  failing:
+    tool_calls: []
+    code: |
+      function finish_frame_plot
+          merge
+          plot
+          rpix
+          nop
+          stop
+          return
+      endfunction

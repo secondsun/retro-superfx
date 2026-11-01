@@ -1,0 +1,33 @@
+; Clean FX3 diagnostic fixture for Tier 0 MCP smoke verification.
+; Exercises non-destructive comparison (`from Rn; sub #k`), even-aligned
+; `ldw`/`stw`, dual `rpix` pixel cache flush, and 8-NOP pipeline settling.
+
+function clean_fx3_compare
+    from r8
+    sub #3
+    beq @done
+    nop
+    iwt r2, #$0100
+    to r4
+    ldw (r2)
+    from r4
+    stw (r2)
+@done:
+    return
+endfunction
+
+clean_fx3_entry:
+    call clean_fx3_compare
+    nop
+    plot
+    rpix
+    rpix
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
+    stop

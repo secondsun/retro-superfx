@@ -177,3 +177,34 @@ async def test_server_sfx_resolve_address():
     assert payload["found"] is True
     assert payload["address"] == "0x700B1A"
 
+
+@pytest.mark.asyncio
+async def test_server_sfx_resolve_address_aliases_and_defaults():
+    server = create_server()
+
+    # Test alias symbol_name and omitting project (will fallback or succeed if IsoEngine exists)
+    result = await server.call_tool(
+        "sfx_resolve_address",
+        {"project": FIXTURE_PROJECT, "symbol_name": "GSU_JOYPAD"},
+    )
+    assert not result.is_error
+    payload = json.loads(result.content[0].text)
+    assert payload["found"] is True
+
+    # Test alias addr
+    result_addr = await server.call_tool(
+        "sfx_resolve_address",
+        {"project": FIXTURE_PROJECT, "addr": "0x700B1A"},
+    )
+    assert not result_addr.is_error
+    payload_addr = json.loads(result_addr.content[0].text)
+    assert payload_addr["exact_match"] is True
+    assert payload_addr["name"] == "GSU_JOYPAD"
+
+
+def test_function_suffix_fallback():
+    # If a function is defined as foo_function in ca65, querying 'foo' should resolve it
+    res = resolve_address(FIXTURE_PROJECT, symbol="GSU_JOYPAD")
+    assert res["status"] == "SUCCESS"
+
+

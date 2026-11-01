@@ -129,9 +129,12 @@ def create_server() -> FastMCP:
 
     @app.tool()
     def sfx_resolve_address(
-        project: str,
+        project: Optional[str] = None,
         symbol: Optional[str] = None,
+        symbol_name: Optional[str] = None,
+        name: Optional[str] = None,
         address: Optional[Union[str, int]] = None,
+        addr: Optional[Union[str, int]] = None,
         prefix: Optional[str] = None,
         range: Optional[str] = None,
         max_results: int = 20,
@@ -139,21 +142,23 @@ def create_server() -> FastMCP:
         """Resolve symbol <-> address and inspect memory layout from ld65 build outputs (.dbg/.cpu.sym).
 
         Args:
-            project: Path or name of the demo or test directory (e.g. 'snes-sfx-demo/X-GSU/IsoEngine' or 'sqrt').
-            symbol: Symbol name to look up (with or without leading '.').
-            address: Address as hex string or int, or bank:offset (e.g. '80:9DA6', '700B1A', 0x700B1A).
+            project: Path or name of the demo or test directory (optional; defaults to last used or 'IsoEngine').
+            symbol: Symbol name to look up (with or without leading '.', also accepts 'symbol_name' or 'name').
+            address: Address as hex string or int, or bank:offset (e.g. '80:9DA6', '0xAE88', 0x700B1A; also accepts 'addr').
             prefix: Prefix string to find matching symbols (e.g. 'ISO_CAM').
             range: Address range string (e.g. '700000-701FFF') to list symbols sorted by address.
             max_results: Maximum number of list items to return (default: 20).
 
         Returns:
             Structured resolution results including symbol addresses, deltas, memory regions,
-            nearestBefore/nearestAfter, and file definitions.
+            sourceLocation (file and line number with context lines), nearestBefore/nearestAfter, and file definitions.
         """
+        resolved_sym = symbol or symbol_name or name
+        resolved_addr = address if address is not None else addr
         return execute_resolve_address(
             project=project,
-            symbol=symbol,
-            address=address,
+            symbol=resolved_sym,
+            address=resolved_addr,
             prefix=prefix,
             range=range,
             max_results=max_results,

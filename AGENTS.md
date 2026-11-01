@@ -100,7 +100,14 @@ When writing or optimizing SuperFX code:
 2. **No Hardware `MERGE` Instruction**: In FX3, `MERGE` is not implemented in hardware. Workaround with `hib`, `lob`, `swap`, and `or`.
 3. **8 NOP Pipeline Settling**: SuperFX Work RAM writes are pipelined asynchronously. Insert **8 NOPs** before halting (`stop`) or testing memory in emulator scripts.
 4. **16-Bit Word Alignment**: All `ldw`/`stw` memory operations must target 16-bit word aligned (even) addresses.
-5. **Modal Instruction Scope**: `with`, `to`, `from` modify registers for the **single immediately following instruction only**. Subsequent arithmetic resets `Sreg` and `Dreg` back to `R0`.
+5. **Modal Instruction Scope (`with`, `to`, `from`)**:
+   - `Sreg` and `Dreg` for operations default to `R0`.
+   - `with Rn`, `to Rn`, `from Rn` modify registers for the **single immediately following instruction only**.
+   - Immediately after the configured instruction executes, both `Sreg` and `Dreg` reset back to `R0`.
+   - **Prefix Behaviors**:
+     - `with Rn`: sets `Sreg = Rn, Dreg = Rn` (in-place modification, overwrites `Rn`!). Never use `with Rn; sub #k` for non-destructive comparisons.
+     - `from Rn`: sets `Sreg = Rn, Dreg = R0` (preserves `Rn`, writes result to `R0` and sets flags). Ideal for tests/comparisons (`from r8; sub #1; beq`).
+     - `to Rn`: sets `Sreg = R0, Dreg = Rn` (reads from `R0`, stores result into `Rn`).
 6. **Dual `rpix` Pixel Cache Flush**: `plot` buffers pixels in dual 8-pixel caches (primary and secondary). Execute two `rpix` instructions (`rpix; rpix`) before the 8 settling NOPs and `stop` to flush all plotted pixels to Work RAM.
 7. **GSURAM-Only `ldw` / `ldb` Addressing**: `ldw (Rn)` and `ldb (Rn)` only access `GSURAM` (`$700000`, masked to `$1FFF`). Read ROM-resident tables in `.segment "GSUCODE"` or `.segment "ROM*"` via `romb` + `r14` + `getb`/`getbh`.
 8. **512-Byte Instruction Cache vs Pixel Cache**:
@@ -208,6 +215,17 @@ Fetch latest upstream commits from GitHub and rebase submodules on target branch
 ./tools/rebase-submodules.sh --dry-run
 # To rebase an alternate branch across submodules:
 ./tools/rebase-submodules.sh --branch main
+```
+
+### 8. Agentic Harness Evaluation Suite (`tools/run-evals.sh`)
+Validate harness links/symlinks, skill parity, context token budgets, MCP contracts, and SuperFX policy/outcome graders:
+```bash
+# Tier 0: Static harness lint + live MCP smoke checks
+./tools/run-evals.sh --tier 0
+# Run Tier 0 + only Tier 1/2 cases matching modified git files
+./tools/run-evals.sh --changed
+# Verify all Tier 0, Tier 1, and Tier 2 graders against built-in pass/fail fixtures
+./tools/run-evals.sh --tier all --verify-graders
 ```
 
 ---

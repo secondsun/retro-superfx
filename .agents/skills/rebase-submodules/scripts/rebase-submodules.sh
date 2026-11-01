@@ -1,1 +1,1 @@
-../../../tools/rebase-submodules.sh
+../../../../tools/rebase-submodules.sh

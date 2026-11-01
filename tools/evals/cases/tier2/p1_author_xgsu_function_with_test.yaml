@@ -1,0 +1,110 @@
+id: p1_author_xgsu_function_with_test
+tier: 2
+priority: P1
+targets:
+  - ".agents/plugins/retro-superfx/skills/create-gsu-test/**"
+  - "snes-sfx-demo/.agents/skills/create-gsu-test/**"
+  - ".agents/skills/sfx-test-runner/**"
+  - ".agents/plugins/retro-superfx/skills/sfx-test-runner/**"
+  - "AGENTS.md"
+prompt: >
+  Author a new X-GSU function `vec2_manhattan_dist` in `snes-sfx-demo/X-GSU/` that computes
+  `|x1 - x2| + |y1 - y2|`, create a headless unit test in
+  `snes-sfx-demo/X-GSU/tests/vec2_manhattan_dist/`, verify static diagnostics via
+  `sfx_audit_diagnostics`, and run the headless Mesen test (`run_sfx_test` or `assert_sfx_math`).
+graders:
+  - type: tool_sequence_contains
+    sequence:
+      - "retro-superfx_lsp:sfx_audit_diagnostics"
+      - "retro-superfx_mesen:run_sfx_test|retro-superfx_mesen:assert_sfx_math"
+  - type: file_exists
+    paths:
+      - "snes-sfx-demo/X-GSU/tests/vec2_manhattan_dist/Makefile"
+      - "snes-sfx-demo/X-GSU/tests/vec2_manhattan_dist/test.sgs"
+  - type: code_invariant
+    must_match:
+      - pattern: 'function\s+vec2_manhattan_dist\b'
+        reason: "Must define X-GSU function vec2_manhattan_dist"
+      - pattern: '\breturn\b'
+        reason: "Must return from vec2_manhattan_dist"
+      - pattern: '\bendfunction\b'
+        reason: "Must close vec2_manhattan_dist with endfunction"
+  - type: mcp_verifier
+    server: retro-superfx_lsp
+    tool: sfx_audit_diagnostics
+    args:
+      path: "snes-sfx-demo/X-GSU/tests/vec2_manhattan_dist/test.sgs"
+    expect:
+      valid: true
+      summary.errorCount: 0
+  - type: mcp_verifier
+    server: retro-superfx_mesen
+    tool: assert_sfx_math
+    args:
+      test_name: "vec2_manhattan_dist"
+    expect:
+      status: "PASS"
+
+replay_fixtures:
+  passing:
+    tool_calls:
+      - server: retro-superfx_lsp
+        tool: sfx_audit_diagnostics
+        args:
+          path: "snes-sfx-demo/X-GSU/tests/vec2_manhattan_dist/test.sgs"
+      - server: retro-superfx_mesen
+        tool: assert_sfx_math
+        args:
+          test_name: "vec2_manhattan_dist"
+    files:
+      - "snes-sfx-demo/X-GSU/tests/vec2_manhattan_dist/Makefile"
+      - "snes-sfx-demo/X-GSU/tests/vec2_manhattan_dist/test.sgs"
+    code: |
+      function vec2_manhattan_dist
+          with r1
+          sub r3
+          bpl @dx_pos
+          nop
+          with r1
+          not
+          inc r1
+      @dx_pos:
+          with r2
+          sub r4
+          bpl @dy_pos
+          nop
+          with r2
+          not
+          inc r2
+      @dy_pos:
+          from r1
+          add r2
+          return
+      endfunction
+    mcp_outcomes:
+      sfx_audit_diagnostics:
+        valid: true
+        errorCount: 0
+        summary:
+          errorCount: 0
+      assert_sfx_math:
+        status: "PASS"
+  failing:
+    tool_calls:
+      - server: retro-superfx_lsp
+        tool: sfx_audit_diagnostics
+        args:
+          path: "snes-sfx-demo/X-GSU/tests/vec2_manhattan_dist/test.sgs"
+    files:
+      - "snes-sfx-demo/X-GSU/tests/vec2_manhattan_dist/test.sgs"
+    code: |
+      function vec2_manhattan_dist
+          return
+    mcp_outcomes:
+      sfx_audit_diagnostics:
+        valid: false
+        errorCount: 1
+        summary:
+          errorCount: 1
+      assert_sfx_math:
+        status: "FAIL"

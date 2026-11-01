@@ -1,0 +1,45 @@
+id: p0_modal_nondestructive_compare
+tier: 1
+priority: P0
+targets:
+  - AGENTS.md
+  - .agents/rules/sfx-assembly-rules.md
+  - .agents/plugins/retro-superfx/rules/AGENTS.md
+  - .agents/skills/sfx-macro-language/**
+  - .agents/plugins/retro-superfx/skills/sfx-macro-language/**
+  - snes-sfx-demo/X-GSU/**
+prompt: >
+  Write an X-GSU function `check_flag_r8` that checks whether register `r8`
+  equals 1 without modifying `r8`, branching to `is_match` when equal.
+graders:
+  - type: code_invariant
+    must_match:
+      - pattern: 'from\s+r8\s*(?:;|\n)\s*(?:sub|cmp)\b'
+        reason: Use non-destructive 'from r8; sub #1' (or cmp) so r8 is preserved.
+    must_not_match:
+      - pattern: 'with\s+r8\s*(?:;|\n)\s*sub\b'
+        reason: Never use 'with r8; sub #k' for comparisons because 'with' overwrites r8 in-place.
+  - type: lsp_audit_clean
+replay_fixtures:
+  passing:
+    tool_calls: []
+    code: |
+      function check_flag_r8
+          from r8
+          sub #1
+          beq is_match
+          nop
+      is_match:
+          return
+      endfunction
+  failing:
+    tool_calls: []
+    code: |
+      function check_flag_r8
+          with r8
+          sub #1
+          beq is_match
+          nop
+      is_match:
+          return
+      endfunction

@@ -1,0 +1,54 @@
+id: p2_texture_atlas_pack_workflow
+tier: 2
+priority: P2
+targets:
+  - ".agents/skills/texture-atlas/**"
+  - ".agents/plugins/retro-superfx/skills/texture-atlas/**"
+prompt: >
+  Update the IsoEngine texture atlas (`snes-sfx-demo/X-GSU/IsoEngine/assets/textures.sfxproj`)
+  and regenerate its companion `.bin`, `.pal`, and `.i` files.
+graders:
+  - type: tool_called
+    server: retro-superfx_lsp
+    tool: sfx_pack_textures
+    args_match:
+      projectPath: '\.sfxproj$'
+  - type: tool_forbidden
+    tool: write_file
+    args_pattern: '\.(bin|pal)\b'
+    reason: "Never hand-author generated binary texture/palette companion files; use sfx_pack_textures."
+  - type: tool_forbidden
+    tool: edit_file
+    args_pattern: '\.(bin|pal)\b'
+    reason: "Never hand-edit generated binary texture/palette companion files; use sfx_pack_textures."
+  - type: mcp_verifier
+    server: retro-superfx_lsp
+    tool: sfx_pack_textures
+    args:
+      projectPath: "snes-sfx-demo/X-GSU/IsoEngine/assets/textures.sfxproj"
+      action: "validate"
+    expect:
+      valid: true
+
+replay_fixtures:
+  passing:
+    tool_calls:
+      - server: retro-superfx_lsp
+        tool: sfx_pack_textures
+        args:
+          projectPath: "snes-sfx-demo/X-GSU/IsoEngine/assets/textures.sfxproj"
+          action: "pack"
+    code: ""
+    mcp_outcomes:
+      sfx_pack_textures:
+        valid: true
+  failing:
+    tool_calls:
+      - tool: write_file
+        args:
+          Path: "snes-sfx-demo/X-GSU/IsoEngine/assets/textures.bin"
+          Content: "raw"
+    code: ""
+    mcp_outcomes:
+      sfx_pack_textures:
+        valid: false

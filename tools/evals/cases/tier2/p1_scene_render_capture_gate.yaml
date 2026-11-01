@@ -1,0 +1,65 @@
+id: p1_scene_render_capture_gate
+tier: 2
+priority: P1
+targets:
+  - ".agents/plugins/retro-superfx/rules/AGENTS.md"
+  - "tools/mesen-mcp/mesen_mcp/render_capture.py"
+  - ".agents/skills/sfx-test-runner/**"
+  - ".agents/plugins/retro-superfx/skills/sfx-test-runner/**"
+prompt: >
+  Optimize the polygon rasterization loop in `snes-sfx-demo/X-GSU/IsoEngine/` and verify
+  that the full scene renders properly without a black screen before completing the task.
+graders:
+  - type: tool_sequence_contains
+    sequence:
+      - "retro-superfx_lsp:sfx_audit_diagnostics"
+      - "retro-superfx_mesen:capture_sfx_render"
+  - type: tool_called
+    server: retro-superfx_mesen
+    tool: capture_sfx_render
+    args_match:
+      project: "IsoEngine"
+  - type: mcp_verifier
+    server: retro-superfx_mesen
+    tool: capture_sfx_render
+    args:
+      project: "snes-sfx-demo/X-GSU/IsoEngine"
+    expect:
+      status: "SUCCESS"
+      metrics.non_black_pixels: "> 0"
+
+replay_fixtures:
+  passing:
+    tool_calls:
+      - server: retro-superfx_lsp
+        tool: sfx_audit_diagnostics
+        args:
+          path: "snes-sfx-demo/X-GSU/IsoEngine/"
+      - server: retro-superfx_mesen
+        tool: capture_sfx_render
+        args:
+          project: "snes-sfx-demo/X-GSU/IsoEngine"
+    code: ""
+    mcp_outcomes:
+      capture_sfx_render:
+        status: "SUCCESS"
+        metrics:
+          non_black_pixels: 18432
+          total_pixels: 35840
+  failing:
+    tool_calls:
+      - server: retro-superfx_lsp
+        tool: sfx_audit_diagnostics
+        args:
+          path: "snes-sfx-demo/X-GSU/IsoEngine/"
+      - server: retro-superfx_mesen
+        tool: run_sfx_test
+        args:
+          test_name: "draw_textured_triangle"
+    code: ""
+    mcp_outcomes:
+      capture_sfx_render:
+        status: "SUCCESS"
+        metrics:
+          non_black_pixels: 0
+          total_pixels: 35840

@@ -22,15 +22,17 @@ Rules and technical constraints when writing, parsing, analyzing, or compiling S
 
 ## 2. Instruction Semantics & Prefix Nuances
 
-1. **Modal Prefix Instruction Scope**:
-   - `with Rn`, `to Rn`, `from Rn` modify `Sreg` or `Dreg` for the **single immediately following instruction only**.
-   - Standard arithmetic, logical, and memory operations reset `Sreg` and `Dreg` back to `R0`.
-   - To adjust a pointer in `R1`, you must write:
-     ```assembly
-     with r1
-     add #2
-     ```
-     Writing `add #2` alone will modify `R0` or the previous destination!
+1. **Modal Prefix Instruction Scope (`with`, `to`, `from`)**:
+   - `Sreg` (source register) and `Dreg` (destination register) for operations default to `R0`.
+   - `with Rn`, `to Rn`, and `from Rn` modify `Sreg` and/or `Dreg` for the **single immediately following instruction only**.
+   - Immediately after that configured instruction executes, both `Sreg` and `Dreg` automatically reset back to `R0`.
+   - **Prefix register mapping and side-effects**:
+     | Prefix | Effect on `Sreg` | Effect on `Dreg` | Use case | Clwarning / Side effect |
+     |---|---|---|---|---|
+     | `with Rn` | `Rn` | `Rn` | In-place modification (`with r1; add #2`) | **Destructive to `Rn`**: modifies `Rn` directly. Do NOT use for non-destructive comparisons! |
+     | `from Rn` | `Rn` | `R0` | Read operand, test/compare against immediate or register (`from r8; sub #1; beq ...`) | Leaves `Rn` intact; writes result into accumulator `R0` and updates flags. |
+     | `to Rn` | `R0` | `Rn` | Compute into destination register (`to r3; add #5`) | Reads operand from `R0` and stores output into `Rn`. |
+   - **Critical Warning**: Never write `with Rn` followed by `sub #k` or `cmp` if you intend to preserve `Rn`. Because `with` sets `Dreg = Rn`, the subtraction result overwrites `Rn`! Use `from Rn; sub #k` or `cmp Rn` instead.
 2. **Branch Delay Slots**:
    - Every branch (`bra`, `beq`, `bne`, `bmi`, `bge`, `blt`) has a 1-instruction delay slot.
    - Insert `nop` in the delay slot unless deliberately placing an instruction to execute during the branch pipeline.

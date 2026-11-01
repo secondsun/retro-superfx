@@ -1,1 +1,1 @@
-../../../tools/update-submodules.sh
+../../../../tools/update-submodules.sh

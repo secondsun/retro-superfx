@@ -1,0 +1,19 @@
+; Intentionally defective FX3 diagnostic fixture for Tier 0 MCP smoke verification.
+; Triggers HARDWARE_INVARIANT (`merge`, odd-aligned `ldw`, missing 8-NOP settling)
+; and SYNTAX / STACK_INVARIANT (`for` without `endfor`, unpopped stack push).
+
+function buggy_fx3_routine
+    gsu_stack_push r1
+    for #4
+        merge
+        to r4
+        ldw (r3)
+    return
+endfunction
+
+buggy_fx3_entry:
+    iwt r3, #$0101
+    to r4
+    ldw ($0101)
+    plot
+    stop

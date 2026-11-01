@@ -216,9 +216,12 @@ def _build_symbol_database(
 
             loc = dbg_data.get_symbol_def_location(sym)
             size = sizes.get(sym.name)
-            if size is None and sym.scope in dbg_data.scopes:
+            scope_name = None
+            if sym.scope in dbg_data.scopes:
                 sc = dbg_data.scopes[sym.scope]
-                if sc.size > 0:
+                if sc.name:
+                    scope_name = sc.name
+                if size is None and sc.size > 0:
                     size = sc.size
 
             symbols.append(
@@ -231,6 +234,7 @@ def _build_symbol_database(
                     type=sym.type or "lab",
                     size=size,
                     defined_at=loc,
+                    scope=scope_name,
                 )
             )
 
@@ -287,6 +291,8 @@ def format_symbol(sym: ResolvedSymbol) -> Dict[str, Any]:
         res["size"] = sym.size
     if sym.defined_at:
         res["definedAt"] = sym.defined_at
+    if sym.scope:
+        res["scope"] = sym.scope
     if sym.region == "ROM":
         res["gsu_rom_bank"] = sym.bank & 0x7F
         res["note"] = (
@@ -296,8 +302,101 @@ def format_symbol(sym: ResolvedSymbol) -> Dict[str, Any]:
     return res
 
 
+def _resolve_source_lines(
+    dbg_data: Optional[DbgData],
+    addr_val: int,
+    project_dir: Path,
+) -> Optional[Dict[str, Any]]:
+    """Resolve an address to precise source file and line number using DbgData spans."""
+    if not dbg_data:
+        return None
+
+    # Determine candidate addresses to check:
+    # 1. Exact addr_val
+    # 2. If addr_val < 0x10000 (e.g. 16-bit GSU PC), try matching against GSUCODE segment
+    candidates = [addr_val]
+    if addr_val < 0x10000:
+        gsu_seg = next(
+            (s for s in dbg_data.segments.values() if s.name == "GSUCODE"),
+            None,
+        )
+        if gsu_seg:
+            bank = gsu_seg.start >> 16
+            candidates.insert(0, (bank << 16) | addr_val)
+
+    for cand_addr in candidates:
+        for seg in dbg_data.segments.values():
+            if seg.start <= cand_addr < seg.start + seg.size:
+                offset_in_seg = cand_addr - seg.start
+                matching_spans = [
+                    s
+                    for s in dbg_data.spans.values()
+                    if s.seg == seg.id and s.start <= offset_in_seg < s.start + s.size
+                ]
+                if not matching_spans:
+                    continue
+                # Sort matching spans: prefer application sources (.sgs, .i, .s) over generic assembler macros
+                candidate_lines = []
+                for sp in matching_spans:
+                    for l in dbg_data.lines.values():
+                        if sp.id in l.spans:
+                            f = dbg_data.files.get(l.file)
+                            if f and f.name:
+                                candidate_lines.append((f.name, l.line, sp.size))
+
+                # Prioritize project sources (.sgs, .s, .i that are not GSU_Assembler.i)
+                def _file_priority(item: Tuple[str, int, int]) -> Tuple[int, int]:
+                    fname, lno, span_sz = item
+                    is_lib_macro = "GSU_Assembler.i" in fname
+                    is_opt_or_proj = fname.endswith((".sgs", ".s", ".i")) and not is_lib_macro
+                    # priority: 0 for project source, 1 for others
+                    prio = 0 if is_opt_or_proj else 1
+                    return (prio, span_sz)
+
+                candidate_lines.sort(key=_file_priority)
+                matched_line: Optional[Tuple[str, int]] = (
+                    (candidate_lines[0][0], candidate_lines[0][1])
+                    if candidate_lines
+                    else None
+                )
+
+                if matched_line:
+                    file_name, line_num = matched_line
+                    # Attempt to resolve snippet lines
+                    resolved_file_path = project_dir / file_name
+                    if not resolved_file_path.is_file():
+                        # Try relative to repo or project root
+                        resolved_file_path = (project_dir / file_name).resolve()
+
+                    snippet: List[str] = []
+                    if resolved_file_path.is_file():
+                        try:
+                            with open(resolved_file_path, "r", encoding="utf-8", errors="replace") as f:
+                                all_file_lines = f.readlines()
+                            start_l = max(0, line_num - 3)
+                            end_l = min(len(all_file_lines), line_num + 3)
+                            for idx in range(start_l, end_l):
+                                prefix_char = "==> " if (idx + 1) == line_num else "    "
+                                snippet.append(f"{prefix_char}{idx + 1:5d} | {all_file_lines[idx].rstrip()}")
+                        except Exception:
+                            pass
+
+                    res: Dict[str, Any] = {
+                        "path": file_name,
+                        "lineNumber": line_num,
+                    }
+                    if snippet:
+                        res["context"] = "\n".join(snippet)
+                    return res
+
+    return None
+
+
+_LAST_PROJECT: Optional[str] = None
+
+
 def resolve_address(
-    project: str,
+    project: Optional[str] = None,
     symbol: Optional[str] = None,
     address: Optional[Union[str, int]] = None,
     prefix: Optional[str] = None,
@@ -307,7 +406,7 @@ def resolve_address(
     """Resolve symbol <-> address from ld65 .dbg and .cpu.sym outputs.
 
     Args:
-        project: Directory name or path containing built ROM artifacts.
+        project: Directory name or path containing built ROM artifacts (optional, defaults to last used or 'IsoEngine').
         symbol: Symbol name to look up (with or without leading '.').
         address: Hex string or int (or bank:offset like "80:9DA6") to resolve.
         prefix: Prefix string to find matching symbols.
@@ -317,12 +416,20 @@ def resolve_address(
     Returns:
         Structured resolution results.
     """
+    global _LAST_PROJECT
+
+    target_project = project
+    if not target_project:
+        target_project = _LAST_PROJECT or "snes-sfx-demo/X-GSU/IsoEngine"
+
     try:
-        project_dir = resolve_test_dir(project)
+        project_dir = resolve_test_dir(target_project)
+        _LAST_PROJECT = target_project
     except FileNotFoundError:
+        # If default fallback fails, try finding any standard dir
         return {
             "status": "ERROR",
-            "error": f"Project directory not found: '{project}'",
+            "error": f"Project directory not found: '{target_project}'",
         }
 
     dbg_file, sym_file, searched = _find_build_artifacts(project_dir)
@@ -361,17 +468,33 @@ def resolve_address(
         clean_name = symbol.lstrip(".")
         matched_sym: Optional[ResolvedSymbol] = None
 
-        # Exact match first
-        for s in all_symbols:
-            if s.name == clean_name:
-                matched_sym = s
+        # Build candidate name variants (exact, _function, _func, _fn, scoped suffix)
+        candidates = [clean_name]
+        if not clean_name.endswith("_function"):
+            candidates.append(f"{clean_name}_function")
+        if not clean_name.endswith("_func"):
+            candidates.append(f"{clean_name}_func")
+        if "::" in clean_name:
+            candidates.append(clean_name.split("::")[-1])
+
+        # Exact match first across candidates
+        for cand in candidates:
+            for s in all_symbols:
+                if s.name == cand:
+                    matched_sym = s
+                    break
+            if matched_sym:
                 break
 
-        # Case-insensitive match fallback
+        # Case-insensitive match fallback across candidates
         if not matched_sym:
-            for s in all_symbols:
-                if s.name.lower() == clean_name.lower():
-                    matched_sym = s
+            for cand in candidates:
+                cand_lower = cand.lower()
+                for s in all_symbols:
+                    if s.name.lower() == cand_lower:
+                        matched_sym = s
+                        break
+                if matched_sym:
                     break
 
         if matched_sym:
@@ -475,6 +598,12 @@ def resolve_address(
             na_dict = format_symbol(nearest_after)
             na_dict["delta"] = nearest_after.val - addr_val
         output["nearestAfter"] = na_dict
+
+        # Also resolve source line location from dbg file if available
+        dbg_data_obj = parse_dbg_file(dbg_file) if dbg_file else None
+        source_loc = _resolve_source_lines(dbg_data_obj, addr_val, project_dir)
+        if source_loc:
+            output["sourceLocation"] = source_loc
 
     # 3. Range Query
     if range is not None:

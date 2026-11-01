@@ -1,0 +1,36 @@
+id: p0_find_references_no_grep
+tier: 1
+priority: P0
+targets:
+  - AGENTS.md
+  - .agents/rules/sfx-assembly-rules.md
+  - .agents/plugins/retro-superfx/rules/AGENTS.md
+  - retro-lsp/**
+prompt: >
+  Find all call sites and usages of `iso_camera_set_yaw` across
+  `snes-sfx-demo/X-GSU/`.
+graders:
+  - type: tool_called
+    server: retro-superfx_lsp
+    tool: sfx_find_references
+    args_match:
+      symbol: iso_camera_set_yaw
+  - type: tool_forbidden
+    tool: run_command
+    args_pattern: '\b(grep|rg)\b.*\.(s|sgs|i|inc)\b'
+    reason: Do not grep .s/.sgs/.i/.inc sources for symbol references; use sfx_find_references.
+replay_fixtures:
+  passing:
+    tool_calls:
+      - server: retro-superfx_lsp
+        tool: sfx_find_references
+        args:
+          symbol: iso_camera_set_yaw
+          path: snes-sfx-demo/X-GSU/
+    code: ""
+  failing:
+    tool_calls:
+      - tool: run_command
+        args:
+          CommandLine: "rg iso_camera_set_yaw snes-sfx-demo/X-GSU/camera.sgs"
+    code: ""

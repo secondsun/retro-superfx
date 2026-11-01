@@ -51,6 +51,7 @@ class LineRecord:
     line: int
     type: Optional[int] = None
     count: Optional[int] = None
+    spans: List[int] = field(default_factory=list)
 
 
 @dataclass
@@ -242,12 +243,14 @@ def parse_dbg_string(content: str) -> DbgData:
             line_no = _parse_int(fields.get("line", "0"))
             type_val = _parse_int(fields["type"]) if "type" in fields else None
             count_val = _parse_int(fields["count"]) if "count" in fields else None
+            line_spans = _parse_int_list(fields.get("span", ""))
             data.lines[line_id] = LineRecord(
                 id=line_id,
                 file=file_id,
                 line=line_no,
                 type=type_val,
                 count=count_val,
+                spans=line_spans,
             )
 
         elif rec_type == "sym":
