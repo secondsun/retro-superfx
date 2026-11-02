@@ -7,6 +7,7 @@ See the workspace root [`AGENTS.md`](file:///Users/summerspittman/Projects/retro
 - `with Rn`: sets `Sreg = Rn, Dreg = Rn` (modifies `Rn` in-place). Never use `with Rn; sub #k` for non-destructive tests/comparisons, as the subtraction overwrites `Rn`.
 - `from Rn`: sets `Sreg = Rn, Dreg = R0` (preserves `Rn`, writes result into `R0` and updates flags). Use this for testing/comparisons (`from r8; sub #1; beq`).
 - `to Rn`: sets `Sreg = R0, Dreg = Rn` (reads from `R0`, stores into `Rn`).
+- **No modal prefix before `move`**: `move Dreg, Sreg` is a macro pseudo-op expanding to `with Sreg; to Dreg`. Never prefix `move` (or `moves`, `moveb`, `movew`) with `to` (or `with`/`from`) — `move` already configures both registers, and any preceding modal prefix is immediately overwritten.
 
 ## Mandatory Framebuffer Capture Gate for Scene Optimizations
 - Any optimization, refactoring, or pipeline change affecting full-scene demos (`IsoEngine`, `SpriteScale`) MUST execute the `capture_sfx_render` MCP tool on `retro-superfx_mesen` (or verify via headless screenshot) to confirm `non_black_pixels > 0` before declaring the task complete.

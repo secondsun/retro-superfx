@@ -267,6 +267,7 @@ def test_all_seven_real_tier1_yaml_cases_pass_verify_graders() -> None:
         "p0_find_references_no_grep",
         "p0_resolve_address_no_grep",
         "p0_modal_nondestructive_compare",
+        "p0_no_to_before_move",
         "p0_stop_pipeline_settling_and_rpix",
         "p0_loop_stack_and_cache_discipline",
         "p0_diagnosing_bugs_skill_and_loop_first",
@@ -275,8 +276,8 @@ def test_all_seven_real_tier1_yaml_cases_pass_verify_graders() -> None:
     }
     actual_ids = {c.case_id for c in report.cases}
     assert actual_ids == expected_ids
-    assert report.total_cases == 9
-    assert report.passed_cases == 9
+    assert report.total_cases == 10
+    assert report.passed_cases == 10
     assert report.passed is True
     for c in report.cases:
         assert c.passing_fixture_passed is True, f"{c.case_id} passing fixture failed: {c.checks}"
@@ -347,8 +348,8 @@ def test_cli_tier1_verify_graders_and_baseline_compare(tmp_path: Path) -> None:
     payload = json.loads(proc.stdout)
     assert payload["passed"] is True
     assert payload["tier1"]["passed"] is True
-    assert payload["tier1"]["total_cases"] == 9
-    assert payload["tier1"]["passed_cases"] == 9
+    assert payload["tier1"]["total_cases"] == 10
+    assert payload["tier1"]["passed_cases"] == 10
     assert baseline_path.is_file()
 
     # Now run with --priority P0 and --compare against baseline
@@ -371,7 +372,7 @@ def test_cli_tier1_verify_graders_and_baseline_compare(tmp_path: Path) -> None:
     )
     assert cmp_proc.returncode == 0
     cmp_payload = json.loads(cmp_proc.stdout)
-    assert cmp_payload["tier1"]["total_cases"] == 7
+    assert cmp_payload["tier1"]["total_cases"] == 8
     assert "tier1_pass_rate_delta" in cmp_payload["comparison"]
     assert cmp_payload["comparison"]["tier1_pass_rate_delta"] == 0.0
 

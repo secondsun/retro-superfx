@@ -72,6 +72,7 @@ The `X-GSU` directory (`snes-sfx-demo/X-GSU/common/`) defines a high-level macro
 - **`register <var1>, <var2>`**: Declares pseudo-variables to be mapped to hardware registers.
 - **`register <var> = <reg>`**: Pre-colored constraint forcing a variable to a specific physical register (e.g. `register output = r4`).
 - **Modal Prefix Instructions**: `with`, `to`, `from` can be applied to declared pseudo-variables or physical registers.
+- **No Modal Prefix Before `move`**: `move Dreg, Sreg` is a macro pseudo-op expanding to `with Sreg; to Dreg`. Never prefix `move` (or `moves`, `moveb`, `movew`) with `to` (or `with`/`from`); `move` configures its own modal registers and overwrites any preceding prefix.
 
 ### C. Stack Operations (`stack.i` — `R10` is `stackPointer`)
 - **`init_stack`**: Initializes `R10` to `gsu_stack_ram` (512-byte buffer in GSURAM).
@@ -108,6 +109,7 @@ When writing or optimizing SuperFX code:
      - `with Rn`: sets `Sreg = Rn, Dreg = Rn` (in-place modification, overwrites `Rn`!). Never use `with Rn; sub #k` for non-destructive comparisons.
      - `from Rn`: sets `Sreg = Rn, Dreg = R0` (preserves `Rn`, writes result to `R0` and sets flags). Ideal for tests/comparisons (`from r8; sub #1; beq`).
      - `to Rn`: sets `Sreg = R0, Dreg = Rn` (reads from `R0`, stores result into `Rn`).
+     - **No Modal Prefix Before `move`**: Never use `to Rn; move Rn, Rm`. `move` expands to `with Rm; to Rn`, which instantly clobbers any preceding `to` prefix while wasting instruction space and cycles.
 6. **Dual `rpix` Pixel Cache Flush**: `plot` buffers pixels in dual 8-pixel caches (primary and secondary). Execute two `rpix` instructions (`rpix; rpix`) before the 8 settling NOPs and `stop` to flush all plotted pixels to Work RAM.
 7. **GSURAM-Only `ldw` / `ldb` Addressing**: `ldw (Rn)` and `ldb (Rn)` only access `GSURAM` (`$700000`, masked to `$1FFF`). Read ROM-resident tables in `.segment "GSUCODE"` or `.segment "ROM*"` via `romb` + `r14` + `getb`/`getbh`.
 8. **512-Byte Instruction Cache vs Pixel Cache**:

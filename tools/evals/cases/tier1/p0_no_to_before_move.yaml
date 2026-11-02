@@ -1,0 +1,39 @@
+id: p0_no_to_before_move
+tier: 1
+priority: P0
+targets:
+  - AGENTS.md
+  - .agents/rules/sfx-assembly-rules.md
+  - .agents/plugins/retro-superfx/rules/AGENTS.md
+  - .agents/skills/sfx-macro-language/**
+  - .agents/plugins/retro-superfx/skills/sfx-macro-language/**
+  - snes-sfx-demo/X-GSU/**
+prompt: >
+  Write an X-GSU function `setup_loop_counter` that moves register `r3` into
+  hardware loop counter `r12` without redundant modal prefixes.
+graders:
+  - type: code_invariant
+    must_match:
+      - pattern: 'move\s+r12\s*,\s*r3\b'
+        reason: Use 'move r12, r3' directly without preceding 'to' prefix.
+    must_not_match:
+      - pattern: 'to\s+r12\s*(?:;|\n)\s*move\s+r12'
+        reason: Never write 'to r12; move r12, r3' because 'move' already configures 'with Sreg; to Dreg'.
+  - type: lsp_audit_clean
+replay_fixtures:
+  passing:
+    tool_calls: []
+    code: |
+      function setup_loop_counter
+          move r12, r3
+          return
+      endfunction
+  failing:
+    tool_calls: []
+    code: |
+      function setup_loop_counter
+          to r12
+          move r12, r3
+          return
+      endfunction
+

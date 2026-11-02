@@ -36,7 +36,11 @@ Rules and technical constraints when writing, parsing, analyzing, or compiling S
      - Never use `with Rn; sub #k` or `with Rn; sub Rm` for non-destructive comparisons: because `with` sets `Dreg = Rn`, `sub` overwrites `Rn` in-place!
      - In contrast, `cmp` does **NOT** modify the destination register (`Dreg`)—it only computes `Sreg - Rm` and updates processor flags (`Z`, `CY`, `S`, `OV`). Therefore, `cmp` is non-destructive and safe to use.
      - Remember that `sub` always writes to `Dreg`: under `with Rn` it modifies `Rn`, and under `from Rn` it writes to `R0`. In sequential comparisons, `from r0; sub r1` will overwrite `R0`, corrupting subsequent checks against `R0` unless `R0` is preserved or `cmp` is used.
-2. **Branch Delay Slots**:
+2. **No Modal Prefix Before `move` Pseudo-Ops**:
+   - `move Dreg, Sreg` is a macro pseudo-op expanding to `with Sreg; to Dreg`.
+   - Never write `to Rn; move Rn, Rm` or place any modal prefix (`to`, `with`, `from`) immediately before `move`, `moves`, `moveb`, or `movew`.
+   - Because `move` configures `with Sreg` directly on its first instruction, any preceding modal prefix is immediately overwritten without effect, wasting instruction bytes and processor cycles.
+3. **Branch Delay Slots**:
    - Every branch (`bra`, `beq`, `bne`, `bmi`, `bge`, `blt`) has a 1-instruction delay slot.
    - Insert `nop` in the delay slot unless deliberately placing an instruction to execute during the branch pipeline.
 

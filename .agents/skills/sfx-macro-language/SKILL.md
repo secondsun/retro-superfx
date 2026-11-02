@@ -51,6 +51,15 @@ register forced_reg = r4
 - `register <name> [= <reg>]`: Declares pseudo-registers for graph-coloring register allocation.
 - In `sfx-optimizer`, variables declared via `register` participate in Chaitin-Briggs graph coloring, live-range tracking, and swimlane visualization.
 
+### Register Assignment & Move Operations (`move`, `moves`)
+
+```assembly
+move Dreg, Sreg              ; Expands to: with Sreg; to Dreg
+move Rn, #imm                ; Expands to ibt (byte) or iwt (word)
+moves Dreg, Sreg             ; Expands to: with Dreg; from Sreg (sets flags)
+```
+- **Critical Invariant**: Never place `to` (or `with`/`from`) before `move` or `moves`. Because `move` directly configures its own modal prefix (`with Sreg`), any preceding `to` prefix is immediately overwritten and useless. Writing `to Rn; move Rn, Rm` is redundant, wastes ROM bytes/cycles, and is flagged as an error (`MODAL_PREFIX_OVERWRITTEN`).
+
 ### Stack Operations (`R10` is `stackPointer`)
 
 ```assembly
