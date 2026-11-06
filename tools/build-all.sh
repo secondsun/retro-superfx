@@ -7,6 +7,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DO_INSTALL=false
 BUILD_ROMS=false
 SKIP_TESTS=false
+BUILD_VSCODE=false
+INSTALL_VSCODE=false
 
 for arg in "$@"; do
     case "$arg" in
@@ -19,13 +21,22 @@ for arg in "$@"; do
         --skip-tests)
             SKIP_TESTS=true
             ;;
+        --vscode)
+            BUILD_VSCODE=true
+            ;;
+        --install-vscode)
+            BUILD_VSCODE=true
+            INSTALL_VSCODE=true
+            ;;
         -h|--help)
             echo "Usage: $0 [options]"
             echo "Options:"
-            echo "  -i, --install     Run 'mvn clean install -DskipGpg=true' for upstream libraries"
-            echo "  -r, --roms        Also compile sample ROMs in snes-sfx-demo"
-            echo "  --skip-tests      Compile without running JUnit test suites"
-            echo "  -h, --help        Show this help message"
+            echo "  -i, --install         Run 'mvn clean install -DskipGpg=true' for upstream libraries"
+            echo "  -r, --roms            Also compile sample ROMs in snes-sfx-demo"
+            echo "  --skip-tests          Compile without running JUnit test suites"
+            echo "  --vscode              Package retro-lsp VS Code extension (.vsix)"
+            echo "  --install-vscode      Package and install extension into VS Code ('code' CLI)"
+            echo "  -h, --help            Show this help message"
             exit 0
             ;;
         *)
@@ -91,8 +102,48 @@ echo ""
 echo ">>> [5/5] retro-lsp..."
 (
     cd "${ROOT_DIR}/retro-lsp"
-    ./mvnw clean test ${EXTRA_FLAGS}
+    if [ "$BUILD_VSCODE" = true ]; then
+        ./mvnw clean package ${EXTRA_FLAGS}
+    else
+        ./mvnw clean test ${EXTRA_FLAGS}
+    fi
 )
+
+# Step 5a (Optional): VS Code Extension Packaging & Installation
+if [ "$BUILD_VSCODE" = true ]; then
+    echo ""
+    echo ">>> Packaging VS Code extension..."
+    (
+        cd "${ROOT_DIR}/retro-lsp"
+        OS="$(uname -s)"
+        case "$OS" in
+            Linux*)     ./scripts/link_linux.sh ;;
+            Darwin*)    ./scripts/link_mac.sh ;;
+            CYGWIN*|MINGW*|MSYS*) ./scripts/link_windows.sh ;;
+            *)          echo "Unknown OS $OS, skipping jlink" ;;
+        esac
+        ./scripts/bundle_extension.sh
+    )
+
+    if [ "$INSTALL_VSCODE" = true ]; then
+        VSCODE_CMD=""
+        if command -v code >/dev/null 2>&1; then
+            VSCODE_CMD="code"
+        elif command -v codium >/dev/null 2>&1; then
+            VSCODE_CMD="codium"
+        fi
+
+        if [ -n "$VSCODE_CMD" ]; then
+            VSIX="$(ls -t "${ROOT_DIR}/retro-lsp/vscode"/retro-vscode-*.vsix 2>/dev/null | head -n 1)"
+            if [ -n "$VSIX" ] && [ -f "$VSIX" ]; then
+                echo ">>> Installing VS Code extension: $(basename "$VSIX")..."
+                "$VSCODE_CMD" --install-extension "$VSIX" --force
+            fi
+        else
+            echo "Warning: Neither 'code' nor 'codium' CLI found; skipped extension install." >&2
+        fi
+    fi
+fi
 
 # Step 5 (Optional): snes-sfx-demo ROMs
 if [ "$BUILD_ROMS" = true ]; then

@@ -12,9 +12,9 @@ description: >-
 
 ## Arguments
 
-- **`test_name`** (optional): Name of a single test directory under `tests/` (e.g. `sqrt`, `vector3_add`). A leading `tests/` prefix is accepted and stripped.
-  - **Provided**: Run the pipeline below only for `tests/<test_name>`. If the directory does not exist (or is `test_template`), stop and list the available tests. Note that `buffer_rnc`, `decode_rnc`, and `hufftable_rnc` are works in progress (WIP) and are not expected to pass.
-  - **Omitted**: Discover every feature test directory in `tests/` (excluding `test_template` and the WIP RNC tests `buffer_rnc`, `decode_rnc`, `hufftable_rnc`) and run the pipeline for each, as in the [Batch Verification Example](#batch-verification-example). Report a pass/fail summary at the end.
+- **`test_name`** (optional): Name of a single test directory under `tests/` (e.g. `sqrt`, `vector3_add`), or `"all"` to run all active unit tests. A leading `tests/` prefix is accepted and stripped.
+  - **Single Test**: Run the pipeline below only for `tests/<test_name>`. If the directory does not exist (or is `test_template`), stop and list the available tests. Note that `buffer_rnc`, `decode_rnc`, and `hufftable_rnc` are works in progress (WIP) and are not expected to pass.
+  - **`all` or Omitted**: Discover every feature test directory in `tests/` (excluding `test_template` and WIP RNC tests `buffer_rnc`, `decode_rnc`, `hufftable_rnc`) and run the suite, as in [Batch Verification](#batch-verification). Report a pass/fail summary at the end.
 
 This skill guides the automated compilation, symbol address synchronization, and execution of SuperFX (GSU / FX3) unit tests within the `tests/` directory using Mesen CE's headless test runner.
 
@@ -166,14 +166,28 @@ Evaluate the exit code:
 
 ---
 
-## Batch Verification Example
+## Batch Verification
 
-To verify multiple tests in sequence:
+### Primary Method: retro-superfx_mesen MCP Server
+Run the entire active unit test suite headlessly via `call_mcp_tool`:
+
+```json
+{
+  "ServerName": "retro-superfx_mesen",
+  "ToolName": "run_sfx_test",
+  "Arguments": {
+    "test_name": "all",
+    "timeout_seconds": 15
+  }
+}
+```
+
+### CLI Method
+Run all active tests with automated `-- @sfx-test status=wip` filtering and summary reporting:
 
 ```bash
-for test in sqrt vector3_add reciprocal length normalize rom_to_ram; do
-    echo "Running $test..."
-    ./.agents/skills/run-gsu-test/scripts/run_test.sh "tests/$test" || exit 1
-done
+./tools/run-sfx-test.sh all 15
 ```
+
+This runs all active tests in `snes-sfx-demo/X-GSU/tests/`, automatically skips works in progress (`buffer_rnc`, `decode_rnc`, `hufftable_rnc`) and `test_template`, and reports a formatted summary table.
 

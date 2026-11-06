@@ -193,14 +193,10 @@ if [ -z "${LUA_SCRIPT}" ] || [ ! -f "${LUA_SCRIPT}" ]; then
 fi
 
 SYNC_SCRIPT="${ROOT_DIR}/.agents/skills/run-gsu-test/scripts/sync_test_labels.py"
-EXTRACT_SCRIPT="${ROOT_DIR}/.agents/skills/create-gsu-test/scripts/extract_syms.py"
 
 if [ -n "${SYM_FILE}" ] && [ -f "${SYM_FILE}" ] && [ "$(basename "${LUA_SCRIPT}")" = "test.lua" ] && [ -f "${SYNC_SCRIPT}" ]; then
     echo ">>> [2/3] Synchronizing symbol addresses in $(basename "${LUA_SCRIPT}")..."
     python3 "${SYNC_SCRIPT}" "${SYM_FILE}" "${LUA_SCRIPT}" || true
-elif [ -n "${SYM_FILE}" ] && [ -f "${SYM_FILE}" ] && [ -f "${EXTRACT_SCRIPT}" ]; then
-    echo ">>> [2/3] Extracting symbol map..."
-    python3 "${EXTRACT_SCRIPT}" "${SYM_FILE}" || true
 fi
 
 # 3. Execute via Mesen CE test runner

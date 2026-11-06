@@ -6,7 +6,7 @@ import subprocess
 from typing import Any, Dict, Optional
 
 from mesen_mcp.session import MesenRunner, SfxTestSession
-from mesen_mcp.utils import resolve_test_dir
+from mesen_mcp.utils import get_repo_root, resolve_test_dir
 
 _SFX_TEST_HEADER_RE = re.compile(r"^--\s*@sfx-test\s+(.*)$")
 _STATUS_ATTR_RE = re.compile(r"\bstatus=([A-Za-z0-9_-]+)")
@@ -91,6 +91,91 @@ def _sync_lua_labels(sym_map: Any, lua_path: Path) -> None:
     lua_path.write_text("\n".join(updated_lines) + "\n", encoding="utf-8")
 
 
+def run_sfx_suite(
+    timeout_seconds: int = 15,
+    mesen_path: Optional[str] = None,
+    runner: Optional[MesenRunner] = None,
+    skip_compile: bool = False,
+) -> Dict[str, Any]:
+    """Execute all active SuperFX unit tests, skipping templates and WIP suites."""
+    root_dir = get_repo_root()
+    tests_root = root_dir / "snes-sfx-demo" / "X-GSU" / "tests"
+    if not tests_root.is_dir():
+        return {
+            "status": "FAIL",
+            "test": "all",
+            "error": f"Tests root directory not found: {tests_root}",
+            "output": "",
+        }
+
+    results = []
+    pass_count = 0
+    fail_count = 0
+    skip_count = 0
+    failed_tests = []
+    output_lines = []
+
+    for test_dir in sorted(tests_root.iterdir()):
+        if not test_dir.is_dir():
+            continue
+        test_name = test_dir.name
+        header_meta = parse_sfx_test_header(test_dir)
+        if header_meta["status"] == "template":
+            continue
+        if header_meta["status"] == "wip":
+            reason = header_meta["reason"] or "Work in progress"
+            skip_count += 1
+            res = {
+                "status": "SKIP",
+                "test": test_name,
+                "test_status": "wip",
+                "reason": reason,
+                "output": f"SKIP (wip): {reason}",
+            }
+            results.append(res)
+            output_lines.append(f"SKIP (WIP): {test_name} — {reason}")
+            continue
+
+        res = run_sfx_test(
+            test_name=test_name,
+            timeout_seconds=timeout_seconds,
+            mesen_path=mesen_path,
+            runner=runner,
+            skip_compile=skip_compile,
+        )
+        results.append(res)
+        if res["status"] == "PASS":
+            pass_count += 1
+            output_lines.append(f"PASS: {test_name}")
+        else:
+            fail_count += 1
+            failed_tests.append(test_name)
+            err_msg = res.get("error") or res.get("output", "")
+            first_line = err_msg.splitlines()[0] if err_msg else "Test failed"
+            output_lines.append(f"FAIL: {test_name} ({first_line})")
+
+    summary_banner = (
+        f"SuperFX Test Suite Summary\n"
+        f"Passed: {pass_count} | Failed: {fail_count} | Skipped (WIP): {skip_count}"
+    )
+    if failed_tests:
+        summary_banner += f"\nFailed tests: {', '.join(failed_tests)}"
+
+    full_output = "\n".join(output_lines) + "\n\n" + summary_banner
+
+    return {
+        "status": "PASS" if fail_count == 0 else "FAIL",
+        "test": "all",
+        "total": len(results),
+        "passed": pass_count,
+        "failed": fail_count,
+        "skipped": skip_count,
+        "failed_tests": failed_tests,
+        "results": results,
+        "output": full_output,
+    }
+
+
 def run_sfx_test(
     test_name: str,
     timeout_seconds: int = 15,
@@ -99,6 +184,13 @@ def run_sfx_test(
     skip_compile: bool = False,
 ) -> Dict[str, Any]:
     """Compile and headlessly execute a SuperFX unit test in Mesen."""
+    if test_name.strip().lower() == "all":
+        return run_sfx_suite(
+            timeout_seconds=timeout_seconds,
+            mesen_path=mesen_path,
+            runner=runner,
+            skip_compile=skip_compile,
+        )
     try:
         test_dir = resolve_test_dir(test_name)
     except FileNotFoundError as e:

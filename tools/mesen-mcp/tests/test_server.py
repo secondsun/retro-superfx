@@ -26,6 +26,7 @@ async def test_server_call_run_sfx_test():
     payload = json.loads(result.content[0].text)
     assert payload["status"] == "PASS"
     assert payload["test"] == "sqrt"
+    assert "symbols" not in payload
 
 
 @pytest.mark.asyncio

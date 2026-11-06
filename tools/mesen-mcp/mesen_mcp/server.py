@@ -28,12 +28,13 @@ def create_server() -> FastMCP:
 
         Args:
             test_name: Name of the test directory (e.g. 'sqrt', 'transform', 'vector3_add')
-                       or path to the test directory.
+                       or path to the test directory, or 'all' to run all active unit tests.
             timeout_seconds: Maximum execution time in seconds (default: 15).
 
         Returns:
             Structured test results including 'status' ('PASS' | 'FAIL'), 'test',
-            'exit_code', and 'output'.
+            'exit_code', and 'output'. When test_name is 'all', includes 'total',
+            'passed', 'failed', 'skipped', and 'results'.
         """
         return execute_run_sfx_test(test_name=test_name, timeout_seconds=timeout_seconds)
 

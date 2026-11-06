@@ -48,6 +48,14 @@ When modifying `retro-common` or `sfx-optimizer`, install updated artifacts into
 ./tools/build-all.sh --install --roms
 ```
 
+### E. Build & Install VS Code Extension
+Package the self-contained JLink runtime and install the `.vsix` into VS Code:
+```bash
+./tools/install-vscode-extension.sh
+# Or package & install extension during full stack build:
+./tools/build-all.sh --install --install-vscode
+```
+
 ---
 
 ## 3. Individual Project Commands

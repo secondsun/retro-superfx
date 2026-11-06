@@ -41,3 +41,14 @@ def test_run_sfx_test_skips_wip_and_template_headers():
     assert tpl_res["status"] == "SKIP"
     assert tpl_res["test_status"] == "template"
 
+
+def test_run_sfx_test_all_suite():
+    res = run_sfx_test("all", timeout_seconds=15, skip_compile=True)
+    assert res["status"] == "PASS"
+    assert res["test"] == "all"
+    assert res["total"] >= 27
+    assert res["passed"] >= 24
+    assert res["failed"] == 0
+    assert res["skipped"] >= 3
+    assert "SuperFX Test Suite Summary" in res["output"]
+

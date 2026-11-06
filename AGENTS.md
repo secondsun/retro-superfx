@@ -149,11 +149,19 @@ Builds projects in strict topological order (`java-language-server` -> `retro-co
 ./tools/build-all.sh --install
 # To also compile sample ROMs in snes-sfx-demo:
 ./tools/build-all.sh --install --roms
+# To also package and install the VS Code extension:
+./tools/build-all.sh --install --install-vscode
 ```
 
-### 4. SuperFX Headless Emulation & Testing (`retro-superfx_mesen` MCP)
+### 4. Build & Install VS Code Extension
+Package the self-contained native JLink runtime and install the `.vsix` into VS Code (`code` or `codium`):
+```bash
+./tools/install-vscode-extension.sh
+```
+
+### 5. SuperFX Headless Emulation & Testing (`retro-superfx_mesen` MCP)
 Agents should **prioritize calling the MCP tools** on `retro-superfx_mesen` via `call_mcp_tool`:
-- **`run_sfx_test`**: Headless test execution in Mesen CE (`test_name`, `timeout_seconds`).
+- **`run_sfx_test`**: Headless test execution in Mesen CE (`test_name` e.g. `'sqrt'` or `'all'`, `timeout_seconds`).
 - **`assert_sfx_math`**: Dynamic parameter injection and mathematical output assertions in GSURAM/registers.
 - **`capture_sfx_render`**: Headless framebuffer capture to PNG for visual inspection or perceptual hashing.
 - **`profile_sfx_execution`**: Profiles GSU execution cycles, hotspots, cache residency, and VBlank FPS.
@@ -161,10 +169,12 @@ Agents should **prioritize calling the MCP tools** on `retro-superfx_mesen` via 
 
 *Fallback CLI:*
 ```bash
+./tools/run-sfx-test.sh all 15
+# Or run a single test:
 ./tools/run-sfx-test.sh vector3_add 10
 ```
 
-### 5. SuperFX Language & Analysis Tools (`retro-superfx_lsp` MCP)
+### 6. SuperFX Language & Analysis Tools (`retro-superfx_lsp` MCP)
 Agents should actively utilize the `retro-superfx_lsp` MCP tools via `call_mcp_tool` for assembly authoring, analysis, and verification:
 - **`sfx_audit_diagnostics`**: Unified static diagnostics tool validating syntax errors (block balancing for `function`/`endfunction`, `for`/`endfor`, `.if`/`.endif`, `.proc`/`.endproc`, instruction and macro arity, duplicate symbols), FX3 hardware invariants (8-NOP settling before `stop`, word alignment on `ldw`/`stw`, no hardware `MERGE`, modal lifetimes), and stack displacement invariants (return leaks, divergent branch depths).
 - **`sfx_audit_invariants`**: Backward-compatible alias for `sfx_audit_diagnostics`.
@@ -207,7 +217,7 @@ Ready-to-copy calls (the tools are lazy-loaded; no need to read their schemas fi
 
 Result fields: `location.path` / `references[].path` (workspace-relative), `location.lineNumber` / `references[].lineNumber` (**1-based**, matches `grep -n` / `read_file`; `line` is the legacy 0-based value), `documentation`, `totalReferences`, `references[].kind` (`call`, `read`, `write`, `macro-invocation`, `use`), `references[].text` (when `contextLines > 0`). Real sources rank above fixture copies under `src/test/resources/`, `.build/`, and `build_tools/`.
 
-### 6. Update & Push Submodules
+### 7. Update & Push Submodules
 Stage modified submodules, generate descriptive commit messages, and push to the active branch on `origin`:
 ```bash
 ./tools/update-submodules.sh
@@ -217,7 +227,7 @@ Stage modified submodules, generate descriptive commit messages, and push to the
 ./tools/update-submodules.sh --split
 ```
 
-### 7. Fetch & Rebase Submodules
+### 8. Fetch & Rebase Submodules
 Fetch latest upstream commits from GitHub and rebase submodules on target branch (default: `prototype`, remote: `origin`):
 ```bash
 ./tools/rebase-submodules.sh
@@ -227,7 +237,7 @@ Fetch latest upstream commits from GitHub and rebase submodules on target branch
 ./tools/rebase-submodules.sh --branch main
 ```
 
-### 8. Agentic Harness Evaluation Suite (`tools/run-evals.sh`)
+### 9. Agentic Harness Evaluation Suite (`tools/run-evals.sh`)
 Validate harness links/symlinks, skill parity, context token budgets, MCP contracts, and SuperFX policy/outcome graders:
 ```bash
 # Tier 0: Static harness lint + live MCP smoke checks
