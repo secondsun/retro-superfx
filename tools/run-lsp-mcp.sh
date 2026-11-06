@@ -50,7 +50,7 @@ DEP_DIR="${LSP_TARGET}/dependency"
 MAIN_JAR="$(find "${LSP_TARGET}" -maxdepth 1 -name "retro-lsp-*.jar" ! -name "*-sources.jar" ! -name "*-javadoc.jar" ! -name "*-tests.jar" 2>/dev/null | head -n 1 || true)"
 
 if [ -n "${MAIN_JAR}" ] && [ -d "${DEP_DIR}" ] && command -v java >/dev/null 2>&1; then
-    exec java -p "${DEP_DIR}:${MAIN_JAR}" \
+    exec java -XX:TieredStopAtLevel=1 -p "${DEP_DIR}:${MAIN_JAR}" \
         --add-modules ALL-MODULE-PATH \
         -m dev.secondsun.retrolsp/dev.secondsun.retrolsp.Main \
         --mcp "${EXTRA_ARGS[@]}" "$@"

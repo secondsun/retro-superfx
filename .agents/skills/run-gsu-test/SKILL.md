@@ -114,9 +114,10 @@ Before launching the emulator, verify that `test.lua` includes explicit terminat
 
 ### Step 5: Mesen Execution
 
-#### Primary Method: retro-superfx_mesen MCP Server
-Agents should prioritize calling the `retro-superfx_mesen` MCP server via `call_mcp_tool`:
+#### Primary Method: retro-superfx_mesen MCP Server (`call_mcp_tool`)
+Agents must strongly prefer calling the `retro-superfx_mesen` MCP server via the **`call_mcp_tool`** tool (`run_sfx_test` and `assert_sfx_math` are lazy-loaded behind `call_mcp_tool`, not top-level tool declarations; no schema read required).
 
+Call the **`call_mcp_tool`** tool with:
 ```json
 {
   "ServerName": "retro-superfx_mesen",
@@ -128,7 +129,7 @@ Agents should prioritize calling the `retro-superfx_mesen` MCP server via `call_
 }
 ```
 
-For parameterized mathematical assertions with register/memory injection:
+For parameterized mathematical assertions with register/memory injection, call **`call_mcp_tool`** with:
 ```json
 {
   "ServerName": "retro-superfx_mesen",
@@ -142,10 +143,8 @@ For parameterized mathematical assertions with register/memory injection:
 }
 ```
 
-#### Fallback CLI Method
-Ensure `Mesen` is on the system PATH (`which Mesen`).
-
-Execute the test using the runner script:
+#### Emergency Fallback CLI Method
+Only if `call_mcp_tool` is unavailable, ensure `Mesen` is on the system PATH (`which Mesen`) and execute the test using the runner script:
 
 ```bash
 ./.agents/skills/run-gsu-test/scripts/run_test.sh tests/<test_name>
@@ -168,8 +167,8 @@ Evaluate the exit code:
 
 ## Batch Verification
 
-### Primary Method: retro-superfx_mesen MCP Server
-Run the entire active unit test suite headlessly via `call_mcp_tool`:
+### Primary Method: retro-superfx_mesen MCP Server (`call_mcp_tool`)
+Run the entire active unit test suite headlessly by calling the **`call_mcp_tool`** tool with:
 
 ```json
 {
@@ -182,8 +181,8 @@ Run the entire active unit test suite headlessly via `call_mcp_tool`:
 }
 ```
 
-### CLI Method
-Run all active tests with automated `-- @sfx-test status=wip` filtering and summary reporting:
+### Emergency CLI Fallback
+Only if `call_mcp_tool` is unavailable, run all active tests with automated `-- @sfx-test status=wip` filtering and summary reporting:
 
 ```bash
 ./tools/run-sfx-test.sh all 15

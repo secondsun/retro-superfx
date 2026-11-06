@@ -15,7 +15,7 @@ This skill guides agents through creating, updating, and packing SuperFX (FX3 / 
 ## 1. Hardware & Engine Invariants
 
 1. **Unpacked 1-Byte-Per-Texel Layout**:
-   - Every texel in `.bin` / `_graphics.bin` is stored as an unpacked single byte holding a 4-bit palette index (`$00`–`$0F`) in row-major order.
+   - Every texel in `.bin` (e.g. `TEXTURES.bin`) is stored as an unpacked single byte holding a 4-bit palette index (`$00`–`$0F`) in row-major order.
    - Enables the SuperFX scanline rasterizer loop to execute `getc; plot` directly with zero runtime bit-unpacking or masking.
 2. **Independent Power-of-Two Dimensions**:
    - Atlas width and height must each be a power of two in `[16, 32, 64, 128, 256]`.
@@ -35,10 +35,12 @@ This skill guides agents through creating, updating, and packing SuperFX (FX3 / 
 
 ## 2. Tools & Invocation
 
-Agents should use the **`sfx_pack_textures`** tool on the `retro-superfx_lsp` MCP server, or the fallback CLI script `./tools/texture-packer.sh`.
+> [!IMPORTANT]
+> **Always use `call_mcp_tool` first.** In Antigravity, MCP tools are lazy-loaded behind the top-level **`call_mcp_tool`** tool declaration (there are no top-level `sfx_pack_textures`, `sfx_lookup_symbol`, or `capture_sfx_render` tool declarations). Invoke **`call_mcp_tool`** directly with `ServerName`, `ToolName`, and `Arguments` — you do **not** need to read `<appDataDir>/mcp/` schema files first. Do not fall back to `./tools/texture-packer.sh` or `grep` unless `call_mcp_tool` returns an explicit server-unavailable error.
 
-### MCP Tool Usage (`sfx_pack_textures`)
+### A. Pack, Import, or Validate Atlases (`sfx_pack_textures` via `call_mcp_tool`)
 
+Call the **`call_mcp_tool`** tool with:
 ```json
 {
   "ServerName": "retro-superfx_lsp",
@@ -50,17 +52,56 @@ Agents should use the **`sfx_pack_textures`** tool on the `retro-superfx_lsp` MC
 }
 ```
 
-Parameters:
+Parameters inside `Arguments`:
 - `project_path`: Path to the `.sfxproj` manifest (workspace-relative).
-- `action`: `"pack"` (default), `"import"`, or `"validate"`.
+- `action`: `"pack"` (default — exports `<NAME>.bin`, `<NAME>.pal`, `<NAME>.i`, and `<NAME>_atlas.png`), `"import"`, or `"validate"`.
 - `auto_pack`: Boolean; when `true`, automatically computes shelf packing for all textures.
 - `output_dir`: Optional alternate destination directory for exported files.
 - `image_paths`: Array of image paths to import (when `action` is `"import"`).
 - `snap_palette`: Boolean; snaps incoming colors to the nearest assigned palette slots.
 - `auto_quantize`: Boolean; executes global Median-Cut 15-color quantization across all textures.
 
-### CLI Fallback
+### B. Symbol & Reference Search (`sfx_lookup_symbol`, `sfx_find_references`, `sfx_resolve_address`)
 
+When inspecting where texture constants (`TEXTURE_ID_*`, `TEXTURE_*_OFFSET`, `TEXTURE_TABLE`), primitive archetypes (`PRIM_*`), or scene assembly routines (`map_compile_quad_face`, `SuperFX.s`, `map.sgs`) are **defined** or **used** across `.s`/`.sgs`/`.i`/`.inc` files, **do not use `grep`**. Call **`call_mcp_tool`** instead:
+
+- **Find where a symbol is defined** (file path, 1-based line number, and doc comment) — call **`call_mcp_tool`**:
+  ```json
+  {
+    "ServerName": "retro-superfx_lsp",
+    "ToolName": "sfx_lookup_symbol",
+    "Arguments": {
+      "symbol": "TEXTURE_ID_FOLIAGE",
+      "path": "snes-sfx-demo/X-GSU/IsoEngine/"
+    }
+  }
+  ```
+- **Find all references/usages of a symbol** across assembly files — call **`call_mcp_tool`**:
+  ```json
+  {
+    "ServerName": "retro-superfx_lsp",
+    "ToolName": "sfx_find_references",
+    "Arguments": {
+      "symbol": "TEXTURE_ID_FOLIAGE",
+      "path": "snes-sfx-demo/X-GSU/IsoEngine/"
+    }
+  }
+  ```
+- **Resolve a linker address from `.cpu.sym` / `.dbg`** — call **`call_mcp_tool`**:
+  ```json
+  {
+    "ServerName": "retro-superfx_mesen",
+    "ToolName": "sfx_resolve_address",
+    "Arguments": {
+      "project": "snes-sfx-demo/X-GSU/IsoEngine",
+      "symbol": "TEXTURE_TABLE"
+    }
+  }
+  ```
+
+### C. Emergency CLI Fallback (Only if `call_mcp_tool` is Unavailable)
+
+Only if the `retro-superfx_lsp` MCP server cannot be reached via `call_mcp_tool`:
 ```bash
 # Validate project manifest:
 ./tools/texture-packer.sh validate snes-sfx-demo/X-GSU/IsoEngine/Data/TEXTURES.sfxproj
@@ -166,10 +207,10 @@ To add a sub-region (like an architectural panel or fin) without duplicating bit
 
 .segment "GSUDATA"
 textures_binary:
-    .incbin "Data/MY_SCENE_graphics.bin"
+    .incbin "Data/MY_SCENE.bin"
 
 .segment "ROMSPR"
-    incbin Palette, "Data/MY_SCENE_palette.bin"
+    incbin Palette, "Data/MY_SCENE.pal"
 ```
 
 ---
@@ -182,17 +223,19 @@ Per workspace invariants, any modification to an active scene atlas (such as `Is
    ```bash
    make -C snes-sfx-demo/X-GSU/IsoEngine clean all
    ```
-2. **Execute Headless Framebuffer Capture**:
-   Call the `capture_sfx_render` tool on `retro-superfx_mesen`:
+2. **Execute Headless Framebuffer Capture via `call_mcp_tool`**:
+   Invoke the **`call_mcp_tool`** tool (`capture_sfx_render` is a lazy-loaded MCP tool on `retro-superfx_mesen`, not a top-level tool name; never read `tools/mesen-mcp/` Python internals to run it manually):
    ```json
    {
      "ServerName": "retro-superfx_mesen",
      "ToolName": "capture_sfx_render",
      "Arguments": {
-       "scene_test_name": "IsoEngine"
+       "scene_test_name": "IsoEngine",
+       "timeout_seconds": 15
      }
    }
    ```
-3. **Verify Metrics**:
-   Confirm `status == "SUCCESS"` and `metrics.non_black_pixels > 0`.
+3. **Verify Metrics & Visually Inspect**:
+   - Confirm `status == "SUCCESS"` and `metrics.non_black_pixels > 0`.
+   - Call **`read_file`** directly on the returned `png_path` to visually inspect the rendered scene.
 

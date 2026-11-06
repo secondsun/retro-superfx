@@ -12,13 +12,16 @@ This skill explains how to build, run, and verify SuperFX unit tests located in 
 
 ---
 
-## 1. Primary Execution: retro-superfx_mesen MCP Server
+## 1. Primary Execution: retro-superfx_mesen MCP Server (`call_mcp_tool`)
 
-Agents should **always prioritize calling the MCP tools** provided by the `retro-superfx_mesen` server via `call_mcp_tool`.
+> [!IMPORTANT]
+> **Always invoke `retro-superfx_mesen` tools via the `call_mcp_tool` tool first.**
+> In Antigravity, these MCP tools are lazy-loaded behind the top-level **`call_mcp_tool`** tool declaration — there are no top-level `run_sfx_test` or `capture_sfx_render` tool declarations. Call **`call_mcp_tool`** directly with `ServerName: "retro-superfx_mesen"`, `ToolName: "<tool>"`, and `Arguments: {...}` (you do **not** need to read `<appDataDir>/mcp/` schema files first, and **never** read `tools/mesen-mcp/` Python internals to learn CLI flags).
 
-### A. Run Unit Test (`run_sfx_test`)
-Builds and runs a test suite headlessly in Mesen CE and returns structured pass/fail results, logs, and resolved symbols:
+### A. Run Unit Test (`run_sfx_test` via `call_mcp_tool`)
+Builds and runs a test suite headlessly in Mesen CE and returns structured pass/fail results, logs, and resolved symbols.
 
+Call the **`call_mcp_tool`** tool with:
 ```json
 {
   "ServerName": "retro-superfx_mesen",
@@ -30,9 +33,10 @@ Builds and runs a test suite headlessly in Mesen CE and returns structured pass/
 }
 ```
 
-### B. Mathematical Assertions (`assert_sfx_math`)
-Injects parameterized input values into GSURAM or hardware registers, executes the routine under test, and verifies outputs against expectations:
+### B. Mathematical Assertions (`assert_sfx_math` via `call_mcp_tool`)
+Injects parameterized input values into GSURAM or hardware registers, executes the routine under test, and verifies outputs against expectations.
 
+Call the **`call_mcp_tool`** tool with:
 ```json
 {
   "ServerName": "retro-superfx_mesen",
@@ -51,24 +55,25 @@ Injects parameterized input values into GSURAM or hardware registers, executes t
 }
 ```
 
-### C. Framebuffer Render Capture (`capture_sfx_render`)
-Runs a SuperFX graphical demo or scene headlessly and captures a PNG of the framebuffer for visual inspection or perceptual hashing:
+### C. Framebuffer Render Capture (`capture_sfx_render` via `call_mcp_tool`)
+Runs a SuperFX graphical demo or scene (`IsoEngine`, `SpriteScale`) headlessly and captures a PNG of the framebuffer for visual inspection or perceptual hashing. After `capture_sfx_render` completes, call **`read_file`** directly on the returned `png_path` to visually inspect the rendered image.
 
+Call the **`call_mcp_tool`** tool with:
 ```json
 {
   "ServerName": "retro-superfx_mesen",
   "ToolName": "capture_sfx_render",
   "Arguments": {
-    "scene_test_name": "SpriteScale",
-    "output_png_path": "/tmp/spritescale_render.png",
+    "scene_test_name": "IsoEngine",
     "timeout_seconds": 15
   }
 }
 ```
 
-### D. Execution Profiling (`profile_sfx_execution`)
-Profiles GSU cycle counts, hotspots by function and label, instruction cache residency, and VBlank FPS:
+### D. Execution Profiling (`profile_sfx_execution` via `call_mcp_tool`)
+Profiles GSU cycle counts, hotspots by function and label, instruction cache residency, and VBlank FPS.
 
+Call the **`call_mcp_tool`** tool with:
 ```json
 {
   "ServerName": "retro-superfx_mesen",
@@ -81,9 +86,10 @@ Profiles GSU cycle counts, hotspots by function and label, instruction cache res
 }
 ```
 
-### E. Symbol & Address Resolution (`sfx_resolve_address`)
-Resolves symbol names to linker addresses, PC addresses to nearest enclosing functions or labels with deltas, and memory layout ranges from `.dbg` and `.cpu.sym` build outputs:
+### E. Symbol & Address Resolution (`sfx_resolve_address` via `call_mcp_tool`)
+Resolves symbol names to linker addresses, PC addresses to nearest enclosing functions or labels with deltas, and memory layout ranges from `.dbg` and `.cpu.sym` build outputs (never `grep` `.cpu.sym` or `.dbg` files).
 
+Call the **`call_mcp_tool`** tool with:
 ```json
 {
   "ServerName": "retro-superfx_mesen",
@@ -95,7 +101,7 @@ Resolves symbol names to linker addresses, PC addresses to nearest enclosing fun
 }
 ```
 
-Resolve address to nearest label / function within the same memory region:
+Resolve address to nearest label / function within the same memory region (`call_mcp_tool`):
 ```json
 {
   "ServerName": "retro-superfx_mesen",
@@ -107,7 +113,7 @@ Resolve address to nearest label / function within the same memory region:
 }
 ```
 
-Inspect memory layout in a range (sorted ascending, duplicates collapsed):
+Inspect memory layout in a range (sorted ascending, duplicates collapsed, via `call_mcp_tool`):
 ```json
 {
   "ServerName": "retro-superfx_mesen",
@@ -121,9 +127,9 @@ Inspect memory layout in a range (sorted ascending, duplicates collapsed):
 
 ---
 
-## 2. Fallback CLI Execution
+## 2. Emergency Fallback CLI Execution
 
-If the MCP server is not reachable or if custom Lua hook experimentation is required, run via the CLI helper script from the workspace root:
+Only if `call_mcp_tool` on `retro-superfx_mesen` is unreachable or custom Lua hook experimentation is required, run via the CLI helper script from the workspace root:
 
 ```bash
 ./tools/run-sfx-test.sh <test_name> [timeout_seconds]

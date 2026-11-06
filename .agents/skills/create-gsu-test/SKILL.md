@@ -84,8 +84,8 @@ Modify `Test.sgs`:
 
 ---
 
-### Step 4: Audit Diagnostics & Assembly Invariants (retro-superfx_lsp MCP Tool)
-Before building, validate that `Test.sgs` satisfies syntax constraints, block balancing (`function`/`endfunction`), stack cleanup (`Δ_SP == 0`), and hardware invariants using the `retro-superfx_lsp` MCP tool `sfx_audit_diagnostics` (or its alias `sfx_audit_invariants`):
+### Step 4: Audit Diagnostics & Assembly Invariants (`call_mcp_tool`)
+Before building, validate that `Test.sgs` satisfies syntax constraints, block balancing (`function`/`endfunction`), stack cleanup (`Δ_SP == 0`), and hardware invariants by calling the **`call_mcp_tool`** tool (`sfx_audit_diagnostics` is lazy-loaded on `retro-superfx_lsp`, not a top-level tool name; no schema read required):
 
 ```json
 {
@@ -137,8 +137,8 @@ Edit `tests/<test_name>/test.lua`:
 
 ### Step 8: Run and Verify Test
 
-#### Primary Method: retro-superfx_mesen MCP Server
-Agents should execute tests headlessly using the `retro-superfx_mesen` MCP server:
+#### Primary Method: retro-superfx_mesen MCP Server (`call_mcp_tool`)
+Agents must strongly prefer executing tests headlessly by calling the **`call_mcp_tool`** tool (`run_sfx_test` and `assert_sfx_math` are lazy-loaded behind `call_mcp_tool`, not top-level tool declarations; no schema read required):
 
 ```json
 {
@@ -151,7 +151,7 @@ Agents should execute tests headlessly using the `retro-superfx_mesen` MCP serve
 }
 ```
 
-For parameterized test vectors:
+For parameterized test vectors, call **`call_mcp_tool`** with:
 ```json
 {
   "ServerName": "retro-superfx_mesen",
@@ -165,8 +165,8 @@ For parameterized test vectors:
 }
 ```
 
-#### Fallback CLI Execution
-Run using [run_test.sh](./scripts/run_test.sh) or directly with Mesen:
+#### Emergency Fallback CLI Execution
+Only if `call_mcp_tool` is unavailable, run using [run_test.sh](./scripts/run_test.sh) or directly with Mesen:
 
 ```bash
 # Using helper script

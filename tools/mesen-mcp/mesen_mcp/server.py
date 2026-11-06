@@ -8,23 +8,22 @@ try:
 except ImportError:
     from mcp.server.fastmcp import FastMCP
 
-from mesen_mcp.address_resolver import resolve_address as execute_resolve_address
-from mesen_mcp.math_verifier import assert_sfx_math as execute_assert_sfx_math
-from mesen_mcp.profiler import profile_sfx_execution as execute_profile_sfx_execution
-from mesen_mcp.render_capture import capture_sfx_render as execute_capture_sfx_render
-from mesen_mcp.runner import run_sfx_test as execute_run_sfx_test
-
 
 def create_server() -> FastMCP:
     """Create and configure the Mesen MCP server instance."""
     app = FastMCP(
         name="mesen-mcp",
-        instructions="MCP Server for SuperFX testing and headless Mesen emulation",
+        instructions=(
+            "MCP Server for SuperFX testing, symbol/address resolution, and headless Mesen emulation. "
+            "Invoke these tools via the `call_mcp_tool` tool with `ServerName: \"retro-superfx_mesen\"` "
+            "and `ToolName` set to `run_sfx_test`, `capture_sfx_render`, `sfx_resolve_address`, "
+            "`assert_sfx_math`, or `profile_sfx_execution` instead of using CLI scripts or grep."
+        ),
     )
 
     @app.tool()
     def run_sfx_test(test_name: str, timeout_seconds: int = 15) -> Dict[str, Any]:
-        """Compile and execute a SuperFX unit test headlessly using Mesen.
+        """Use INSTEAD OF './tools/run-sfx-test.sh' to compile and execute a SuperFX unit test headlessly using Mesen.
 
         Args:
             test_name: Name of the test directory (e.g. 'sqrt', 'transform', 'vector3_add')
@@ -36,6 +35,8 @@ def create_server() -> FastMCP:
             'exit_code', and 'output'. When test_name is 'all', includes 'total',
             'passed', 'failed', 'skipped', and 'results'.
         """
+        from mesen_mcp.runner import run_sfx_test as execute_run_sfx_test
+
         return execute_run_sfx_test(test_name=test_name, timeout_seconds=timeout_seconds)
 
     @app.tool()
@@ -58,6 +59,8 @@ def create_server() -> FastMCP:
         Returns:
             Structured results: {"status": "PASS" | "FAIL", "test": test_name, "results": {...}, "diffs": {...}}
         """
+        from mesen_mcp.math_verifier import assert_sfx_math as execute_assert_sfx_math
+
         return execute_assert_sfx_math(
             test_name=test_name,
             input_overrides=input_overrides,
@@ -73,7 +76,7 @@ def create_server() -> FastMCP:
         settle_frames: int = 0,
         timeout_seconds: int = 15,
     ) -> Dict[str, Any]:
-        """Execute a SuperFX scene or test ROM headlessly and capture its framebuffer.
+        """Execute a SuperFX scene or test ROM headlessly and capture its framebuffer PNG for visual inspection.
 
         Args:
             scene_test_name: Name of the scene demo or test directory (e.g. 'SpriteScale', 'IsoEngine', 'sqrt').
@@ -85,6 +88,8 @@ def create_server() -> FastMCP:
         Returns:
             Structured results: {"status": "SUCCESS" | "FAIL", "png_path": ..., "metrics": {...}}
         """
+        from mesen_mcp.render_capture import capture_sfx_render as execute_capture_sfx_render
+
         return execute_capture_sfx_render(
             scene_test_name=scene_test_name,
             output_png_path=output_png_path,
@@ -118,6 +123,8 @@ def create_server() -> FastMCP:
             cached_execution_pct, vblanks_per_full_frame, effective_fps, pass_breakdown),
             'hotspots_by_function', and 'hotspots_by_label'.
         """
+        from mesen_mcp.profiler import profile_sfx_execution as execute_profile_sfx_execution
+
         return execute_profile_sfx_execution(
             target_name=target_name,
             warmup_runs=warmup_runs,
@@ -140,7 +147,7 @@ def create_server() -> FastMCP:
         range: Optional[str] = None,
         max_results: int = 20,
     ) -> Dict[str, Any]:
-        """Resolve symbol <-> address and inspect memory layout from ld65 build outputs (.dbg/.cpu.sym).
+        """Use INSTEAD OF grep on .cpu.sym/.dbg to resolve symbol <-> address and inspect memory layout from ld65 build outputs.
 
         Args:
             project: Path or name of the demo or test directory (optional; defaults to last used or 'IsoEngine').
@@ -154,6 +161,8 @@ def create_server() -> FastMCP:
             Structured resolution results including symbol addresses, deltas, memory regions,
             sourceLocation (file and line number with context lines), nearestBefore/nearestAfter, and file definitions.
         """
+        from mesen_mcp.address_resolver import resolve_address as execute_resolve_address
+
         resolved_sym = symbol or symbol_name or name
         resolved_addr = address if address is not None else addr
         return execute_resolve_address(
@@ -183,11 +192,10 @@ def main():
     )
     args = parser.parse_args()
 
-    server = create_server()
     if args.transport == "stdio":
-        server.run(transport="stdio")
+        mcp.run(transport="stdio")
     else:
-        server.run(transport="sse")
+        mcp.run(transport="sse")
 
 
 if __name__ == "__main__":

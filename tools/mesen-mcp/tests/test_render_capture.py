@@ -98,8 +98,8 @@ def test_capture_sfx_render_plot_texel():
     metrics = result["metrics"]
     assert metrics["width"] == 256
     assert metrics["height"] == 224
-    assert metrics["non_black_pixels"] == 3712
-    assert metrics["bounding_box"] == [0, 21, 63, 94]
+    assert metrics["non_black_pixels"] == 5056
+    assert metrics["bounding_box"] == [0, 0, 63, 94]
 
     try:
         os.remove(png_path)

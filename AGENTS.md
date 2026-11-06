@@ -160,14 +160,14 @@ Package the self-contained native JLink runtime and install the `.vsix` into VS 
 ```
 
 ### 5. SuperFX Headless Emulation & Testing (`retro-superfx_mesen` MCP)
-Agents should **prioritize calling the MCP tools** on `retro-superfx_mesen` via `call_mcp_tool`:
+Agents must **strongly prefer calling the MCP tools** on `retro-superfx_mesen` by invoking the **`call_mcp_tool`** tool (these tools are lazy-loaded behind `call_mcp_tool`, not top-level tool declarations; call `call_mcp_tool` directly without reading `<appDataDir>/mcp/` schemas first):
 - **`run_sfx_test`**: Headless test execution in Mesen CE (`test_name` e.g. `'sqrt'` or `'all'`, `timeout_seconds`).
 - **`assert_sfx_math`**: Dynamic parameter injection and mathematical output assertions in GSURAM/registers.
 - **`capture_sfx_render`**: Headless framebuffer capture to PNG for visual inspection or perceptual hashing.
 - **`profile_sfx_execution`**: Profiles GSU execution cycles, hotspots, cache residency, and VBlank FPS.
 - **`sfx_resolve_address`**: Resolves symbol <-> address, nearest label with delta, memory regions, and layout ranges from `.dbg` and `.cpu.sym`.
 
-Ready-to-copy calls (the tools are lazy-loaded; no need to read their schemas first):
+Ready-to-copy **`call_mcp_tool`** arguments (invoke `call_mcp_tool` with these exact JSON objects):
 
 ```json
 { "ServerName": "retro-superfx_mesen", "ToolName": "run_sfx_test",
@@ -179,7 +179,7 @@ Ready-to-copy calls (the tools are lazy-loaded; no need to read their schemas fi
   "Arguments": { "scene_test_name": "IsoEngine", "timeout_seconds": 15 } }
 ```
 
-*Fallback CLI:*
+*Emergency Fallback CLI (only if `call_mcp_tool` is unavailable):*
 ```bash
 ./tools/run-sfx-test.sh all 15
 # Or run a single test:
@@ -187,7 +187,7 @@ Ready-to-copy calls (the tools are lazy-loaded; no need to read their schemas fi
 ```
 
 ### 6. SuperFX Language & Analysis Tools (`retro-superfx_lsp` MCP)
-Agents should actively utilize the `retro-superfx_lsp` MCP tools via `call_mcp_tool` for assembly authoring, analysis, and verification:
+Agents must **strongly prefer calling the `retro-superfx_lsp` MCP tools** by invoking the **`call_mcp_tool`** tool (lazy-loaded behind `call_mcp_tool`, not top-level tool declarations; no need to read `<appDataDir>/mcp/` schemas first):
 - **`sfx_audit_diagnostics`**: Unified static diagnostics tool validating syntax errors (block balancing for `function`/`endfunction`, `for`/`endfor`, `.if`/`.endif`, `.proc`/`.endproc`, instruction and macro arity, duplicate symbols), FX3 hardware invariants (8-NOP settling before `stop`, word alignment on `ldw`/`stw`, no hardware `MERGE`, modal lifetimes), and stack displacement invariants (return leaks, divergent branch depths).
 - **`sfx_audit_invariants`**: Backward-compatible alias for `sfx_audit_diagnostics`.
 - **`sfx_expand_macro`**: Expands X-GSU macro DSL directives (`function`, `call`, `for`, `if_lt`, stack ops) into concrete instruction streams.
@@ -201,16 +201,17 @@ Agents should actively utilize the `retro-superfx_lsp` MCP tools via `call_mcp_t
 | Task / Trigger | First Action (Mandatory) |
 |---|---|
 | Bug report, visual glitch, broken behavior, or regression ("review and fix", "appears/disappears", "failing") | Read [`.agents/skills/diagnosing-bugs/SKILL.md`](.agents/skills/diagnosing-bugs/SKILL.md) **first** and build a tight red-capable reproducer loop before reading assembly to form hypotheses. |
-| Running Mesen tests, resolving `.cpu.sym`/`.dbg` addresses, or capturing scene renders | Read [`.agents/skills/sfx-test-runner/SKILL.md`](.agents/skills/sfx-test-runner/SKILL.md) and call `retro-superfx_mesen` MCP tools directly (never read `tools/mesen-mcp/` Python internals to learn CLI flags). |
+| Running Mesen tests, resolving `.cpu.sym`/`.dbg` addresses, or capturing scene renders | Read [`.agents/skills/sfx-test-runner/SKILL.md`](.agents/skills/sfx-test-runner/SKILL.md) and invoke `call_mcp_tool` with `ServerName: "retro-superfx_mesen"` (never read `tools/mesen-mcp/` Python internals to learn CLI flags). |
+| Authoring, modifying, or packing texture atlases (`.sfxproj`, `.bin`, `.pal`, `TEXTURES.i`) | Read [`.agents/skills/texture-atlas/SKILL.md`](.agents/skills/texture-atlas/SKILL.md), pack via `call_mcp_tool` (`sfx_pack_textures`), and verify with `call_mcp_tool` (`capture_sfx_render`). |
 | Inspecting captured `.png` screenshots (from `capture_sfx_render` or Mesen Lua scripts) | Call `read_file` directly on the `.png` path for multimodal visual inspection instead of writing blind pixel-diff or ASCII scripts. |
-| Finding where a label / `function` / macro / struct / field / constant is **defined**, plus its doc comment (In/Out/Clobbers) | Call `sfx_lookup_symbol` on `retro-superfx_lsp` (never `grep` `.s`/`.sgs`/`.i`/`.inc` files). |
-| Finding where a symbol is **used** (references, calls, reads, writes) | Call `sfx_find_references` on `retro-superfx_lsp` (never `grep` `.s`/`.sgs`/`.i`/`.inc` files). |
-| Resolving the linker address of a symbol, or what lives at an address (`.cpu.sym` / `.dbg`) | Call `sfx_resolve_address` on `retro-superfx_mesen` (never `grep` `.cpu.sym` or `.dbg` files). |
+| Finding where a label / `function` / macro / struct / field / constant is **defined**, plus its doc comment (In/Out/Clobbers) | Call `call_mcp_tool` with `ToolName: "sfx_lookup_symbol"` on `retro-superfx_lsp` (never `grep` `.s`/`.sgs`/`.i`/`.inc` files). |
+| Finding where a symbol is **used** (references, calls, reads, writes) | Call `call_mcp_tool` with `ToolName: "sfx_find_references"` on `retro-superfx_lsp` (never `grep` `.s`/`.sgs`/`.i`/`.inc` files). |
+| Resolving the linker address of a symbol, or what lives at an address (`.cpu.sym` / `.dbg`) | Call `call_mcp_tool` with `ToolName: "sfx_resolve_address"` on `retro-superfx_mesen` (never `grep` `.cpu.sym` or `.dbg` files). |
 | Plain text, regex, Lua/Python/cfg files, `.build/*.opt.sgs` output | Use `grep`. |
 
-> **Mandatory:** Do not `grep` `.s`/`.sgs`/`.i`/`.inc` sources for a symbol's definition or usages, and do not `grep` `.cpu.sym`/`.dbg` for addresses. Call `sfx_lookup_symbol`, `sfx_find_references`, or `sfx_resolve_address` first. Fall back to `grep` only if the tool is unavailable or returns nothing, and say so. If these tools are missing from your tool list, the MCP servers are stale: tell the user to run `./tools/build-all.sh --install` and restart them.
+> **Mandatory:** Do not `grep` `.s`/`.sgs`/`.i`/`.inc` sources for a symbol's definition or usages, and do not `grep` `.cpu.sym`/`.dbg` for addresses. Invoke **`call_mcp_tool`** with `sfx_lookup_symbol`, `sfx_find_references`, or `sfx_resolve_address` first. Fall back to `grep` only if `call_mcp_tool` is unavailable or returns nothing, and say so. If these tools are missing from your tool list, the MCP servers are stale: tell the user to run `./tools/build-all.sh --install` and restart them.
 
-Ready-to-copy calls (the tools are lazy-loaded; no need to read their schemas first):
+Ready-to-copy **`call_mcp_tool`** arguments (invoke `call_mcp_tool` with these exact JSON objects):
 
 ```json
 { "ServerName": "retro-superfx_lsp", "ToolName": "sfx_lookup_symbol",

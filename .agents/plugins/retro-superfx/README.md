@@ -18,6 +18,7 @@ An Antigravity plugin bundling tools, skills, rules, and MCP servers for SNES an
    - `sfx_lookup_symbol`: Resolves symbol definitions, scopes, and documentation across the workspace.
    - `sfx_find_references`: Finds references and usages of symbols across the workspace index (understands `call`, macros, scopes; skips comments and strings).
    - `sfx_analyze_registers`: Chaitin-Briggs graph coloring register allocation, live ranges, and interference graphs.
+   - `sfx_pack_textures`: Packs, updates, or validates a SuperFX Texture Atlas (`.sfxproj`), exporting companion binaries (`.bin`, `.pal`), ca65 assembly index (`.i`), and layout PNG.
 
 ### Canonical Skills & Rules
 All workspace skills and rules live in a single canonical location at the repository root (`.agents/skills/` and `.agents/rules/`) so they are not loaded twice inside the umbrella workspace.
