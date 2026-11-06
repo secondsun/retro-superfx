@@ -24,8 +24,8 @@ def test_find_mesen_with_env_var(tmp_path, monkeypatch):
 
 
 def test_find_mesen_default_installed():
-    # If /home/summers/Programs/Mesen exists, it should be resolved
-    default_path = Path("/home/summers/Programs/Mesen")
+    # If ~/Programs/Mesen exists, it should be resolved
+    default_path = Path.home() / "Programs" / "Mesen"
     if default_path.is_file() and os.access(default_path, os.X_OK):
         resolved = find_mesen()
         assert resolved.is_file()

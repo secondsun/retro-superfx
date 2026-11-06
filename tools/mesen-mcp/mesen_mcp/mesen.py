@@ -27,14 +27,16 @@ def find_mesen(
     if not search_default_locations:
         raise FileNotFoundError(
             "Mesen emulator executable not found. "
-            "Please ensure Mesen is placed in /home/summers/Programs/Mesen, specified via MESEN_PATH, or on PATH."
+            "Please ensure Mesen is placed in ~/Programs/Mesen, specified via MESEN_PATH, or on PATH."
         )
 
     # 3. Standard locations from tools/run-sfx-test.sh
     candidates = [
-        Path("/home/summers/Programs/Mesen"),
+        Path.home() / "Programs" / "Mesen",
+        Path.home() / ".local" / "bin" / "Mesen",
+        Path.home() / "bin" / "Mesen",
         Path(__file__).resolve().parents[3] / ".." / "Mesen2" / "bin" / "osx-arm64" / "Release" / "osx-arm64" / "publish" / "Mesen",
-        Path("/Users/summerspittman/Downloads/Mesen/Contents/MacOS/Mesen"),
+        Path.home() / "Downloads" / "Mesen" / "Contents" / "MacOS" / "Mesen",
     ]
 
     for cand in candidates:
@@ -52,5 +54,5 @@ def find_mesen(
 
     raise FileNotFoundError(
         "Mesen emulator executable not found. "
-        "Please ensure Mesen is placed in /home/summers/Programs/Mesen, specified via MESEN_PATH, or on PATH."
+        "Please ensure Mesen is placed in ~/Programs/Mesen, specified via MESEN_PATH, or on PATH."
     )

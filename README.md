@@ -56,7 +56,7 @@ Ensure the following tools are installed on your host system:
    make --version
    ```
 5. **Mesen CE (SNES Emulator)**: Required for running headless automated tests.
-   - Recommended location: `/home/summers/Programs/Mesen` or available on your system `PATH` as `Mesen` / `mesen`.
+   - Recommended location: `~/Programs/Mesen`, specified via `MESEN_PATH`, or available on your system `PATH` as `Mesen` / `mesen`.
 
 > **Note on Assembler Toolchain**: Precompiled `cc65` binaries (`ca65`, `ld65`, `superfamicheck`) are bundled directly inside `snes-sfx-demo/libSFX/tools/cc65/bin/` and used automatically by the build system.
 

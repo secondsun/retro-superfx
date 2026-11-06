@@ -116,22 +116,33 @@ if [ "${TEST_STATUS}" = "wip" ]; then
 fi
 
 # Locate Mesen executable
-MESEN_BIN=""
-if [ -x "/home/summers/Programs/Mesen" ]; then
-    MESEN_BIN="/home/summers/Programs/Mesen"
-elif [ -x "${ROOT_DIR}/../Mesen2/bin/osx-arm64/Release/osx-arm64/publish/Mesen" ]; then
-    MESEN_BIN="${ROOT_DIR}/../Mesen2/bin/osx-arm64/Release/osx-arm64/publish/Mesen"
-elif [ -x "/Users/summerspittman/Downloads/Mesen/Contents/MacOS/Mesen" ]; then
-    MESEN_BIN="/Users/summerspittman/Downloads/Mesen/Contents/MacOS/Mesen"
-elif command -v Mesen >/dev/null 2>&1; then
-    MESEN_BIN="$(command -v Mesen)"
-elif command -v mesen >/dev/null 2>&1; then
-    MESEN_BIN="$(command -v mesen)"
+MESEN_BIN="${MESEN_PATH:-}"
+if [ -n "${MESEN_BIN}" ] && [ ! -x "${MESEN_BIN}" ]; then
+    echo "Warning: MESEN_PATH is set to '${MESEN_BIN}', but it is not executable." >&2
+    MESEN_BIN=""
+fi
+
+if [ -z "${MESEN_BIN}" ]; then
+    if [ -x "${HOME}/Programs/Mesen" ]; then
+        MESEN_BIN="${HOME}/Programs/Mesen"
+    elif [ -x "${HOME}/.local/bin/Mesen" ]; then
+        MESEN_BIN="${HOME}/.local/bin/Mesen"
+    elif [ -x "${HOME}/bin/Mesen" ]; then
+        MESEN_BIN="${HOME}/bin/Mesen"
+    elif [ -x "${ROOT_DIR}/../Mesen2/bin/osx-arm64/Release/osx-arm64/publish/Mesen" ]; then
+        MESEN_BIN="${ROOT_DIR}/../Mesen2/bin/osx-arm64/Release/osx-arm64/publish/Mesen"
+    elif [ -x "${HOME}/Downloads/Mesen/Contents/MacOS/Mesen" ]; then
+        MESEN_BIN="${HOME}/Downloads/Mesen/Contents/MacOS/Mesen"
+    elif command -v Mesen >/dev/null 2>&1; then
+        MESEN_BIN="$(command -v Mesen)"
+    elif command -v mesen >/dev/null 2>&1; then
+        MESEN_BIN="$(command -v mesen)"
+    fi
 fi
 
 if [ -z "${MESEN_BIN}" ]; then
     echo "Error: Mesen emulator executable not found." >&2
-    echo "Please ensure Mesen is placed in /home/summers/Programs/Mesen or on PATH." >&2
+    echo "Please ensure Mesen is placed in ~/Programs/Mesen, specified via MESEN_PATH, or on PATH." >&2
     exit 1
 fi
 
