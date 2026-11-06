@@ -1,11 +1,43 @@
 """SuperFX unit test runner using headless Mesen."""
 
 from pathlib import Path
+import re
 import subprocess
 from typing import Any, Dict, Optional
 
 from mesen_mcp.session import MesenRunner, SfxTestSession
 from mesen_mcp.utils import resolve_test_dir
+
+_SFX_TEST_HEADER_RE = re.compile(r"^--\s*@sfx-test\s+(.*)$")
+_STATUS_ATTR_RE = re.compile(r"\bstatus=([A-Za-z0-9_-]+)")
+_REASON_ATTR_RE = re.compile(r'\breason="([^"]*)"')
+
+
+def parse_sfx_test_header(test_dir: Path) -> Dict[str, str]:
+    """Parse '-- @sfx-test status=<active|wip|template> [reason=\"...\"]' from Lua scripts in test_dir."""
+    lua_files = []
+    primary = test_dir / "test.lua"
+    if primary.is_file():
+        lua_files.append(primary)
+    for candidate in sorted(test_dir.glob("*.lua")):
+        if candidate not in lua_files and candidate.is_file():
+            lua_files.append(candidate)
+
+    for lua_file in lua_files:
+        try:
+            for line in lua_file.read_text(encoding="utf-8").splitlines()[:10]:
+                m = _SFX_TEST_HEADER_RE.match(line.strip())
+                if m:
+                    attrs = m.group(1)
+                    st_match = _STATUS_ATTR_RE.search(attrs)
+                    rs_match = _REASON_ATTR_RE.search(attrs)
+                    return {
+                        "status": st_match.group(1).lower() if st_match else "active",
+                        "reason": rs_match.group(1) if rs_match else "",
+                    }
+        except OSError:
+            continue
+    return {"status": "active", "reason": ""}
 
 
 def _sync_lua_labels(sym_map: Any, lua_path: Path) -> None:
@@ -67,6 +99,31 @@ def run_sfx_test(
     skip_compile: bool = False,
 ) -> Dict[str, Any]:
     """Compile and headlessly execute a SuperFX unit test in Mesen."""
+    try:
+        test_dir = resolve_test_dir(test_name)
+    except FileNotFoundError as e:
+        return {
+            "status": "FAIL",
+            "test": test_name,
+            "error": str(e),
+            "output": "",
+        }
+
+    header_meta = parse_sfx_test_header(test_dir)
+    if header_meta["status"] in ("wip", "template"):
+        reason = header_meta["reason"] or (
+            "Scaffold template"
+            if header_meta["status"] == "template"
+            else "Work in progress"
+        )
+        return {
+            "status": "SKIP",
+            "test": test_name,
+            "test_status": header_meta["status"],
+            "reason": reason,
+            "output": f"SKIP ({header_meta['status']}): {reason}",
+        }
+
     try:
         session = SfxTestSession.from_test_name(
             test_name, runner=runner, mesen_path=mesen_path

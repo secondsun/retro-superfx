@@ -50,6 +50,10 @@ echo " retro-superfx: Building All Subprojects in Dependency Order"
 echo " Goal: ${MAVEN_GOAL} | Skip Tests: ${SKIP_TESTS} | Build ROMs: ${BUILD_ROMS}"
 echo "=================================================================="
 
+if [ -z "$(git -C "${ROOT_DIR}" config core.hooksPath || true)" ]; then
+    "${ROOT_DIR}/tools/install-git-hooks.sh"
+fi
+
 # Step 1: java-language-server
 echo ""
 echo ">>> [1/5] java-language-server..."

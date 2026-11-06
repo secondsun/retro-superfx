@@ -183,6 +183,20 @@ class HarnessLinter:
             files.extend(sorted(root.glob(rel_glob)))
         return files
 
+    def _collect_subproject_doc_files(self, root: Path) -> list[Path]:
+        files: list[Path] = []
+        for rel_glob in (
+            "snes-sfx-demo/AGENTS.md",
+            "snes-sfx-demo/X-GSU/AGENTS.md",
+            "retro-lsp/AGENTS.md",
+            "retro-lsp/.agents/rules/*.md",
+            "sfx-optimizer/AGENTS.md",
+            "retro-common/AGENTS.md",
+            "java-language-server/AGENTS.md",
+        ):
+            files.extend(sorted(root.glob(rel_glob)))
+        return files
+
     def _check_frontmatter_and_budget(
         self,
         root: Path,
@@ -289,6 +303,7 @@ class HarnessLinter:
     def _check_markdown_links(self, root: Path, issues: list[LintIssue]) -> int:
         files_to_scan = (
             self._collect_always_loaded_rule_files(root)
+            + self._collect_subproject_doc_files(root)
             + self._collect_skill_files(root)
         )
         checked_links = 0

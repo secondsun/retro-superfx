@@ -8,20 +8,38 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TESTS_ROOT="${ROOT_DIR}/snes-sfx-demo/X-GSU/tests"
 
-# Canonical point of truth for template and work-in-progress (WIP) test directories
-TEMPLATE_TESTS=("test_template")
-WIP_TESTS=("buffer_rnc" "decode_rnc" "hufftable_rnc")
+# Parse '-- @sfx-test status=<active|wip|template> [reason="..."]' header from Lua scripts in a test directory
+get_test_status() {
+    local dir="$1"
+    local lua_file
+    for lua_file in "${dir}"/*.lua; do
+        [ -f "${lua_file}" ] || continue
+        local header
+        header="$(grep -m 1 -E '^--[[:space:]]*@sfx-test[[:space:]]' "${lua_file}" || true)"
+        if [ -n "${header}" ]; then
+            local st
+            st="$(echo "${header}" | sed -nE 's/.*status=([a-zA-Z0-9_-]+).*/\1/p')"
+            if [ -n "${st}" ]; then
+                echo "${st}"
+                return 0
+            fi
+        fi
+    done
+    echo "active"
+}
 
-is_in_list() {
-    local needle="$1"
-    shift
-    local item
-    for item in "$@"; do
-        if [ "${item}" = "${needle}" ]; then
+get_test_reason() {
+    local dir="$1"
+    local lua_file
+    for lua_file in "${dir}"/*.lua; do
+        [ -f "${lua_file}" ] || continue
+        local header
+        header="$(grep -m 1 -E '^--[[:space:]]*@sfx-test[[:space:]]' "${lua_file}" || true)"
+        if [ -n "${header}" ]; then
+            echo "${header}" | sed -nE 's/.*reason="([^"]*)".*/\1/p'
             return 0
         fi
     done
-    return 1
 }
 
 TEST_ARG="${1:-all}"
@@ -36,11 +54,13 @@ if [ "${TEST_ARG}" = "all" ]; then
     for dir in "${TESTS_ROOT}"/*/; do
         [ -d "${dir}" ] || continue
         name="$(basename "${dir}")"
-        if is_in_list "${name}" "${TEMPLATE_TESTS[@]}"; then
+        status="$(get_test_status "${dir}")"
+        if [ "${status}" = "template" ]; then
             continue
         fi
-        if is_in_list "${name}" "${WIP_TESTS[@]}"; then
-            echo "=== SKIP (WIP): ${name} ==="
+        if [ "${status}" = "wip" ]; then
+            reason="$(get_test_reason "${dir}")"
+            echo "=== SKIP (WIP): ${name}${reason:+ — ${reason}} ==="
             SKIP_COUNT=$((SKIP_COUNT + 1))
             continue
         fi
@@ -84,12 +104,14 @@ else
 fi
 
 TEST_NAME="$(basename "${TEST_DIR}")"
-if is_in_list "${TEST_NAME}" "${TEMPLATE_TESTS[@]}"; then
-    echo "Error: '${TEST_NAME}' is a scaffold template, not an executable unit test." >&2
+TEST_STATUS="$(get_test_status "${TEST_DIR}")"
+TEST_REASON="$(get_test_reason "${TEST_DIR}")"
+if [ "${TEST_STATUS}" = "template" ]; then
+    echo "Error: '${TEST_NAME}' is a scaffold template (${TEST_REASON:-not an executable unit test})." >&2
     exit 1
 fi
-if is_in_list "${TEST_NAME}" "${WIP_TESTS[@]}"; then
-    echo "SKIP: '${TEST_NAME}' is a work in progress (WIP) and not expected to pass."
+if [ "${TEST_STATUS}" = "wip" ]; then
+    echo "SKIP: '${TEST_NAME}' is a work in progress (WIP)${TEST_REASON:+: ${TEST_REASON}}."
     exit 0
 fi
 

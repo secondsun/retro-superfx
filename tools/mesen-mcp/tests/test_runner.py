@@ -30,3 +30,14 @@ def test_run_sfx_test_transform():
     assert result["test"] == "transform"
     assert "TEST PASSED" in result["output"]
 
+
+def test_run_sfx_test_skips_wip_and_template_headers():
+    wip_res = run_sfx_test("buffer_rnc", timeout_seconds=5)
+    assert wip_res["status"] == "SKIP"
+    assert wip_res["test_status"] == "wip"
+    assert "RNC" in wip_res["reason"]
+
+    tpl_res = run_sfx_test("test_template", timeout_seconds=5)
+    assert tpl_res["status"] == "SKIP"
+    assert tpl_res["test_status"] == "template"
+

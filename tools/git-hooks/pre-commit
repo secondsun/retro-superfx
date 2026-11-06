@@ -9,7 +9,7 @@ cd "$root"
 
 # Umbrella repo: run Tier 0 harness contract checks when harness files are staged.
 if [ -x ./tools/run-evals.sh ]; then
-  if git diff --cached --name-only --diff-filter=ACMR | grep -qE '^(\.agents/|AGENTS\.md|tools/(evals|mesen-mcp|run-lsp-mcp))'; then
+  if git diff --cached --name-only --diff-filter=ACMRD | grep -qE '^(\.agents/|AGENTS\.md|tools/(evals|mesen-mcp|run-lsp-mcp))'; then
     echo "[pre-commit] harness tier 0 (lint)"
     ./tools/run-evals.sh --tier 0 --suite lint || {
       echo "[pre-commit] Harness Tier 0 lint failed." >&2

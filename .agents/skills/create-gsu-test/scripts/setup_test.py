@@ -64,6 +64,16 @@ def main():
         else:
             print(f"Warning: Template file missing: {src}", file=sys.stderr)
 
+    # Strip template status header from newly scaffolded test.lua
+    target_lua = target_dir / "test.lua"
+    if target_lua.exists():
+        lua_lines = [
+            line
+            for line in target_lua.read_text(encoding="utf-8").splitlines()
+            if "@sfx-test status=template" not in line
+        ]
+        target_lua.write_text("\n".join(lua_lines) + "\n", encoding="utf-8")
+
     # Customize libSFX.cfg
     libsfx_cfg = target_dir / "libSFX.cfg"
     if libsfx_cfg.exists():
