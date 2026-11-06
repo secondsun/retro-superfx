@@ -59,69 +59,27 @@ This root acts as an agentic umbrella workspace across 5 separate Git repositori
 
 ## 2. The X-GSU ca65 Macro DSL
 
-The `X-GSU` directory (`snes-sfx-demo/X-GSU/common/`) defines a high-level macro language for SuperFX assembly:
+The `X-GSU` directory (`snes-sfx-demo/X-GSU/common/`) defines a high-level macro language for SuperFX assembly; full syntax reference is in [`.agents/skills/sfx-macro-language/SKILL.md`](.agents/skills/sfx-macro-language/SKILL.md):
 
-### A. Functions & Subroutine Scoping (`function.i`)
-- **`function <name> [params]`**: Generates `<name>_function:` label, enters `.scope <name>`, and pushes `R11` (return address) onto the stack.
-- **`call <name> [args]`**: Emits `link #4` (stores return address in `R11`) and branches to `<name>_function`.
-- **`return`**: Pops return address from stack into `R15` (`PC`) with `nop` in delay slot.
-- **`endfunction`**: Closes `.endscope`.
+- **Functions & Scoping (`function.i`)**: `function <name> [params]` enters `.scope` and pushes return address `R11`; `call <name> [args]` emits `link #4` and branches to `<name>_function`; `return` pops return address into `R15` (`PC`) with `nop` in delay slot; `endfunction` closes scope.
 - **Unit Test Requirement**: Authoring a new X-GSU `function` in `snes-sfx-demo/X-GSU/` requires creating and passing a headless unit test in `snes-sfx-demo/X-GSU/tests/<name>/` before completion; see [`.agents/skills/create-gsu-test/SKILL.md`](.agents/skills/create-gsu-test/SKILL.md). Note: `buffer_rnc`, `decode_rnc`, and `hufftable_rnc` are works in progress (WIP) and not expected to pass.
-
-### B. High-Level Variables & `sfx-optimizer` Keywords
-- **`register <var1>, <var2>`**: Declares pseudo-variables to be mapped to hardware registers.
-- **`register <var> = <reg>`**: Pre-colored constraint forcing a variable to a specific physical register (e.g. `register output = r4`).
-- **Modal Prefix Instructions**: `with`, `to`, `from` can be applied to declared pseudo-variables or physical registers.
-- **No Modal Prefix Before `move`**: `move Dreg, Sreg` is a macro pseudo-op expanding to `with Sreg; to Dreg`. Never prefix `move` (or `moves`, `moveb`, `movew`) with `to` (or `with`/`from`); `move` configures its own modal registers and overwrites any preceding prefix.
-
-### C. Stack Operations (`stack.i` — `R10` is `stackPointer`)
-- **`init_stack`**: Initializes `R10` to `gsu_stack_ram` (512-byte buffer in GSURAM).
-- **`gsu_stack_push R`**: Emits `stw (r10); inc r10; inc r10`.
-- **`gsu_stack_pop R`**: Emits `dec r10; dec r10; to R; ldw (r10)`.
-- **`gsu_stack_peek R`**: Peeks top of stack without advancing `R10`.
-- **`gsu_stack_alloc_bytes S`** / **`gsu_stack_free_bytes S`**: Dynamically adjusts `R10` by `S` bytes.
-
-### D. Hardware Loops
-- **`for <count>` / `forR <reg>`**: Backs up `R12` (counter) and `R13` (loop address) to stack (`backuploop`), then sets up loop registers.
-- **`endfor`**: Emits `loop; nop; restoreloop` (pops `R13` and `R12`).
-- **Critical Rule**: Never push temporary variables to the stack inside `for ... endfor` without popping them before `endfor`.
-
-### E. Conditionals (`control.i`)
-- **`if_lt R, V, instruction`**: Signed comparison `R < V`.
-- **`if_gt R, V, instruction`**: Signed comparison `R > V`.
-- **`if_eq R, V, instruction`**: Equality comparison `R == V`.
-- **`if_lte R, V, instruction`**: Signed comparison `R <= V`.
+- **Variables & Allocation**: `register <var1>, <var2>` declares compiler-managed pseudo-variables; `register <var> = <reg>` constrains variables to specific physical registers.
+- **Stack Operations (`stack.i` — `R10` is `stackPointer`)**: `init_stack` points `R10` to `gsu_stack_ram` (512-byte buffer in GSURAM); manipulate with `gsu_stack_push R`, `gsu_stack_pop R`, `gsu_stack_peek R`, `gsu_stack_alloc_bytes S`, and `gsu_stack_free_bytes S`.
+- **Hardware Loops & Conditionals**: `for <count>` / `forR <reg>` backs up `R12`/`R13` (`backuploop`); `endfor` emits `loop; nop; restoreloop`. Never push temporary variables inside `for ... endfor` without popping before `endfor`. Signed conditionals: `if_lt`, `if_gt`, `if_eq`, `if_lte`.
 
 ---
 
 ## 3. SuperFX (FX3) Hardware Invariants
 
-When writing or optimizing SuperFX code:
-1. **Target Chip**: SuperFX 3 (FX3 / RP2350B coprocessor at 21.47 MHz).
-2. **No Hardware `MERGE` Instruction**: In FX3, `MERGE` is not implemented in hardware. Workaround with `hib`, `lob`, `swap`, and `or`.
-3. **8 NOP Pipeline Settling**: SuperFX Work RAM writes are pipelined asynchronously. Insert **8 NOPs** before halting (`stop`) or testing memory in emulator scripts.
-4. **16-Bit Word Alignment**: All `ldw`/`stw` memory operations must target 16-bit word aligned (even) addresses.
-5. **Modal Instruction Scope (`with`, `to`, `from`)**:
-   - `Sreg` and `Dreg` for operations default to `R0`.
-   - `with Rn`, `to Rn`, `from Rn` modify registers for the **single immediately following instruction only**.
-   - Immediately after the configured instruction executes, both `Sreg` and `Dreg` reset back to `R0`.
-   - **Prefix Behaviors**:
-     - `with Rn`: sets `Sreg = Rn, Dreg = Rn` (in-place modification, overwrites `Rn`!). Never use `with Rn; sub #k` for non-destructive comparisons.
-     - `from Rn`: sets `Sreg = Rn, Dreg = R0` (preserves `Rn`, writes result to `R0` and sets flags). Ideal for tests/comparisons (`from r8; sub #1; beq`).
-     - `to Rn`: sets `Sreg = R0, Dreg = Rn` (reads from `R0`, stores result into `Rn`).
-     - **No Modal Prefix Before `move`**: Never use `to Rn; move Rn, Rm`. `move` expands to `with Rm; to Rn`, which instantly clobbers any preceding `to` prefix while wasting instruction space and cycles.
-6. **Dual `rpix` Pixel Cache Flush**: `plot` buffers pixels in dual 8-pixel caches (primary and secondary). Execute two `rpix` instructions (`rpix; rpix`) before the 8 settling NOPs and `stop` to flush all plotted pixels to Work RAM.
-7. **GSURAM-Only `ldw` / `ldb` Addressing**: `ldw (Rn)` and `ldb (Rn)` only access `GSURAM` (`$700000`, masked to `$1FFF`). Read ROM-resident tables in `.segment "GSUCODE"` or `.segment "ROM*"` via `romb` + `r14` + `getb`/`getbh`.
-8. **512-Byte Instruction Cache vs Pixel Cache**:
-   - The GSU features a **512-byte on-chip instruction cache** (32 lines of 16 bytes each), distinct from the dual 8-pixel plot cache.
-   - When executing inside the cache, opcodes run at single-cycle speed (21.47 MHz on FX3) and free external buses for concurrent RAM writes or ROM prefetching.
-   - **`CACHE` opcode behavior**: If `CBR != (R15 & $FFF0)`, sets `CBR = R15 & $FFF0` and clears all 32 valid flags. If `CBR` matches, tags are preserved.
-   - **Subroutine residency**: Subroutines (`call`, `jmp`, `bra`) **do not invalidate or flush the cache**. If a target is outside the current 512-byte window, it executes at un-cached bus speeds, and returning to the caller immediately resumes 1-cycle cache hits.
-   - **Avoid Over-Invalidation / Cache Spraying**: Never put `cache` inside a loop or inside helper functions, as changing `CBR` invalidates all 512 bytes on every iteration. Reserve `cache` for heavy, high-iteration leaf kernels (e.g. rasterization loops, batch transforms, framebuffer clears) using the canonical idiom:
-     ```assembly
-     cache
-     move r13, r15
-     ```
+Key coprocessor hardware constraints; see [`.agents/rules/sfx-assembly-rules.md`](.agents/rules/sfx-assembly-rules.md) for complete register roles and side-effect tables:
+
+1. **Target & Architecture**: SuperFX 3 (FX3 / RP2350B coprocessor at 21.47 MHz). No hardware `MERGE` instruction (workaround via `hib`, `lob`, `swap`, `or`).
+2. **RAM Pipeline Settling & Plot Flush**: Work RAM writes are asynchronous—insert **8 NOPs** before halting (`stop`) or reading memory in tests. Always execute **two `rpix` instructions** (`rpix; rpix`) before the 8 settling NOPs and `stop` to flush dual 8-pixel plot caches.
+3. **Memory & Alignment**: 16-bit word operations (`ldw`/`stw`) require even-byte alignment. `ldw (Rn)` / `ldb (Rn)` only access GSURAM (`$700000`, masked to `$1FFF`); read ROM tables via `romb` + `r14` + `getb`/`getbh`.
+4. **Modal Instruction Scope (`with`, `to`, `from`)**: Prefixes modify `Sreg`/`Dreg` for the **single immediately following instruction only**, then reset to `R0`. `with Rn` sets `Sreg=Rn, Dreg=Rn` (destructive; never use for comparisons!). `from Rn` sets `Sreg=Rn, Dreg=R0` (non-destructive test; note that `from Rn; sub #0`/`add #0` without `to` overwrites `R0`—use `with Rn; add #0` or `moves Rn, Rn` if `R0` is live). Use `from Rn; sub Rm` (or `cmp`) for non-destructive comparison.
+5. **No Modal Prefix Before `move`**: `move Dreg, Sreg` expands to `with Sreg; to Dreg`. Never prefix `move` (`moves`, `moveb`, `movew`) with `to`/`with`/`from`, as `move` configures its own modal registers and overwrites any preceding prefix.
+6. **Operand Bounds**: Short-immediate arithmetic/bitwise/multiply (`add`, `adc`, `sub`, `sbc`, `and`, `bic`, `or`, `xor`, `mult`, `umult`) only accepts 4-bit unsigned immediates `#0`–`#15` (`#$0`–`#$F`); `link` only accepts `#1`–`#4`. Constants > 15 require `ibt` (8-bit signed) or `iwt` (16-bit word). Register forms of `and`, `bic`, `or`, `xor`, `mult`, `umult` only accept `R1`–`R15`.
+7. **512-Byte Instruction Cache**: 32 lines of 16 bytes. Running inside cache executes at 1 cycle/instruction. Execute `cache; move r13, r15` once before compute-heavy leaf loops. Subroutines (`call`, `bra`) do not invalidate cache tags. Never place `cache` inside loops or helper subroutines (forces cold reloads).
 
 ---
 

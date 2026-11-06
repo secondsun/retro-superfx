@@ -102,12 +102,61 @@ echo ""
 echo ">>> [5/5] retro-lsp..."
 (
     cd "${ROOT_DIR}/retro-lsp"
-    if [ "$BUILD_VSCODE" = true ]; then
-        ./mvnw clean package ${EXTRA_FLAGS}
-    else
-        ./mvnw clean test ${EXTRA_FLAGS}
-    fi
+    ./mvnw clean package ${EXTRA_FLAGS}
 )
+
+atomic_sync_jar() {
+    local src_jar="$1"
+    local prefix="$2"
+    local app_dir="$3"
+
+    [ -f "$src_jar" ] || return 0
+    [ -d "$app_dir" ] || return 0
+
+    local src_name
+    src_name="$(basename "$src_jar")"
+
+    local existing
+    existing="$(find "$app_dir" -maxdepth 1 -name "${prefix}*.jar" ! -name "*-sources.jar" ! -name "*-javadoc.jar" ! -name "*-tests.jar" 2>/dev/null | head -n 1 || true)"
+
+    local dest_name="$src_name"
+    if [ "$src_name" = "${prefix}.jar" ] && [ -n "$existing" ]; then
+        dest_name="$(basename "$existing")"
+    fi
+
+    local tmp_file="${app_dir}/${dest_name}.tmp.$$"
+    cp "$src_jar" "$tmp_file"
+    mv -f "$tmp_file" "${app_dir}/${dest_name}"
+
+    if [ -n "$existing" ] && [ "$(basename "$existing")" != "$dest_name" ]; then
+        rm -f "$existing"
+    fi
+}
+
+# Sync freshly built JARs to retro-lsp/dist/<os>/app/ if dist dirs exist
+for app_dir in "${ROOT_DIR}/retro-lsp/dist/"*/app; do
+    if [ -d "$app_dir" ]; then
+        echo ">>> Syncing freshly built JARs into $app_dir..."
+        main_jar="$(find "${ROOT_DIR}/retro-lsp/target" -maxdepth 1 -name "retro-lsp-*.jar" ! -name "*-sources.jar" ! -name "*-javadoc.jar" ! -name "*-tests.jar" 2>/dev/null | head -n 1 || true)"
+        if [ -n "$main_jar" ]; then
+            atomic_sync_jar "$main_jar" "retro-lsp" "$app_dir"
+        fi
+
+        for dep in "retro-common" "sfx-optimizer" "languageserver"; do
+            dep_jar="$(find "${ROOT_DIR}/retro-lsp/target/dependency" -maxdepth 1 -name "${dep}*.jar" ! -name "*-sources.jar" ! -name "*-javadoc.jar" ! -name "*-tests.jar" 2>/dev/null | head -n 1 || true)"
+            if [ -z "$dep_jar" ]; then
+                case "$dep" in
+                    languageserver) dep_jar="$(find "${ROOT_DIR}/java-language-server/target" -maxdepth 1 -name "languageserver-*.jar" ! -name "*-sources.jar" ! -name "*-javadoc.jar" ! -name "*-tests.jar" 2>/dev/null | head -n 1 || true)" ;;
+                    retro-common) dep_jar="$(find "${ROOT_DIR}/retro-common/target" -maxdepth 1 -name "retro-common-*.jar" ! -name "*-sources.jar" ! -name "*-javadoc.jar" ! -name "*-tests.jar" 2>/dev/null | head -n 1 || true)" ;;
+                    sfx-optimizer) dep_jar="$(find "${ROOT_DIR}/sfx-optimizer/target" -maxdepth 1 -name "sfx-optimizer*.jar" ! -name "*-sources.jar" ! -name "*-javadoc.jar" ! -name "*-tests.jar" ! -name "*-shaded.jar" 2>/dev/null | head -n 1 || true)" ;;
+                esac
+            fi
+            if [ -n "$dep_jar" ]; then
+                atomic_sync_jar "$dep_jar" "$dep" "$app_dir"
+            fi
+        done
+    fi
+done
 
 # Step 5a (Optional): VS Code Extension Packaging & Installation
 if [ "$BUILD_VSCODE" = true ]; then

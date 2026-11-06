@@ -7,6 +7,18 @@ import sys
 from pathlib import Path
 
 
+OUTPUT_ALIASES = (
+    "TEST_OUTPUT",
+    "test_output",
+    "VECTOR_SUBTRACT_OUT",
+    "VECTOR_ADD_OUT",
+    "VECTOR_NEGATE_OUT",
+    "VECTOR_CROSS_OUT",
+    "VECTOR_TRANSFORM_OUT",
+    "vector_normalize_out",
+)
+
+
 def parse_sym_file(sym_path: Path):
     symbols = {}
     pattern = re.compile(r"^al\s+([0-9A-Fa-f]{6})\s+\.([A-Za-z0-9_@]+)")
@@ -21,6 +33,27 @@ def parse_sym_file(sym_path: Path):
                 bank = (full_val >> 16) & 0xFF
                 symbols[name] = {"full": full_val, "offset": offset, "bank": bank}
     return symbols
+
+
+def lookup_symbol(symbols: dict, name: str):
+    if name in symbols:
+        return symbols[name]
+    if name.upper() in symbols:
+        return symbols[name.upper()]
+    if name.lower() in symbols:
+        return symbols[name.lower()]
+    name_upper = name.upper()
+    for k, v in symbols.items():
+        if k.upper() == name_upper:
+            return v
+    if name_upper == "OUTPUT":
+        for cand in OUTPUT_ALIASES:
+            if cand in symbols:
+                return symbols[cand]
+            for k, v in symbols.items():
+                if k.upper() == cand.upper():
+                    return v
+    return None
 
 
 def main():
@@ -40,44 +73,61 @@ def main():
     symbols = parse_sym_file(sym_path)
 
     key_syms = ["test_setup", "test_start", "test_stop", "INPUT", "OUTPUT"]
-    found_values = {}
+    symbols_to_display = list(key_syms)
 
-    print(f"Symbols from {sym_path.name}:")
-    print("-" * 50)
-    for sym in key_syms:
-        if sym in symbols:
-            info = symbols[sym]
-            offset = info["offset"]
-            bank = info["bank"]
-            aligned = (offset % 2 == 0)
-            align_str = "word-aligned" if aligned else "WARNING: UNALIGNED (ODD ADDRESS)"
-            print(f"  {sym:12} : 0x{offset:04X}  (Bank ${bank:02X}, {align_str})")
-            found_values[sym] = offset
-        else:
-            print(f"  {sym:12} : NOT FOUND")
+    var_pattern = re.compile(
+        r"^(\s*(?:local\s+)?([A-Za-z0-9_]+)\s*=\s*)(0x[0-9A-Fa-f]+|\d+)(.*)$"
+    )
 
-    # Check for any other symbols requested or exported
-    print("-" * 50)
-
+    lua_lines = None
+    lua_path = None
     if args.update_lua:
         lua_path = Path(args.update_lua)
         if not lua_path.exists():
             print(f"Error: Lua file not found: {lua_path}", file=sys.stderr)
             sys.exit(1)
+        lua_lines = lua_path.read_text(encoding="utf-8").splitlines()
+        for line in lua_lines:
+            m = var_pattern.match(line)
+            if m:
+                var_name = m.group(2)
+                if var_name.lower() in ("index", "fail_count", "i", "j", "k"):
+                    continue
+                if lookup_symbol(symbols, var_name) is not None:
+                    if var_name not in symbols_to_display:
+                        symbols_to_display.append(var_name)
 
-        lines = lua_path.read_text(encoding="utf-8").splitlines()
+    print(f"Symbols from {sym_path.name}:")
+    print("-" * 50)
+    for sym in symbols_to_display:
+        info = lookup_symbol(symbols, sym)
+        if info:
+            offset = info["offset"]
+            bank = info["bank"]
+            aligned = (offset % 2 == 0)
+            align_str = "word-aligned" if aligned else "WARNING: UNALIGNED (ODD ADDRESS)"
+            print(f"  {sym:16} : 0x{offset:04X}  (Bank ${bank:02X}, {align_str})")
+        elif sym in key_syms:
+            print(f"  {sym:16} : NOT FOUND")
+
+    print("-" * 50)
+
+    if lua_path and lua_lines is not None:
         updated_lines = []
-        for line in lines:
-            updated = False
-            for sym, offset in found_values.items():
-                # Matches e.g. test_setup = 0x... or test_setup = 0
-                pattern = rf"^(\s*{re.escape(sym)}\s*=\s*)(0x[0-9A-Fa-f]+|\d+)(.*)$"
-                m = re.match(pattern, line)
-                if m:
-                    updated_lines.append(f"{m.group(1)}0x{offset:04X}{m.group(3)}")
-                    updated = True
-                    break
-            if not updated:
+        for line in lua_lines:
+            m = var_pattern.match(line)
+            if m:
+                prefix, var_name, current_val_str, suffix = m.groups()
+                if var_name.lower() in ("index", "fail_count", "i", "j", "k"):
+                    updated_lines.append(line)
+                    continue
+                info = lookup_symbol(symbols, var_name)
+                if info is not None:
+                    offset = info["offset"]
+                    updated_lines.append(f"{prefix}0x{offset:04X}{suffix}")
+                else:
+                    updated_lines.append(line)
+            else:
                 updated_lines.append(line)
 
         lua_path.write_text("\n".join(updated_lines) + "\n", encoding="utf-8")

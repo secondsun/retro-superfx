@@ -195,7 +195,7 @@ class SymbolTable:
 
     @classmethod
     def load(cls, test_dir: Path) -> "SymbolTable":
-        """Loads symbols from Test.dbg (with fallback to *.dbg and *.cpu.sym)."""
+        """Loads symbols from Test.dbg and Test.cpu.sym (merging both for complete coverage)."""
         symbols_map: Dict[str, int] = {}
         dbg_data: Optional[DbgData] = None
 
@@ -218,23 +218,26 @@ class SymbolTable:
         else:
             label_map = {}
 
-        if not symbols_map:
-            sym_file = test_dir / "Test.cpu.sym"
-            if not sym_file.is_file():
-                sym_candidates = list(test_dir.glob("*.cpu.sym"))
-                if sym_candidates:
-                    sym_file = sym_candidates[0]
+        sym_file = test_dir / "Test.cpu.sym"
+        if not sym_file.is_file():
+            sym_candidates = list(test_dir.glob("*.cpu.sym"))
+            if sym_candidates:
+                sym_file = sym_candidates[0]
 
-            if sym_file.is_file():
-                sym_pattern = re.compile(
-                    r"^al\s+([0-9A-Fa-f]{6})\s+\.([A-Za-z0-9_@]+)"
-                )
-                with open(sym_file, "r", encoding="utf-8") as f:
-                    for line in f:
-                        m = sym_pattern.match(line.strip())
-                        if m:
-                            full_val = int(m.group(1), 16)
-                            symbols_map[m.group(2)] = full_val & 0xFFFF
+        if sym_file.is_file():
+            sym_pattern = re.compile(
+                r"^al\s+([0-9A-Fa-f]{6})\s+\.([A-Za-z0-9_@]+)"
+            )
+            with open(sym_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    m = sym_pattern.match(line.strip())
+                    if m:
+                        full_val = int(m.group(1), 16)
+                        offset = full_val & 0xFFFF
+                        name = m.group(2)
+                        symbols_map[name] = offset
+                        if label_map:
+                            label_map[name] = offset
 
         sizes = cls._estimate_symbol_sizes(dbg_data)
         func_spans, lbl_spans, func_entries = cls._build_dbg_spans(dbg_data)

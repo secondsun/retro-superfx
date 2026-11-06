@@ -29,6 +29,70 @@ if [ -x ./tools/mesen-mcp/.venv/bin/pytest ]; then
   fi
 fi
 
+# snes-sfx-demo: build staged GSU tests and verify test.lua symbol offsets.
+if [ -d "$root/X-GSU/tests" ] && [ -d "$root/libSFX" ]; then
+  staged_files="$(git diff --cached --name-only --diff-filter=ACMR)"
+  if [ -n "$staged_files" ]; then
+    test_names="$(echo "$staged_files" | grep -E '^X-GSU/tests/[^/]+/' | cut -d/ -f3 | sort -u || true)"
+    for test_name in $test_names; do
+      [ -n "$test_name" ] || continue
+      case "$test_name" in
+        test_template|buffer_rnc|decode_rnc|hufftable_rnc) continue ;;
+      esac
+      test_dir="$root/X-GSU/tests/$test_name"
+      if [ -f "$test_dir/Makefile" ]; then
+        echo "[pre-commit] building X-GSU/tests/$test_name"
+        make -s -C "$test_dir" all || {
+          echo "[pre-commit] Build failed for X-GSU/tests/$test_name." >&2
+          exit 1
+        }
+        sym_file="$test_dir/Test.cpu.sym"
+        lua_file="$test_dir/test.lua"
+        if [ -f "$sym_file" ] && [ -f "$lua_file" ]; then
+          python3 -c '
+import sys, re
+
+sym_file, lua_file, test_name = sys.argv[1], sys.argv[2], sys.argv[3]
+sym_pat = re.compile(r"^\s*al\s+([0-9A-Fa-f]{6})\s+\.?([A-Za-z0-9_@]+)")
+lua_pat = re.compile(r"^\s*(?:local\s+)?([A-Za-z0-9_]+)\s*=\s*(0x[0-9A-Fa-f]+|\d+)")
+
+syms = {}
+with open(sym_file, "r", encoding="utf-8", errors="replace") as f:
+    for line in f:
+        m = sym_pat.match(line)
+        if m:
+            syms[m.group(2)] = int(m.group(1), 16) & 0xFFFF
+
+stale = []
+with open(lua_file, "r", encoding="utf-8", errors="replace") as f:
+    for line in f:
+        m = lua_pat.match(line)
+        if m:
+            var, val_str = m.group(1), m.group(2)
+            sym_key = var
+            if sym_key not in syms and sym_key == "OUTPUT" and "TEST_OUTPUT" in syms:
+                sym_key = "TEST_OUTPUT"
+            if sym_key in syms:
+                try:
+                    val = int(val_str, 16) if val_str.startswith(("0x", "0X")) else int(val_str)
+                except ValueError:
+                    continue
+                exp = syms[sym_key]
+                if val != exp:
+                    stale.append((var, f"0x{val:04X}", f"0x{exp:04X}"))
+
+if stale:
+    for var, act, exp in stale:
+        print(f"[pre-commit] Error: Symbol \x27{var}\x27 in X-GSU/tests/{test_name}/test.lua ({act}) is out of sync with Test.cpu.sym ({exp})!", file=sys.stderr)
+    print("[pre-commit] Please update test.lua or run sfx_resolve_address / run_sfx_test to synchronize symbol addresses.", file=sys.stderr)
+    sys.exit(1)
+' "$sym_file" "$lua_file" "$test_name" || exit 1
+        fi
+      fi
+    done
+  fi
+fi
+
 # Only repos with a Maven wrapper are checked (the umbrella repo and snes-sfx-demo are skipped).
 [ -x ./mvnw ] || exit 0
 

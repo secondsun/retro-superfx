@@ -27,17 +27,18 @@ Rules and technical constraints when writing, parsing, analyzing, or compiling S
    - `with Rn`, `to Rn`, and `from Rn` modify `Sreg` and/or `Dreg` for the **single immediately following instruction only**.
    - Immediately after that configured instruction executes, both `Sreg` and `Dreg` automatically reset back to `R0`.
    - **Prefix register mapping and side-effects**:
-     | Prefix | Effect on `Sreg` | Effect on `Dreg` | Use case | Clwarning / Side effect |
+     | Prefix | Effect on `Sreg` | Effect on `Dreg` | Use case | Warning / Side effect |
      |---|---|---|---|---|
      | `with Rn` | `Rn` | `Rn` | In-place modification (`with r1; add #2`) | **Destructive to `Rn`**: modifies `Rn` directly. Do NOT use for non-destructive comparisons! |
      | `from Rn` | `Rn` | `R0` | Read operand, test/compare against immediate or register (`from r8; sub #1; beq ...`) | Leaves `Rn` intact; writes result into accumulator `R0` and updates flags. |
      | `to Rn` | `R0` | `Rn` | Compute into destination register (`to r3; add #5`) | Reads operand from `R0` and stores output into `Rn`. |
-   - **Critical Warning (`sub` vs `cmp`)**:
+   - **Critical Warning (`sub` vs `cmp`, and `R0` Clobbering)**:
      - Never use `with Rn; sub #k` or `with Rn; sub Rm` for non-destructive comparisons: because `with` sets `Dreg = Rn`, `sub` overwrites `Rn` in-place!
      - In contrast, `cmp` does **NOT** modify the destination register (`Dreg`)—it only computes `Sreg - Rm` and updates processor flags (`Z`, `CY`, `S`, `OV`). Therefore, `cmp` is non-destructive and safe to use.
      - Remember that `sub` always writes to `Dreg`: under `with Rn` it modifies `Rn`, and under `from Rn` it writes to `R0`. In sequential comparisons, `from r0; sub r1` will overwrite `R0`, corrupting subsequent checks against `R0` unless `R0` is preserved or `cmp` is used.
+     - **`R0` Clobber Under `from Rn; sub #0` / `add #0`**: When testing flags of `Rn` via `from Rn; sub #0` or `from Rn; add #0` (without `to`), the result is written to `R0` (since `Dreg` defaults to `R0`), clobbering `R0`. When `R0` holds a live value, test flags without clobbering `R0` using `with Rn; add #0` or `moves Rn, Rn`.
 2. **No Modal Prefix Before `move` Pseudo-Ops**:
-   - `move Dreg, Sreg` is a macro pseudo-op expanding to `with Sreg; to Dreg`.
+   - `move Dreg, Sreg` is a macro pseudo-op expanding to `with Sreg; to Dreg` (`$20|S`, `$10|D`, where `to Dreg` with `B == 1` executes the register move immediately and resets `B`, `Sreg`, and `Dreg`).
    - Never write `to Rn; move Rn, Rm` or place any modal prefix (`to`, `with`, `from`) immediately before `move`, `moves`, `moveb`, or `movew`.
    - Because `move` configures `with Sreg` directly on its first instruction, any preceding modal prefix is immediately overwritten without effect, wasting instruction bytes and processor cycles.
 3. **Branch Delay Slots**:
@@ -73,8 +74,9 @@ Rules and technical constraints when writing, parsing, analyzing, or compiling S
 5. **GSURAM-Only `ldw` / `ldb` Addressing**:
    - `ldw (Rn)` and `ldb (Rn)` always read from `GSURAM` (`$700000`, masked to 8 KB `$1FFF`).
    - Tables or constants defined in `.segment "GSUCODE"`, `.segment "RODATA"`, or `.segment "ROM*"` reside in ROM (`>= $8000`) when executing from ROM banks; read them via `romb` + `r14` + `getb`/`getbh` or copy them into `.segment "GSURAM"` before using `ldw`/`ldb`.
-6. **`R1..R15`-Only Register Operands (`and`, `bic`, `or`, `xor`, `mult`, `umult`)**:
-   - The register forms of `and`, `bic`, `or`, `xor`, `mult`, and `umult` only encode `R1`–`R15` (since opcode `$70` is `merge` rather than `and r0`). Keep operand registers in `R1`–`R15` or place `R0` as `Sreg`/`Dreg` via `from r0` / `with r0`.
+6. **Operand Constraints: Register Operands & 4-Bit Short Immediates**:
+   - **`R1..R15`-Only Register Operands (`and`, `bic`, `or`, `xor`, `mult`, `umult`)**: The register forms of `and`, `bic`, `or`, `xor`, `mult`, and `umult` only encode `R1`–`R15` (since opcode `$70` is `merge` rather than `and r0`). Keep operand registers in `R1`–`R15` or place `R0` as `Sreg`/`Dreg` via `from r0` / `with r0`.
+   - **4-Bit Short Immediate Range (`#0`–`#15`)**: Short-immediate arithmetic, bitwise, and multiply opcodes (`add`, `adc`, `sub`, `sbc`, `and`, `bic`, `or`, `xor`, `mult`, `umult`) only accept 4-bit unsigned immediates `#0`–`#15` (`#$0`–`#$F`). Immediate `link` only accepts `#1`–`#4`. Constants outside `#0`–`#15` cannot be passed directly as short immediates; load them into a register via `ibt` (8-bit signed) or `iwt` (16-bit word) first.
 7. **512-Byte Instruction Cache vs Dual 8-Pixel Plot Cache**:
    - The GSU has a 512-byte on-chip instruction cache (32 lines of 16 bytes each), distinct from the dual 8-pixel plot cache flushed by `rpix; rpix`.
    - Instructions running inside the cache execute in 1 clock cycle (21.47 MHz on FX3), freeing external buses for concurrent RAM writes or ROM prefetching.

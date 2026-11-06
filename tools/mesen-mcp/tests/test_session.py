@@ -100,3 +100,59 @@ def test_fake_runner_default_mesen_path(tmp_path):
     assert runner.last_cmd[1] == "--testrunner"
 
 
+def test_symbol_table_load_merges_dbg_and_cpu_sym_for_custom_symbols(tmp_path):
+    test_dir = tmp_path / "custom_sym_test"
+    test_dir.mkdir()
+
+    # Create Test.dbg with base symbols
+    dbg_content = """\
+version\tmajor=2,minor=0
+file\tid=0,name="Test.s",size=100,mtime=0x0,mod=0
+seg\tid=0,name="CODE",start=0x808000,size=0x10,addrsize=absolute,type=ro,oname="Test.sfc",ooffs=0
+span\tid=0,seg=0,start=0,size=2,type=0
+line\tid=0,file=0,line=1
+sym\tid=0,name="test_setup",addrsize=absolute,scope=0,def=0,val=0x700004,seg=0,type=lab
+sym\tid=1,name="test_stop",addrsize=absolute,scope=0,def=0,val=0x700020,seg=0,type=lab
+"""
+    (test_dir / "Test.dbg").write_text(dbg_content, encoding="utf-8")
+
+    # Create Test.cpu.sym with custom symbols not present in Test.dbg
+    cpu_sym_content = """\
+al 700004 .test_setup
+al 700020 .test_stop
+al 700010 .TEST_CASE_IDX
+al 700014 .TEST_RESULT
+"""
+    (test_dir / "Test.cpu.sym").write_text(cpu_sym_content, encoding="utf-8")
+
+    # Create test.lua with custom symbols and a loop counter
+    lua_file = test_dir / "test.lua"
+    lua_file.write_text(
+        "local test_setup = 0x0000\n"
+        "local test_stop = 0x0000\n"
+        "local TEST_CASE_IDX = 0x0000\n"
+        "local TEST_RESULT = 0x0000\n"
+        "local fail_count = 0\n"
+    )
+
+    runner = FakeMesenRunner(stdout="TEST PASSED\n", returncode=0)
+    session = SfxTestSession(test_dir=test_dir, test_name="custom_sym_test", runner=runner)
+
+    # Verify SymbolTable loaded symbols from both Test.dbg and Test.cpu.sym
+    table = session.symbols
+    assert table.get_offset("test_setup") == 0x0004
+    assert table.get_offset("test_stop") == 0x0020
+    assert table.get_offset("TEST_CASE_IDX") == 0x0010
+    assert table.get_offset("TEST_RESULT") == 0x0014
+
+    # Verify sync_lua_script updates custom symbols from Test.cpu.sym even when Test.dbg is present
+    session.sync_lua_script(lua_file)
+    synced = lua_file.read_text(encoding="utf-8")
+    assert "local test_setup = 0x0004" in synced
+    assert "local test_stop = 0x0020" in synced
+    assert "local TEST_CASE_IDX = 0x0010" in synced
+    assert "local TEST_RESULT = 0x0014" in synced
+    assert "local fail_count = 0" in synced
+
+
+

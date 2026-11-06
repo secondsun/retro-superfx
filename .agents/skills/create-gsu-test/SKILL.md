@@ -22,7 +22,7 @@ This skill guides the creation of automated unit tests for SuperFX (GSU) assembl
 4. **GSU Harness (`Test.sgs`)**: Allocate buffers in `.segment "GSURAM"`, invoke the code under test in `GSUCODE`, let memory settle with NOPs, and halt at `test_stop:`.
 5. **Audit Diagnostics & Invariants**: Invoke `retro-superfx_lsp:sfx_audit_diagnostics` to verify syntax, stack cleanup, 8 NOPs before stop, word alignment, and FX3 validity.
 6. **Build**: Run `make clean all` in `tests/<test_name>/`.
-7. **Extract Symbols**: Parse `Test.cpu.sym` to check word alignment and get 16-bit RAM offsets.
+7. **Extract Symbols & Check Word Alignment**: Resolve symbol addresses and verify word alignment using `call_mcp_tool` (`retro-superfx_mesen:sfx_resolve_address`) or `extract_syms.py --update-lua` (and note that `run_sfx_test` automatically syncs symbol offsets into `test.lua`). Never grep `.cpu.sym` or `.dbg` files directly.
 8. **Write Lua Assertions (`test.lua`)**: Hook `test_stop` execution callback on GSU (`cpuType = 4`), inspect RAM, validate against expectations, and call `emu.stop(0)` or `emu.stop(1)`.
 9. **Execute**: Run `retro-superfx_mesen:run_sfx_test` headlessly via `call_mcp_tool` (or fallback to `run_test.sh`).
 
@@ -68,7 +68,7 @@ Modify `Test.sgs`:
    OUTPUT:
    .res 8
    ```
-   Ensure buffers are **word-aligned** (even address). If `Test.cpu.sym` shows an odd address, prepend `.res 1`.
+   Ensure buffers are **word-aligned** (even address). If symbol resolution reports an odd address, prepend `.res 1`.
 3. **Invoke Routine**:
    In `test_start:`, call the macro or function under test.
 4. **Memory Settling NOPs**:
@@ -111,13 +111,30 @@ Ensure build succeeds with exit code 0.
 ---
 
 ### Step 6: Extract Symbols & Check Word Alignment
-Use [extract_syms.py](./scripts/extract_syms.py) to inspect `Test.cpu.sym` and update `test.lua`:
+
+> [!IMPORTANT]
+> **Never grep `.cpu.sym` or `.dbg` files; always use `sfx_resolve_address` or `extract_syms.py`.** Grepping linker outputs directly violates workspace tool economy policy and misses multi-bank or mapped offset calculations.
+
+Resolve symbol addresses and check word alignment using **`call_mcp_tool`** with `sfx_resolve_address` on `retro-superfx_mesen`:
+
+```json
+{
+  "ServerName": "retro-superfx_mesen",
+  "ToolName": "sfx_resolve_address",
+  "Arguments": {
+    "project": "tests/<test_name>",
+    "symbol": "OUTPUT"
+  }
+}
+```
+
+Or synchronize symbol addresses into `test.lua` using [extract_syms.py](./scripts/extract_syms.py):
 
 ```bash
 python3 .agents/skills/create-gsu-test/scripts/extract_syms.py tests/<test_name>/Test.cpu.sym --update-lua tests/<test_name>/test.lua
 ```
 
-Verify that all data buffers (`INPUT`, `OUTPUT`) are reported as **word-aligned**.
+Verify that all data buffers (`INPUT`, `OUTPUT`, `TEST_CASE_IDX`, `TEST_RESULT`) are reported as **word-aligned** (even 16-bit offset). Note that executing the test via `retro-superfx_mesen:run_sfx_test` also automatically synchronizes top-level symbol assignments in `test.lua` before running.
 
 ---
 
