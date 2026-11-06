@@ -58,7 +58,7 @@ def test_tool_forbidden_grader_catches_grep_and_passes_clean_trace() -> None:
     spec = {
         "type": "tool_forbidden",
         "tool": "run_command",
-        "args_pattern": r"\b(grep|rg)\b.*\.(s|sgs|i|inc|sym|dbg)\b",
+        "args_pattern": r"(?<![|\w \t])[ \t]*\b(grep|egrep|fgrep|rg|ag)\b(?:(?![ \t]*\|[ \t])[^;\n])*?\.(s|sgs|i|inc|sym|dbg)\b",
         "reason": "Do not grep assembly or symbol files; use MCP symbol tools.",
     }
 
@@ -67,19 +67,35 @@ def test_tool_forbidden_grader_catches_grep_and_passes_clean_trace() -> None:
             "server": "retro-superfx_lsp",
             "tool": "sfx_lookup_symbol",
             "args": {"symbol": "draw_textured_triangle"},
-        }
+        },
+        {
+            "tool": "run_command",
+            "args": {
+                "CommandLine": (
+                    "python3 -c '\nimport os\n"
+                    'for root, dirs, files in os.walk("snes-sfx-demo/X-GSU"):\n'
+                    '    for f in files:\n'
+                    '        if f.endswith((".s", ".sgs", ".i", ".inc")):\n'
+                    '            print(f)\n'
+                    "' | grep -v 'common/' | grep -v 'libSFX.i'"
+                ),
+                "toolSummary": "Check remaining include directives in .sgs files",
+            },
+        },
     ]
     assert grader.evaluate_grader(spec, tool_calls=clean_trace, code="").passed is True
 
-    forbidden_trace = [
-        {
-            "tool": "run_command",
-            "args": {"CommandLine": "grep -rn draw_textured_triangle snes-sfx-demo/X-GSU/test.sgs"},
-        }
-    ]
-    res_bad = grader.evaluate_grader(spec, tool_calls=forbidden_trace, code="")
-    assert res_bad.passed is False
-    assert "Do not grep" in res_bad.message
+    for cmd in (
+        "grep -rn draw_textured_triangle snes-sfx-demo/X-GSU/test.sgs",
+        "egrep 'foo|bar' snes-sfx-demo/X-GSU/test.s",
+        "fgrep foo snes-sfx-demo/X-GSU/test.i",
+        "rg draw_textured_triangle snes-sfx-demo/X-GSU/test.inc",
+        "ag draw_textured_triangle snes-sfx-demo/X-GSU/test.sgs",
+    ):
+        forbidden_trace = [{"tool": "run_command", "args": {"CommandLine": cmd}}]
+        res_bad = grader.evaluate_grader(spec, tool_calls=forbidden_trace, code="")
+        assert res_bad.passed is False, f"Expected failure for: {cmd}"
+        assert "Do not grep" in res_bad.message
 
 
 def test_code_invariant_grader_enforces_must_match_and_must_not_match() -> None:

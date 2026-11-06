@@ -48,14 +48,25 @@ public class MyNewFeature implements Feature<TextDocumentPositionParams, MyResul
 
     @Override
     public Optional<MyResult> handle(TextDocumentPositionParams params, TokenizedFile fileContent) {
-        // Query AST or tokenized tokens
-        var token = fileContent.tokenAt(params.position);
-        if (token.isEmpty()) return Optional.empty();
+        if (params == null
+            || params.position == null
+            || fileContent == null
+            || fileContent.isEmpty()
+            || params.position.line < 0
+            || params.position.line >= fileContent.textLines()) {
+          return Optional.empty();
+        }
+
+        // Query AST or tokenized tokens via getQualifiedSymbolAt(line, character) or getTokenAt(line, character)
+        String symbol = fileContent.getQualifiedSymbolAt(params.position.line, params.position.character);
+        if (symbol == null || symbol.isEmpty()) return Optional.empty();
         
         return Optional.of(new MyResult(...));
     }
 }
 ```
+
+`CA65LanguageServer` resolves and passes `fileContent` (`projectService.getFileContents(uri)`), so `Feature.handle` must return `Optional.empty()` when `fileContent` is `null` or empty and never call `projectService.resolveFile(uri, null)` directly (unit tests invoke `feature.handle(params, null)` with synthetic URIs like `file:///test.s`).
 
 ### 2. Wire the Feature in `CA65LanguageServer.java`
 1. Add a private field and instantiate it in the constructor:
@@ -70,6 +81,7 @@ public class MyNewFeature implements Feature<TextDocumentPositionParams, MyResul
    ```java
    @Override
    public Optional<MyResult> myNewFeature(TextDocumentPositionParams params) {
+       waitForIndexing();
        return myNewFeature.handle(params, projectService.getFileContents(params.textDocument.uri));
    }
    ```

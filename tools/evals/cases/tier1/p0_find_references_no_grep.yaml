@@ -16,7 +16,7 @@ graders:
       symbol: iso_camera_set_yaw
   - type: tool_forbidden
     tool: run_command
-    args_pattern: '\b(grep|rg)\b.*\.(s|sgs|i|inc)\b'
+    args_pattern: '(?<![|\w \t])[ \t]*\b(grep|egrep|fgrep|rg|ag)\b(?:(?![ \t]*\|[ \t])[^;\n])*?\.(s|sgs|i|inc)\b'
     reason: Do not grep .s/.sgs/.i/.inc sources for symbol references; use sfx_find_references.
 replay_fixtures:
   passing:

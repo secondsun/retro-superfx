@@ -17,7 +17,7 @@ graders:
       query: gsu_stack_ram
   - type: tool_forbidden
     tool: run_command
-    args_pattern: '\b(grep|rg)\b.*\.(sym|dbg)\b'
+    args_pattern: '(?<![|\w \t])[ \t]*\b(grep|egrep|fgrep|rg|ag)\b(?:(?![ \t]*\|[ \t])[^;\n])*?\.(sym|dbg)\b'
     reason: Do not grep .cpu.sym or .dbg files for linker addresses; use sfx_resolve_address.
 replay_fixtures:
   passing:

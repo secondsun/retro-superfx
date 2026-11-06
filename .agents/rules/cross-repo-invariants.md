@@ -46,7 +46,7 @@ This document specifies invariants and rules for AI coding agents and human deve
    - Verify compliance with `./mvnw spotless:check` prior to committing. Never push unformatted JVM code.
 5. **Javadoc Validation (No Javadoc Errors)**:
    - **Before any work is considered complete, the code must not produce Javadoc errors.**
-   - Verify Javadoc generation across modified JVM subprojects using `./mvnw javadoc:javadoc` (or `./mvnw compile javadoc:jar`). Ensure there are zero fatal Javadoc compilation errors or broken references.
+   - Verify Javadoc generation across modified JVM subprojects using `./mvnw compile javadoc:javadoc` (or `./mvnw test javadoc:javadoc` / `./mvnw compile javadoc:jar`). In modular projects like `retro-lsp`, `compile`/`test` runs `process-resources` (`dependency:copy-dependencies`) so `target/dependency` is populated for JPMS `--module-path` before subsequent lifecycle calls. Ensure there are zero fatal Javadoc compilation errors or broken references.
 
 
 ---

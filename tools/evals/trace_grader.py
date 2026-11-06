@@ -545,7 +545,14 @@ class TraceAndSnippetGrader:
                 if not isinstance(call_args, str)
                 else call_args
             )
-            if args_pattern is None or re.search(args_pattern, serialized, re.IGNORECASE):
+            match_target = (
+                str(call_args["CommandLine"])
+                if call_tool == "run_command"
+                and isinstance(call_args, dict)
+                and "CommandLine" in call_args
+                else serialized
+            )
+            if args_pattern is None or re.search(args_pattern, match_target, re.IGNORECASE):
                 return GraderCheckResult(
                     grader_type="tool_forbidden",
                     passed=False,
@@ -927,7 +934,7 @@ class TraceAndSnippetGrader:
             self._eval_tool_forbidden(
                 {
                     "tool": "run_command",
-                    "args_pattern": r"\b(grep|rg)\b.*\.(s|sgs|i|inc)\b",
+                    "args_pattern": r"(?<![|\w \t])[ \t]*\b(grep|egrep|fgrep|rg|ag)\b(?:(?![ \t]*\|[ \t])[^;\n])*?\.(s|sgs|i|inc)\b",
                     "reason": "[P0 Symbol/Ref Policy] Do not grep .s/.sgs/.i/.inc sources; use sfx_lookup_symbol or sfx_find_references on retro-superfx_lsp",
                 },
                 tool_calls,
@@ -939,7 +946,7 @@ class TraceAndSnippetGrader:
             self._eval_tool_forbidden(
                 {
                     "tool": "run_command",
-                    "args_pattern": r"\b(grep|rg)\b.*\.(sym|dbg)\b",
+                    "args_pattern": r"(?<![|\w \t])[ \t]*\b(grep|egrep|fgrep|rg|ag)\b(?:(?![ \t]*\|[ \t])[^;\n])*?\.(sym|dbg)\b",
                     "reason": "[P0 Address Policy] Do not grep .cpu.sym or .dbg files; use sfx_resolve_address on retro-superfx_mesen",
                 },
                 tool_calls,

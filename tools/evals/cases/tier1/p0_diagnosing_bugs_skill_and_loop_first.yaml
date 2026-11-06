@@ -19,11 +19,11 @@ graders:
     tool: sfx_lookup_symbol
   - type: tool_forbidden
     tool: run_command
-    args_pattern: '\b(grep|rg)\b.*\.(s|sgs|i|inc)\b'
+    args_pattern: '(?<![|\w \t])[ \t]*\b(grep|egrep|fgrep|rg|ag)\b(?:(?![ \t]*\|[ \t])[^;\n])*?\.(s|sgs|i|inc)\b'
     reason: Do not grep .s/.sgs/.i/.inc sources during bug diagnosis; use sfx_lookup_symbol or sfx_find_references.
   - type: tool_forbidden
     tool: run_command
-    args_pattern: '\b(grep|rg)\b.*\.(sym|dbg)\b'
+    args_pattern: '(?<![|\w \t])[ \t]*\b(grep|egrep|fgrep|rg|ag)\b(?:(?![ \t]*\|[ \t])[^;\n])*?\.(sym|dbg)\b'
     reason: Do not grep .cpu.sym or .dbg files for addresses; use sfx_resolve_address.
 replay_fixtures:
   passing:
