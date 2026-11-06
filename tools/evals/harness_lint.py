@@ -22,7 +22,11 @@ SKILL_ROOT_REL_PATHS = (
 AGENT_DOT_DIRS = (
     ".agents",
     "snes-sfx-demo/.agents",
+    "snes-sfx-demo/X-GSU/.agents",
     "retro-lsp/.agents",
+    "sfx-optimizer/.agents",
+    "retro-common/.agents",
+    "java-language-server/.agents",
 )
 
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*(?:\n|$)", re.DOTALL)
@@ -30,6 +34,9 @@ _FENCED_BLOCK_RE = re.compile(r"```.*?```", re.DOTALL)
 _INLINE_CODE_LINK_RE = re.compile(r"`[^`\n]*?\[[^\]]+\]\([^)]+\)[^`\n]*?`")
 _MARKDOWN_LINK_RE = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
 _HARDCODED_LUA_PATH_RE = re.compile(r"""["']/(?:Users|home)/[^"'\n]+["']""")
+_HARDCODED_USER_PATH_RE = re.compile(
+    r"""(?i)(?:/(?:Users|home)/[a-zA-Z0-9_-]+|[a-zA-Z]:\\Users\\[a-zA-Z0-9_-]+)"""
+)
 _IGNORED_SCHEMES = ("http://", "https://", "conversation://", "mailto:", "#")
 _IGNORED_FILENAMES = {".DS_Store"}
 
@@ -52,6 +59,7 @@ class HarnessLinter:
         )
         checked_links = self._check_markdown_links(root, issues)
         self._check_test_lua_hardcoded_paths(root, issues)
+        self._check_workspace_hardcoded_paths(root, issues)
 
         return HarnessLintReport(
             passed=len(issues) == 0,
@@ -385,5 +393,109 @@ class HarnessLinter:
                             path=rel_lua,
                         )
                     )
+
+    def _check_workspace_hardcoded_paths(
+        self, root: Path, issues: list[LintIssue]
+    ) -> None:
+        """Scan workspace scripts, configs, tools, and docs for hardcoded user home paths."""
+        excluded_path_parts = {
+            ".git",
+            "node_modules",
+            ".venv",
+            "libSFX/tools",
+            "target",
+            "dist",
+            ".idea",
+            "__pycache__",
+            "cases",
+            "fixtures",
+        }
+        valid_extensions = {
+            ".sh",
+            ".bat",
+            ".cmd",
+            ".py",
+            ".kt",
+            ".java",
+            ".ts",
+            ".js",
+            ".mjs",
+            ".md",
+            ".yaml",
+            ".yml",
+            ".json",
+            ".cfg",
+            ".s",
+            ".sgs",
+            ".i",
+            ".inc",
+        }
+
+        # Directories and root files to inspect
+        scan_roots = [
+            root / "tools",
+            root / ".agents",
+            root / "README.md",
+            root / "AGENTS.md",
+            root / "CODING_STANDARDS.md",
+            root / "java-language-server" / "AGENTS.md",
+            root / "retro-common" / "AGENTS.md",
+            root / "sfx-optimizer" / "AGENTS.md",
+            root / "retro-lsp" / "AGENTS.md",
+            root / "retro-lsp" / "scripts",
+            root / "snes-sfx-demo" / "README.md",
+            root / "snes-sfx-demo" / "AGENTS.md",
+            root / "snes-sfx-demo" / "X-GSU" / "AGENTS.md",
+        ]
+
+        files_to_scan: list[Path] = []
+        for sr in scan_roots:
+            if not sr.exists():
+                continue
+            if sr.is_file():
+                files_to_scan.append(sr)
+            elif sr.is_dir():
+                for dirpath, _, filenames in os.walk(sr):
+                    dp = Path(dirpath)
+                    if any(part in dp.parts for part in excluded_path_parts):
+                        continue
+                    for fn in filenames:
+                        fp = dp / fn
+                        if fp.suffix.lower() in valid_extensions:
+                            # Skip test files designed to test linting/mocking
+                            rel = str(fp.relative_to(root))
+                            if (
+                                "test_harness_lint.py" in rel
+                                or "test_trace_grader.py" in rel
+                                or "mocking.md" in rel
+                                or rel.startswith("tools/run-evals.sh")
+                            ):
+                                continue
+                            files_to_scan.append(fp)
+
+        for file_path in sorted(set(files_to_scan)):
+            rel_file = str(file_path.relative_to(root))
+            try:
+                content = file_path.read_text(encoding="utf-8", errors="ignore")
+            except Exception:
+                continue
+
+            for lineno, line in enumerate(content.splitlines(), start=1):
+                # Ignore CANONICAL_WORKSPACE_PREFIX definition in harness_lint.py itself
+                if "CANONICAL_WORKSPACE_PREFIX" in line:
+                    continue
+                match = _HARDCODED_USER_PATH_RE.search(line)
+                if match:
+                    issues.append(
+                        LintIssue(
+                            code="HARDCODED_USER_PATH",
+                            message=(
+                                f"Hardcoded user home path '{match.group(0)}' in "
+                                f"'{rel_file}:{lineno}'; derive path dynamically at runtime or use relative paths"
+                            ),
+                            path=rel_file,
+                        )
+                    )
+
 
 

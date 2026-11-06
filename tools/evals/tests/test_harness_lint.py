@@ -313,12 +313,11 @@ def test_pre_commit_hook_triggers_tier0_lint_on_staged_harness_files(
 
     # Wire tools/run-evals.sh in the temporary repo to invoke our real evals package
     run_evals_script = repo / "tools" / "run-evals.sh"
-    python_bin = WORKSPACE_ROOT / "tools" / "mesen-mcp" / ".venv" / "bin" / "python"
     run_evals_script.write_text(
         "#!/usr/bin/env bash\n"
         "set -euo pipefail\n"
         f'export PYTHONPATH="{WORKSPACE_ROOT / "tools"}:{WORKSPACE_ROOT / "tools/mesen-mcp"}"\n'
-        f'exec "{python_bin}" -m evals.cli --workspace-root "{repo}" "$@"\n',
+        f'exec python3 -m evals.cli --workspace-root "{repo}" "$@"\n',
         encoding="utf-8",
     )
     run_evals_script.chmod(0o755)
