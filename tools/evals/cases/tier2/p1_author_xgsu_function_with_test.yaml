@@ -2,10 +2,8 @@ id: p1_author_xgsu_function_with_test
 tier: 2
 priority: P1
 targets:
-  - ".agents/plugins/retro-superfx/skills/create-gsu-test/**"
-  - "snes-sfx-demo/.agents/skills/create-gsu-test/**"
+  - ".agents/skills/create-gsu-test/**"
   - ".agents/skills/sfx-test-runner/**"
-  - ".agents/plugins/retro-superfx/skills/sfx-test-runner/**"
   - "AGENTS.md"
 prompt: >
   Author a new X-GSU function `vec2_manhattan_dist` in `snes-sfx-demo/X-GSU/` that computes

@@ -5,7 +5,6 @@ targets:
   - AGENTS.md
   - .agents/rules/sfx-assembly-rules.md
   - .agents/rules/cross-repo-invariants.md
-  - .agents/plugins/retro-superfx/rules/AGENTS.md
   - snes-sfx-demo/X-GSU/**
 prompt: >
   Write a SuperFX routine `finish_frame_plot` that plots a pixel, flushes both

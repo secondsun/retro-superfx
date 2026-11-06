@@ -3,7 +3,6 @@ tier: 2
 priority: P2
 targets:
   - ".agents/skills/texture-atlas/**"
-  - ".agents/plugins/retro-superfx/skills/texture-atlas/**"
 prompt: >
   Update the IsoEngine texture atlas (`snes-sfx-demo/X-GSU/IsoEngine/assets/textures.sfxproj`)
   and regenerate its companion `.bin`, `.pal`, and `.i` files.

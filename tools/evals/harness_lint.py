@@ -29,6 +29,7 @@ _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*(?:\n|$)", re.DOTALL)
 _FENCED_BLOCK_RE = re.compile(r"```.*?```", re.DOTALL)
 _INLINE_CODE_LINK_RE = re.compile(r"`[^`\n]*?\[[^\]]+\]\([^)]+\)[^`\n]*?`")
 _MARKDOWN_LINK_RE = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
+_HARDCODED_LUA_PATH_RE = re.compile(r"""["']/(?:Users|home)/[^"'\n]+["']""")
 _IGNORED_SCHEMES = ("http://", "https://", "conversation://", "mailto:", "#")
 _IGNORED_FILENAMES = {".DS_Store"}
 
@@ -50,6 +51,7 @@ class HarnessLinter:
             root, max_context_tokens, issues
         )
         checked_links = self._check_markdown_links(root, issues)
+        self._check_test_lua_hardcoded_paths(root, issues)
 
         return HarnessLintReport(
             passed=len(issues) == 0,
@@ -341,4 +343,32 @@ class HarnessLinter:
         if rel_to_root.exists():
             return rel_to_root
         return rel_to_file
+
+    def _check_test_lua_hardcoded_paths(
+        self, root: Path, issues: list[LintIssue]
+    ) -> None:
+        demo_root = root / "snes-sfx-demo"
+        if not demo_root.is_dir():
+            return
+        for lua_file in sorted(demo_root.glob("**/test.lua")):
+            if not lua_file.is_file():
+                continue
+            rel_lua = str(lua_file.relative_to(root))
+            for lineno, line in enumerate(
+                lua_file.read_text(encoding="utf-8").splitlines(), start=1
+            ):
+                code_part = line.split("--", 1)[0]
+                match = _HARDCODED_LUA_PATH_RE.search(code_part)
+                if match:
+                    issues.append(
+                        LintIssue(
+                            code="HARDCODED_LUA_PATH",
+                            message=(
+                                f"Hardcoded user home path {match.group(0)} in "
+                                f"'{rel_lua}:{lineno}'; use script_dir relative paths instead"
+                            ),
+                            path=rel_lua,
+                        )
+                    )
+
 

@@ -2,10 +2,9 @@ id: p1_scene_render_capture_gate
 tier: 2
 priority: P1
 targets:
-  - ".agents/plugins/retro-superfx/rules/AGENTS.md"
+  - ".agents/rules/sfx-assembly-rules.md"
   - "tools/mesen-mcp/mesen_mcp/render_capture.py"
   - ".agents/skills/sfx-test-runner/**"
-  - ".agents/plugins/retro-superfx/skills/sfx-test-runner/**"
 prompt: >
   Optimize the polygon rasterization loop in `snes-sfx-demo/X-GSU/IsoEngine/` and verify
   that the full scene renders properly without a black screen before completing the task.

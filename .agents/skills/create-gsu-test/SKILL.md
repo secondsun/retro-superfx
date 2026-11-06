@@ -129,6 +129,7 @@ Edit `tests/<test_name>/test.lua`:
   ```
   *(Note: cpuType `4` is GSU, memoryType is `emu.memType.gsuWorkRam`).*
 - Read memory using `emu.read(...)` (bytes) or `emu.readWord(...)` / `emu.read16(...)` (words).
+- When loading external binary fixtures (`Data/*.bin`) inside `test.lua`, always resolve paths relative to `script_dir` (included in `test_template/test.lua` via `debug.getinfo(1, "S").source`) rather than relying on the process CWD or hardcoding `/Users/...` or `/home/...` paths.
 - Log results using `print(...)` so they output to `stdout` in test runner mode.
 - Call `emu.stop(0)` on PASS, `emu.stop(1)` on FAIL.
 

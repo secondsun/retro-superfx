@@ -6,13 +6,12 @@ WORKSPACE_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 PACKER_DIR="${WORKSPACE_ROOT}/snes-sfx-demo/build_tools/texture-packer"
 JAR="${PACKER_DIR}/target/texture-packer-1.0-SNAPSHOT-jar-with-dependencies.jar"
 
-if [ -f "${JAR}" ]; then
-    exec java -cp "${JAR}" dev.secondsun.superx.tools.packer.CliMainKt "$@"
-else
-    # Build or run via Maven exec
+if [ ! -f "${JAR}" ]; then
     (
         cd "${PACKER_DIR}"
-        mvn exec:java -Dexec.mainClass="dev.secondsun.superx.tools.packer.CliMainKt" -Dexec.args="$*"
+        mvn -q package -DskipTests >&2
     )
 fi
+
+exec java -cp "${JAR}" dev.secondsun.superx.tools.packer.CliMainKt "$@"
 

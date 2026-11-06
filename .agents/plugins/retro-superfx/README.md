@@ -19,17 +19,7 @@ An Antigravity plugin bundling tools, skills, rules, and MCP servers for SNES an
    - `sfx_find_references`: Finds references and usages of symbols across the workspace index (understands `call`, macros, scopes; skips comments and strings).
    - `sfx_analyze_registers`: Chaitin-Briggs graph coloring register allocation, live ranges, and interference graphs.
 
-### Bundled Skills
-- **`build-workspace`**: Topological compilation and testing across all projects.
-- **`sfx-macro-language`**: Reference and syntax guide for the X-GSU ca65 macro DSL.
-- **`sfx-test-runner`**: Runbook for headless Mesen CE test execution.
-- **`create-gsu-test`**: Scaffolding new SuperFX unit tests from `test_template`.
-- **`run-gsu-test`**: Building and running existing SuperFX tests in `tests/`.
-- **`rebase-submodules`**: Fetching and rebasing submodules from GitHub.
-- **`update-submodules`**: Staging and committing updated submodule references.
-- **`lsp-feature-dev`**: Developing and wiring new LSP capabilities in `retro-lsp`.
-- **`verify-pipeline`**: Full verification pipeline for `retro-lsp`.
+### Canonical Skills & Rules
+All workspace skills and rules live in a single canonical location at the repository root (`.agents/skills/` and `.agents/rules/`) so they are not loaded twice inside the umbrella workspace.
 
-### Rules
-- Bundled `rules/AGENTS.md` specifying repository topology, FX3 hardware constraints, and calling conventions.
 

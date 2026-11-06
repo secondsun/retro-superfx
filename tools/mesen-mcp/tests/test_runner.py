@@ -21,8 +21,7 @@ def test_run_sfx_test_sqrt():
     assert result["status"] == "PASS"
     assert result["test"] == "sqrt"
     assert "TEST PASSED" in result["output"]
-    assert result["symbols"]["test_stop"] == 0x0020
-    assert len(result["symbols"]) < 200
+    assert "symbols" not in result
 
 
 def test_run_sfx_test_transform():

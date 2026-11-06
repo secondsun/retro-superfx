@@ -37,6 +37,9 @@ def main():
             if (cur / "X-GSU" / "tests" / "test_template").is_dir():
                 xgsu_dir = cur / "X-GSU"
                 break
+            if (cur / "snes-sfx-demo" / "X-GSU" / "tests" / "test_template").is_dir():
+                xgsu_dir = cur / "snes-sfx-demo" / "X-GSU"
+                break
             cur = cur.parent
         else:
             print("Error: Could not locate X-GSU root with tests/test_template", file=sys.stderr)

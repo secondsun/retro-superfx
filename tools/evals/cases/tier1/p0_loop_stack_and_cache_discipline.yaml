@@ -6,7 +6,6 @@ targets:
   - .agents/rules/sfx-assembly-rules.md
   - .agents/rules/cross-repo-invariants.md
   - .agents/skills/sfx-macro-language/**
-  - .agents/plugins/retro-superfx/skills/sfx-macro-language/**
   - snes-sfx-demo/X-GSU/**
 prompt: >
   Write a cached SuperFX loop inside `function transform_batch` that iterates 8

@@ -4,9 +4,7 @@ priority: P0
 targets:
   - AGENTS.md
   - .agents/rules/sfx-assembly-rules.md
-  - .agents/plugins/retro-superfx/rules/AGENTS.md
   - .agents/skills/sfx-macro-language/**
-  - .agents/plugins/retro-superfx/skills/sfx-macro-language/**
   - snes-sfx-demo/X-GSU/**
 prompt: >
   Write an X-GSU function `check_flag_r8` that checks whether register `r8`

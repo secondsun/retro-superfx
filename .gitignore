@@ -22,6 +22,10 @@ node_modules/
 *.log
 nohup.out
 
+# Keep static symbol/debug fixtures required by mesen-mcp unit tests and Tier 0 MCP smoke evals
+!tools/mesen-mcp/tests/fixtures/sample_project/Test.dbg
+!tools/mesen-mcp/tests/fixtures/sample_project/Test.cpu.sym
+
 # OS files
 .DS_Store
 Thumbs.db

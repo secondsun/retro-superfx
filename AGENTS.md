@@ -66,7 +66,7 @@ The `X-GSU` directory (`snes-sfx-demo/X-GSU/common/`) defines a high-level macro
 - **`call <name> [args]`**: Emits `link #4` (stores return address in `R11`) and branches to `<name>_function`.
 - **`return`**: Pops return address from stack into `R15` (`PC`) with `nop` in delay slot.
 - **`endfunction`**: Closes `.endscope`.
-- **Unit Test Requirement**: Authoring a new X-GSU `function` in `snes-sfx-demo/X-GSU/` requires creating and passing a headless unit test in `snes-sfx-demo/X-GSU/tests/<name>/` before completion; see [`.agents/plugins/retro-superfx/skills/create-gsu-test/SKILL.md`](.agents/plugins/retro-superfx/skills/create-gsu-test/SKILL.md).
+- **Unit Test Requirement**: Authoring a new X-GSU `function` in `snes-sfx-demo/X-GSU/` requires creating and passing a headless unit test in `snes-sfx-demo/X-GSU/tests/<name>/` before completion; see [`.agents/skills/create-gsu-test/SKILL.md`](.agents/skills/create-gsu-test/SKILL.md). Note: `buffer_rnc`, `decode_rnc`, and `hufftable_rnc` are works in progress (WIP) and not expected to pass.
 
 ### B. High-Level Variables & `sfx-optimizer` Keywords
 - **`register <var1>, <var2>`**: Declares pseudo-variables to be mapped to hardware registers.
@@ -258,11 +258,15 @@ Workspace customizations are maintained in `.agents/`:
   - [`.agents/rules/sfx-assembly-rules.md`](.agents/rules/sfx-assembly-rules.md): SuperFX architecture and FX3 constraints.
 - **Skills**:
   - [`build-workspace`](.agents/skills/build-workspace/SKILL.md): Build, test, and synchronize local Maven artifacts.
+  - [`create-gsu-test`](.agents/skills/create-gsu-test/SKILL.md): Scaffold, configure, and execute new SuperFX unit tests from `test_template`.
+  - [`lsp-feature-dev`](.agents/skills/lsp-feature-dev/SKILL.md): Design, implement, and test new LSP features in `retro-lsp`.
   - [`rebase-submodules`](.agents/skills/rebase-submodules/SKILL.md): Fetch and rebase Git submodules from GitHub.
+  - [`run-gsu-test`](.agents/skills/run-gsu-test/SKILL.md): Build, synchronize symbol addresses, and run existing SuperFX unit tests.
   - [`sfx-macro-language`](.agents/skills/sfx-macro-language/SKILL.md): Reference and syntax for the X-GSU ca65 macro DSL.
   - [`sfx-test-runner`](.agents/skills/sfx-test-runner/SKILL.md): Headless Mesen CE test execution and debugging.
   - [`texture-atlas`](.agents/skills/texture-atlas/SKILL.md): Author, pack, update, and validate SuperFX texture atlases and companion files.
   - [`update-submodules`](.agents/skills/update-submodules/SKILL.md): Stage, commit, and push updated Git submodules to origin.
+  - [`verify-pipeline`](.agents/skills/verify-pipeline/SKILL.md): Run and diagnose the `retro-lsp` verification pipeline.
 
 ---
 

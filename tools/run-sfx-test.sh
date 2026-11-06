@@ -1,11 +1,69 @@
 #!/usr/bin/env bash
 # run-sfx-test.sh - Headless SuperFX test runner using Mesen CE
-# Usage: ./tools/run-sfx-test.sh <test_name_or_path> [timeout_seconds]
+# Usage:
+#   ./tools/run-sfx-test.sh [all] [timeout_seconds]          # Run all active X-GSU unit tests
+#   ./tools/run-sfx-test.sh <test_name_or_path> [timeout_s]  # Run a single test
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TEST_ARG="${1:-vector3_add}"
+TESTS_ROOT="${ROOT_DIR}/snes-sfx-demo/X-GSU/tests"
+
+# Canonical point of truth for template and work-in-progress (WIP) test directories
+TEMPLATE_TESTS=("test_template")
+WIP_TESTS=("buffer_rnc" "decode_rnc" "hufftable_rnc")
+
+is_in_list() {
+    local needle="$1"
+    shift
+    local item
+    for item in "$@"; do
+        if [ "${item}" = "${needle}" ]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+TEST_ARG="${1:-all}"
 TIMEOUT="${2:-10}"
+
+if [ "${TEST_ARG}" = "all" ]; then
+    PASS_COUNT=0
+    FAIL_COUNT=0
+    SKIP_COUNT=0
+    FAILED_TESTS=()
+
+    for dir in "${TESTS_ROOT}"/*/; do
+        [ -d "${dir}" ] || continue
+        name="$(basename "${dir}")"
+        if is_in_list "${name}" "${TEMPLATE_TESTS[@]}"; then
+            continue
+        fi
+        if is_in_list "${name}" "${WIP_TESTS[@]}"; then
+            echo "=== SKIP (WIP): ${name} ==="
+            SKIP_COUNT=$((SKIP_COUNT + 1))
+            continue
+        fi
+        echo "=== Running test: ${name} ==="
+        if "$0" "${dir}" "${TIMEOUT}"; then
+            PASS_COUNT=$((PASS_COUNT + 1))
+        else
+            FAIL_COUNT=$((FAIL_COUNT + 1))
+            FAILED_TESTS+=("${name}")
+        fi
+    done
+
+    echo "=================================================================="
+    echo " SuperFX Test Suite Summary"
+    echo " Passed: ${PASS_COUNT} | Failed: ${FAIL_COUNT} | Skipped (WIP): ${SKIP_COUNT}"
+    if [ "${FAIL_COUNT}" -gt 0 ]; then
+        echo " Failed tests: ${FAILED_TESTS[*]}"
+        echo "=================================================================="
+        exit 1
+    fi
+    echo "=================================================================="
+    exit 0
+fi
 
 # Resolve test directory
 if [ -d "${TEST_ARG}" ]; then
@@ -23,6 +81,16 @@ else
     echo "Available tests in snes-sfx-demo/X-GSU/tests/:" >&2
     ls -1 "${ROOT_DIR}/snes-sfx-demo/X-GSU/tests" | grep -v '\.' | sed 's/^/  /' >&2
     exit 1
+fi
+
+TEST_NAME="$(basename "${TEST_DIR}")"
+if is_in_list "${TEST_NAME}" "${TEMPLATE_TESTS[@]}"; then
+    echo "Error: '${TEST_NAME}' is a scaffold template, not an executable unit test." >&2
+    exit 1
+fi
+if is_in_list "${TEST_NAME}" "${WIP_TESTS[@]}"; then
+    echo "SKIP: '${TEST_NAME}' is a work in progress (WIP) and not expected to pass."
+    exit 0
 fi
 
 # Locate Mesen executable
@@ -91,8 +159,8 @@ if [ -z "${LUA_SCRIPT}" ] || [ ! -f "${LUA_SCRIPT}" ]; then
     exit 1
 fi
 
-SYNC_SCRIPT="${ROOT_DIR}/snes-sfx-demo/.agents/skills/run-gsu-test/scripts/sync_test_labels.py"
-EXTRACT_SCRIPT="${ROOT_DIR}/snes-sfx-demo/.agents/skills/create-gsu-test/scripts/extract_syms.py"
+SYNC_SCRIPT="${ROOT_DIR}/.agents/skills/run-gsu-test/scripts/sync_test_labels.py"
+EXTRACT_SCRIPT="${ROOT_DIR}/.agents/skills/create-gsu-test/scripts/extract_syms.py"
 
 if [ -n "${SYM_FILE}" ] && [ -f "${SYM_FILE}" ] && [ "$(basename "${LUA_SCRIPT}")" = "test.lua" ] && [ -f "${SYNC_SCRIPT}" ]; then
     echo ">>> [2/3] Synchronizing symbol addresses in $(basename "${LUA_SCRIPT}")..."

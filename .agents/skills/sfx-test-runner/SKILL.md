@@ -152,6 +152,7 @@ When executing tests under the hood (or via fallback CLI):
 ### Critical Mesen & Python Environment Notes
 - Always pass `--testrunner` (all lowercase, no hyphen). Passing `--test-runner` with a hyphen inadvertently launches interactive GUI mode.
 - For Python helper scripts requiring `PIL` (`Pillow`) or `pytest` (such as image comparison or perceptual hashing), use `./tools/mesen-mcp/.venv/bin/python` rather than system `python3`.
+- **Work-in-Progress (WIP) Tests**: `buffer_rnc`, `decode_rnc`, and `hufftable_rnc` in `snes-sfx-demo/X-GSU/tests/` are works in progress and are not expected to pass. Skip them when running full test suite sweeps.
 
 ---
 
@@ -161,7 +162,7 @@ Mesen executes breakpoints at 16-bit Work RAM addresses. The lower 2 bytes (`add
 
 Use the helper script to verify:
 ```bash
-python3 snes-sfx-demo/.agents/skills/create-gsu-test/scripts/extract_syms.py snes-sfx-demo/X-GSU/tests/<name>/Test.cpu.sym
+python3 .agents/skills/create-gsu-test/scripts/extract_syms.py snes-sfx-demo/X-GSU/tests/<name>/Test.cpu.sym
 ```
 Ensure `test.lua` contains:
 ```lua

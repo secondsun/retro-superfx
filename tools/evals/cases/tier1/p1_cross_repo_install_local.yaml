@@ -5,7 +5,6 @@ targets:
   - AGENTS.md
   - .agents/rules/cross-repo-invariants.md
   - .agents/skills/build-workspace/**
-  - .agents/plugins/retro-superfx/skills/build-workspace/**
   - tools/install-local.sh
   - retro-common/**
   - sfx-optimizer/**

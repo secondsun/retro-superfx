@@ -4,7 +4,6 @@ priority: P0
 targets:
   - AGENTS.md
   - .agents/rules/sfx-assembly-rules.md
-  - .agents/plugins/retro-superfx/rules/AGENTS.md
   - retro-lsp/**
 prompt: >
   Find the definition and documentation comment (In/Out/Clobbers) for the

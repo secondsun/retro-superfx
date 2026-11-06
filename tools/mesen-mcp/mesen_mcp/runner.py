@@ -119,7 +119,6 @@ def run_sfx_test(
             "test": test_name,
             "exit_code": proc.returncode,
             "output": combined_output.strip(),
-            "symbols": session.symbols.label_symbols or session.symbols.symbols,
         }
     except subprocess.TimeoutExpired as te:
         stdout = te.stdout or ""
@@ -130,7 +129,6 @@ def run_sfx_test(
             "exit_code": -1,
             "error": f"Test execution timed out after {timeout_seconds} seconds",
             "output": (stdout + "\n" + stderr).strip(),
-            "symbols": session.symbols.symbols,
         }
     except Exception as e:
         return {
@@ -138,7 +136,6 @@ def run_sfx_test(
             "test": test_name,
             "error": str(e),
             "output": "",
-            "symbols": session.symbols.symbols,
         }
 
 

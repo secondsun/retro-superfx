@@ -33,7 +33,7 @@ def create_server() -> FastMCP:
 
         Returns:
             Structured test results including 'status' ('PASS' | 'FAIL'), 'test',
-            'output', and resolved symbols.
+            'exit_code', and 'output'.
         """
         return execute_run_sfx_test(test_name=test_name, timeout_seconds=timeout_seconds)
 

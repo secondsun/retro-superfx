@@ -174,6 +174,21 @@ def test_detects_broken_markdown_and_file_links(tmp_path: Path) -> None:
     assert len(broken_issues) == 2
 
 
+def test_detects_hardcoded_home_paths_in_test_lua(tmp_path: Path) -> None:
+    ws = _create_minimal_workspace(tmp_path)
+    lua_dir = ws / "snes-sfx-demo" / "X-GSU" / "tests" / "sample"
+    lua_dir.mkdir(parents=True, exist_ok=True)
+    (lua_dir / "test.lua").write_text(
+        'local f = io.open("/Users/alice/Projects/retro-superfx/data.bin", "rb")\n',
+        encoding="utf-8",
+    )
+
+    report = HarnessLinter().lint_workspace(ws)
+    assert report.passed is False
+    codes = [i.code for i in report.issues]
+    assert "HARDCODED_LUA_PATH" in codes
+
+
 def test_detects_context_budget_overrun_and_respects_disable_model_invocation(
     tmp_path: Path,
 ) -> None:

@@ -4,7 +4,6 @@ priority: P1
 targets:
   - AGENTS.md
   - .agents/skills/sfx-test-runner/**
-  - .agents/plugins/retro-superfx/skills/sfx-test-runner/**
   - tools/mesen-mcp/**
 prompt: >
   Capture a headless screenshot of `IsoEngine` at yaw=30 in Mesen CE and inspect

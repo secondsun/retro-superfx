@@ -5,7 +5,6 @@ targets:
   - AGENTS.md
   - .agents/rules/sfx-assembly-rules.md
   - .agents/skills/sfx-test-runner/**
-  - .agents/plugins/retro-superfx/skills/sfx-test-runner/**
   - tools/mesen-mcp/**
 prompt: >
   Resolve the linked ROM/RAM address of symbol `gsu_stack_ram` in the `IsoEngine`

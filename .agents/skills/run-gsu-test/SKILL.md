@@ -13,8 +13,8 @@ description: >-
 ## Arguments
 
 - **`test_name`** (optional): Name of a single test directory under `tests/` (e.g. `sqrt`, `vector3_add`). A leading `tests/` prefix is accepted and stripped.
-  - **Provided**: Run the pipeline below only for `tests/<test_name>`. If the directory does not exist (or is `test_template`), stop and list the available tests.
-  - **Omitted**: Discover every feature test directory in `tests/` (excluding `test_template`) and run the pipeline for each, as in the [Batch Verification Example](#batch-verification-example). Report a pass/fail summary at the end.
+  - **Provided**: Run the pipeline below only for `tests/<test_name>`. If the directory does not exist (or is `test_template`), stop and list the available tests. Note that `buffer_rnc`, `decode_rnc`, and `hufftable_rnc` are works in progress (WIP) and are not expected to pass.
+  - **Omitted**: Discover every feature test directory in `tests/` (excluding `test_template` and the WIP RNC tests `buffer_rnc`, `decode_rnc`, `hufftable_rnc`) and run the pipeline for each, as in the [Batch Verification Example](#batch-verification-example). Report a pass/fail summary at the end.
 
 This skill guides the automated compilation, symbol address synchronization, and execution of SuperFX (GSU / FX3) unit tests within the `tests/` directory using Mesen CE's headless test runner.
 
@@ -54,6 +54,7 @@ flowchart TD
 Verify the target test directory and ensure all required files exist:
 - Target must be a feature test directory (e.g. `tests/sqrt`, `tests/vector3_add`).
 - Never run on `tests/test_template` directly (it is an unconfigured template).
+- Skip `buffer_rnc`, `decode_rnc`, and `hufftable_rnc` during suite runs (they are works in progress and not expected to pass).
 - Required files:
   - `Makefile`: Toolchain build script.
   - `Test.s`: SNES 65816 harness setting up memory and starting the GSU.

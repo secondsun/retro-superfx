@@ -52,7 +52,7 @@ echo "=================================================================="
 
 # Step 1: java-language-server
 echo ""
-echo ">>> [1/4] java-language-server..."
+echo ">>> [1/5] java-language-server..."
 (
     cd "${ROOT_DIR}/java-language-server"
     ./mvnw clean ${MAVEN_GOAL} ${EXTRA_FLAGS}
@@ -60,7 +60,7 @@ echo ">>> [1/4] java-language-server..."
 
 # Step 2: retro-common
 echo ""
-echo ">>> [2/4] retro-common..."
+echo ">>> [2/5] retro-common..."
 (
     cd "${ROOT_DIR}/retro-common"
     ./mvnw clean ${MAVEN_GOAL} ${EXTRA_FLAGS}
@@ -68,15 +68,23 @@ echo ">>> [2/4] retro-common..."
 
 # Step 3: sfx-optimizer
 echo ""
-echo ">>> [3/4] sfx-optimizer..."
+echo ">>> [3/5] sfx-optimizer..."
 (
     cd "${ROOT_DIR}/sfx-optimizer"
     ./mvnw clean ${MAVEN_GOAL} ${EXTRA_FLAGS}
 )
 
-# Step 4: retro-lsp
+# Step 4: texture-packer (companion CLI JAR required by retro-lsp tests)
 echo ""
-echo ">>> [4/4] retro-lsp..."
+echo ">>> [4/5] snes-sfx-demo/build_tools/texture-packer..."
+(
+    cd "${ROOT_DIR}/snes-sfx-demo/build_tools/texture-packer"
+    mvn clean package ${EXTRA_FLAGS}
+)
+
+# Step 5: retro-lsp
+echo ""
+echo ">>> [5/5] retro-lsp..."
 (
     cd "${ROOT_DIR}/retro-lsp"
     ./mvnw clean test ${EXTRA_FLAGS}

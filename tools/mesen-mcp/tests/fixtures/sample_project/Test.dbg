@@ -1,0 +1,11 @@
+version	major=2,minor=0
+file	id=0,name="Test.s",size=73,mtime=0x6ACEE723,mod=0
+seg	id=0,name="CODE",start=0x808000,size=0x2000,addrsize=absolute,type=ro,oname="Test.sfc",ooffs=0
+seg	id=1,name="GSURAM",start=0x700000,size=0x2000,addrsize=absolute,type=rw
+scope	id=0,name="",mod=0,size=48,span=0
+line	id=10,file=0,line=15
+sym	id=0,name="GSU_JOYPAD",addrsize=absolute,scope=0,def=10,val=0x700B1A,seg=1,type=lab
+sym	id=1,name="ISO_CAM",addrsize=absolute,scope=0,def=10,val=0x700B1C,seg=1,type=lab
+sym	id=2,name="RNC_HEADER",addrsize=absolute,scope=0,def=10,val=0x700B00,seg=1,type=lab
+sym	id=3,name="SFX_INIT_mmio",addrsize=absolute,scope=0,def=10,val=0x809D35,seg=0,type=lab
+sym	id=4,name="SFX_INIT_oam",addrsize=absolute,scope=0,def=10,val=0x809DFE,seg=0,type=lab
