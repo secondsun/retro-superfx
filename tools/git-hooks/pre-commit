@@ -18,6 +18,17 @@ if [ -x ./tools/run-evals.sh ]; then
   fi
 fi
 
+# Umbrella repo: run mesen-mcp pytest suite when tools/mesen-mcp files are staged.
+if [ -x ./tools/mesen-mcp/.venv/bin/pytest ]; then
+  if git diff --cached --name-only --diff-filter=ACMRD | grep -qE '^tools/mesen-mcp/'; then
+    echo "[pre-commit] mesen-mcp pytest"
+    ./tools/mesen-mcp/.venv/bin/pytest tools/mesen-mcp/tests/ || {
+      echo "[pre-commit] mesen-mcp pytest failed." >&2
+      exit 1
+    }
+  fi
+fi
+
 # Only repos with a Maven wrapper are checked (the umbrella repo and snes-sfx-demo are skipped).
 [ -x ./mvnw ] || exit 0
 

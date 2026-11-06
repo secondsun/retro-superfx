@@ -950,7 +950,13 @@ class TraceAndSnippetGrader:
         prompt_mentions_mcp = bool(
             re.search(r"(mesen-mcp|mcp_server|render_capture\.py|session\.py)", user_prompt, re.IGNORECASE)
         )
-        if not prompt_mentions_mcp:
+        edits_mcp = any(
+            str(c.get("tool") or "") in ("edit_file", "write_file")
+            and isinstance(c.get("args"), dict)
+            and "tools/mesen-mcp/" in str(c["args"].get("Path", ""))
+            for c in tool_calls
+        )
+        if not prompt_mentions_mcp and not edits_mcp:
             checks.append(
                 self._eval_tool_forbidden(
                     {

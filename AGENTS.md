@@ -167,6 +167,18 @@ Agents should **prioritize calling the MCP tools** on `retro-superfx_mesen` via 
 - **`profile_sfx_execution`**: Profiles GSU execution cycles, hotspots, cache residency, and VBlank FPS.
 - **`sfx_resolve_address`**: Resolves symbol <-> address, nearest label with delta, memory regions, and layout ranges from `.dbg` and `.cpu.sym`.
 
+Ready-to-copy calls (the tools are lazy-loaded; no need to read their schemas first):
+
+```json
+{ "ServerName": "retro-superfx_mesen", "ToolName": "run_sfx_test",
+  "Arguments": { "test_name": "all", "timeout_seconds": 15 } }
+```
+
+```json
+{ "ServerName": "retro-superfx_mesen", "ToolName": "capture_sfx_render",
+  "Arguments": { "scene_test_name": "IsoEngine", "timeout_seconds": 15 } }
+```
+
 *Fallback CLI:*
 ```bash
 ./tools/run-sfx-test.sh all 15

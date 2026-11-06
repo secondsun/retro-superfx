@@ -593,6 +593,41 @@ def test_transcript_normalization_and_audit(tmp_path: Path) -> None:
     assert good_rep.skills_read == ["diagnosing-bugs"]
     assert good_rep.mcp_calls_by_tool == {"retro-superfx_lsp:sfx_lookup_symbol": 1}
 
+    # Verify reading tools/mesen-mcp/ is exempted when transcript edits tools/mesen-mcp/
+    mcp_edit_transcript = tmp_path / "mcp_edit_transcript.jsonl"
+    mcp_edit_lines = [
+        {
+            "step_index": 0,
+            "type": "USER_INPUT",
+            "content": "<USER_REQUEST>\nimplement all remedies\n</USER_REQUEST>",
+        },
+        {
+            "step_index": 1,
+            "type": "PLANNER_RESPONSE",
+            "tool_calls": [
+                {
+                    "name": "read_file",
+                    "args": {
+                        "Path": '"/workspace/tools/mesen-mcp/mesen_mcp/runner.py"'
+                    },
+                },
+                {
+                    "name": "edit_file",
+                    "args": {
+                        "Path": '"/workspace/tools/mesen-mcp/mesen_mcp/runner.py"',
+                        "Target": '"old"',
+                        "Replacement": '"new"',
+                    },
+                },
+            ],
+        },
+    ]
+    mcp_edit_transcript.write_text(
+        "\n".join(json.dumps(x) for x in mcp_edit_lines) + "\n", encoding="utf-8"
+    )
+    mcp_edit_rep = grader.audit_transcript(mcp_edit_transcript)
+    assert mcp_edit_rep.passed is True
+
 
 
 

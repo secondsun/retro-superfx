@@ -91,5 +91,6 @@ Whenever an MCP server is created or modified, or a new tool is added to an exis
 2. **Update Agent Guides & Rules**: Update `AGENTS.md` and relevant rule documents to specify the tool's existence, purpose, and invocation semantics.
 3. **Verify Tool Schemas & Registration**: Ensure the tool's JSON schema is registered under `~/.gemini/antigravity/mcp/<server_name>/` and that the server is configured in `mcp_config.json`.
 4. **End-to-End Verification**: Perform a test call of the new MCP tool to verify schema conformance, stdio/socket transport, and execution before considering the task complete.
+5. **Do Not Kill Live MCP Daemons Mid-Session**: Never run `kill` against active MCP server processes (`mesen_mcp.server` or `retro-lsp --mcp`) during a conversation, as the host does not auto-respawn terminated stdio MCP servers within an active session. Instead, verify MCP server changes via `./tools/mesen-mcp/.venv/bin/pytest` and `./tools/run-evals.sh --tier 0`.
 
 
