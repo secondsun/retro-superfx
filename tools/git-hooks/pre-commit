@@ -29,10 +29,20 @@ if [ -x ./tools/mesen-mcp/.venv/bin/pytest ]; then
   fi
 fi
 
-# snes-sfx-demo: build staged GSU tests and verify test.lua symbol offsets.
+# snes-sfx-demo: build staged GSU tests, verify test.lua symbol offsets, and package texture-packer.
 if [ -d "$root/X-GSU/tests" ] && [ -d "$root/libSFX" ]; then
   staged_files="$(git diff --cached --name-only --diff-filter=ACMR)"
   if [ -n "$staged_files" ]; then
+    if echo "$staged_files" | grep -qE '^build_tools/texture-packer/'; then
+      if [ -f "$root/build_tools/texture-packer/pom.xml" ]; then
+        echo "[pre-commit] building and testing build_tools/texture-packer"
+        mvn -q -f "$root/build_tools/texture-packer/pom.xml" test package || {
+          echo "[pre-commit] build_tools/texture-packer build or tests failed." >&2
+          exit 1
+        }
+      fi
+    fi
+
     test_names="$(echo "$staged_files" | grep -E '^X-GSU/tests/[^/]+/' | cut -d/ -f3 | sort -u || true)"
     for test_name in $test_names; do
       [ -n "$test_name" ] || continue

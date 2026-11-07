@@ -395,9 +395,62 @@ def _resolve_source_lines(
 _LAST_PROJECT: Optional[str] = None
 
 
+def _match_symbol(
+    all_symbols: List[ResolvedSymbol],
+    raw_name: str,
+    after_addr: Optional[int] = None,
+    prefer_region: Optional[str] = None,
+) -> Optional[ResolvedSymbol]:
+    """Match a symbol by name (exact, _function/_func suffix, scoped suffix, case-insensitive).
+
+    When after_addr is specified (e.g. resolving an end_symbol or local @label relative to a start symbol),
+    prefers the nearest matching symbol in the same region with val >= after_addr.
+    """
+    clean_name = raw_name.lstrip(".")
+    candidates = [clean_name]
+    if not clean_name.endswith("_function"):
+        candidates.append(f"{clean_name}_function")
+    if not clean_name.endswith("_func"):
+        candidates.append(f"{clean_name}_func")
+    if "::" in clean_name:
+        candidates.append(clean_name.split("::")[-1])
+
+    def _pick_best(matches: List[ResolvedSymbol]) -> Optional[ResolvedSymbol]:
+        if not matches:
+            return None
+        if after_addr is not None:
+            forward = [
+                m
+                for m in matches
+                if m.val >= after_addr
+                and (prefer_region is None or m.region == prefer_region)
+            ]
+            if forward:
+                forward.sort(key=lambda s: s.val - after_addr)
+                return forward[0]
+        return matches[0]
+
+    for cand in candidates:
+        exact_matches = [s for s in all_symbols if s.name == cand]
+        picked = _pick_best(exact_matches)
+        if picked:
+            return picked
+
+    for cand in candidates:
+        cand_lower = cand.lower()
+        ci_matches = [s for s in all_symbols if s.name.lower() == cand_lower]
+        picked = _pick_best(ci_matches)
+        if picked:
+            return picked
+
+    return None
+
+
 def resolve_address(
     project: Optional[str] = None,
     symbol: Optional[str] = None,
+    end_symbol: Optional[str] = None,
+    end_address: Optional[Union[str, int]] = None,
     address: Optional[Union[str, int]] = None,
     prefix: Optional[str] = None,
     range: Optional[str] = None,
@@ -408,6 +461,8 @@ def resolve_address(
     Args:
         project: Directory name or path containing built ROM artifacts (optional, defaults to last used or 'IsoEngine').
         symbol: Symbol name to look up (with or without leading '.').
+        end_symbol: Optional end symbol/label name to compute byte_span and 512-byte cache metrics from 'symbol'.
+        end_address: Optional end address (hex string or int) to compute byte_span and cache metrics from 'symbol'.
         address: Hex string or int (or bank:offset like "80:9DA6") to resolve.
         prefix: Prefix string to find matching symbols.
         range: Memory address range string (e.g. "700000-701FFF").
@@ -466,36 +521,7 @@ def resolve_address(
     # 1. Symbol Query
     if symbol is not None:
         clean_name = symbol.lstrip(".")
-        matched_sym: Optional[ResolvedSymbol] = None
-
-        # Build candidate name variants (exact, _function, _func, _fn, scoped suffix)
-        candidates = [clean_name]
-        if not clean_name.endswith("_function"):
-            candidates.append(f"{clean_name}_function")
-        if not clean_name.endswith("_func"):
-            candidates.append(f"{clean_name}_func")
-        if "::" in clean_name:
-            candidates.append(clean_name.split("::")[-1])
-
-        # Exact match first across candidates
-        for cand in candidates:
-            for s in all_symbols:
-                if s.name == cand:
-                    matched_sym = s
-                    break
-            if matched_sym:
-                break
-
-        # Case-insensitive match fallback across candidates
-        if not matched_sym:
-            for cand in candidates:
-                cand_lower = cand.lower()
-                for s in all_symbols:
-                    if s.name.lower() == cand_lower:
-                        matched_sym = s
-                        break
-                if matched_sym:
-                    break
+        matched_sym = _match_symbol(all_symbols, symbol)
 
         if matched_sym:
             output["found"] = True
@@ -514,6 +540,65 @@ def resolve_address(
                 output["note"] = (
                     f"GSU accesses ROM via ROMB (bank ${matched_sym.bank & 0x7F:02X}) and R14 "
                     f"(offset ${matched_sym.offset:04X}); ldw/ldb only access GSURAM ($700000-$71FFFF)."
+                )
+
+            # Report distance to the next non-local symbol in the same bank/region
+            if not matched_sym.name.startswith("@"):
+                next_globals = [
+                    s
+                    for s in all_symbols
+                    if s.region == matched_sym.region
+                    and s.bank == matched_sym.bank
+                    and s.type == "lab"
+                    and not s.name.startswith("@")
+                    and s.val > matched_sym.val
+                ]
+                if next_globals:
+                    next_globals.sort(key=lambda s: s.val)
+                    ng = next_globals[0]
+                    output["next_global_symbol"] = ng.name
+                    output["next_global_address"] = f"0x{ng.val:06X}"
+                    output["span_to_next_global"] = ng.val - matched_sym.val
+
+            # Compute explicit byte_span & 512-byte cache metrics when end_symbol or end_address is given
+            resolved_end_val: Optional[int] = None
+            if end_symbol is not None:
+                matched_end = _match_symbol(
+                    all_symbols,
+                    end_symbol,
+                    after_addr=matched_sym.val,
+                    prefer_region=matched_sym.region,
+                )
+                if matched_end is None:
+                    return {
+                        "status": "NOT_FOUND",
+                        "found": False,
+                        "error": f"End symbol '{end_symbol}' not found in '{project}'.",
+                    }
+                output["end_symbol"] = matched_end.name
+                resolved_end_val = matched_end.val
+            elif end_address is not None:
+                try:
+                    resolved_end_val = parse_address(end_address)
+                except ValueError as e:
+                    return {
+                        "status": "ERROR",
+                        "error": f"Invalid end_address format '{end_address}': {e}",
+                    }
+
+            if resolved_end_val is not None:
+                byte_span = resolved_end_val - matched_sym.val
+                cbr_base = matched_sym.val & ~0xF
+                aligned_cache_bytes = resolved_end_val - cbr_base
+                cache_lines_16b = (
+                    ((resolved_end_val + 15) & ~0xF) - cbr_base
+                ) // 16 if resolved_end_val >= matched_sym.val else 0
+                output["end_address"] = f"0x{resolved_end_val:06X}"
+                output["byte_span"] = byte_span
+                output["aligned_cache_bytes"] = aligned_cache_bytes
+                output["cache_lines_16b"] = cache_lines_16b
+                output["fits_in_512b_cache"] = bool(
+                    0 <= aligned_cache_bytes <= 512
                 )
         else:
             output["status"] = "NOT_FOUND"

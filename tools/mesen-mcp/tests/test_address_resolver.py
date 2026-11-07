@@ -206,5 +206,34 @@ def test_function_suffix_fallback():
     # If a function is defined as foo_function in ca65, querying 'foo' should resolve it
     res = resolve_address(FIXTURE_PROJECT, symbol="GSU_JOYPAD")
     assert res["status"] == "SUCCESS"
+    assert res["next_global_symbol"] == "ISO_CAM"
+    assert res["span_to_next_global"] == 2
+
+
+def test_end_symbol_and_end_address_cache_metrics():
+    # SFX_INIT_mmio is at 0x809D35, SFX_INIT_oam is at 0x809DFE
+    res = resolve_address(
+        FIXTURE_PROJECT,
+        symbol="SFX_INIT_mmio",
+        end_symbol="SFX_INIT_oam",
+    )
+    assert res["status"] == "SUCCESS"
+    assert res["found"] is True
+    assert res["end_symbol"] == "SFX_INIT_oam"
+    assert res["end_address"] == "0x809DFE"
+    assert res["byte_span"] == 0x809DFE - 0x809D35
+    assert res["aligned_cache_bytes"] == 0x809DFE - (0x809D35 & ~0xF)
+    assert res["cache_lines_16b"] > 0
+    assert res["fits_in_512b_cache"] is True
+
+    res_addr = resolve_address(
+        FIXTURE_PROJECT,
+        symbol="SFX_INIT_mmio",
+        end_address="0x80A000",
+    )
+    assert res_addr["status"] == "SUCCESS"
+    assert res_addr["byte_span"] == 0x80A000 - 0x809D35
+    assert res_addr["fits_in_512b_cache"] is False
+
 
 

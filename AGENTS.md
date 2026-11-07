@@ -78,7 +78,7 @@ Key coprocessor hardware constraints; see [`.agents/rules/sfx-assembly-rules.md`
 3. **Memory & Alignment**: 16-bit word operations (`ldw`/`stw`) require even-byte alignment. `ldw (Rn)` / `ldb (Rn)` only access GSURAM (`$700000`, masked to `$1FFF`); read ROM tables via `romb` + `r14` + `getb`/`getbh`.
 4. **Modal Instruction Scope (`with`, `to`, `from`)**: Prefixes modify `Sreg`/`Dreg` for the **single immediately following instruction only**, then reset to `R0`. `with Rn` sets `Sreg=Rn, Dreg=Rn` (destructive; never use for comparisons!). `from Rn` sets `Sreg=Rn, Dreg=R0` (non-destructive test; note that `from Rn; sub #0`/`add #0` without `to` overwrites `R0`—use `with Rn; add #0` or `moves Rn, Rn` if `R0` is live). Use `from Rn; sub Rm` (or `cmp`) for non-destructive comparison.
 5. **No Modal Prefix Before `move`**: `move Dreg, Sreg` expands to `with Sreg; to Dreg`. Never prefix `move` (`moves`, `moveb`, `movew`) with `to`/`with`/`from`, as `move` configures its own modal registers and overwrites any preceding prefix.
-6. **Operand Bounds**: Short-immediate arithmetic/bitwise/multiply (`add`, `adc`, `sub`, `sbc`, `and`, `bic`, `or`, `xor`, `mult`, `umult`) only accepts 4-bit unsigned immediates `#0`–`#15` (`#$0`–`#$F`); `link` only accepts `#1`–`#4`. Constants > 15 require `ibt` (8-bit signed) or `iwt` (16-bit word). Register forms of `and`, `bic`, `or`, `xor`, `mult`, `umult` only accept `R1`–`R15`.
+6. **Operand Bounds**: Short-immediate arithmetic/bitwise/multiply (`add`, `adc`, `sub`, `sbc`, `and`, `bic`, `or`, `xor`, `mult`, `umult`) only accepts 4-bit unsigned immediates `#0`–`#15` (`#$0`–`#$F`); `link` only accepts `#1`–`#4`. Constants > 15 require `ibt` (8-bit signed; note `GSU_Assembler.i` checks `0..255`, so mask negative bytes via `#<(-k)` or `#$80`–`#$FF`) or `iwt` (16-bit word). Register forms of `and`, `bic`, `or`, `xor`, `mult`, `umult` only accept `R1`–`R15`.
 7. **512-Byte Instruction Cache**: 32 lines of 16 bytes. Running inside cache executes at 1 cycle/instruction. Execute `cache; move r13, r15` once before compute-heavy leaf loops. Subroutines (`call`, `bra`) do not invalidate cache tags. Never place `cache` inside loops or helper subroutines (forces cold reloads).
 
 ---
@@ -137,6 +137,11 @@ Ready-to-copy **`call_mcp_tool`** arguments (invoke `call_mcp_tool` with these e
   "Arguments": { "scene_test_name": "IsoEngine", "timeout_seconds": 15 } }
 ```
 
+```json
+{ "ServerName": "retro-superfx_mesen", "ToolName": "profile_sfx_execution",
+  "Arguments": { "target_name": "IsoEngine", "warmup_runs": 1, "sample_runs": 2, "timeout_seconds": 15 } }
+```
+
 *Emergency Fallback CLI (only if `call_mcp_tool` is unavailable):*
 ```bash
 ./tools/run-sfx-test.sh all 15
@@ -182,8 +187,13 @@ Ready-to-copy **`call_mcp_tool`** arguments (invoke `call_mcp_tool` with these e
 ```
 
 ```json
+{ "ServerName": "retro-superfx_lsp", "ToolName": "sfx_audit_diagnostics",
+  "Arguments": { "path": "snes-sfx-demo/X-GSU/IsoEngine/map_grid.i" } }
+```
+
+```json
 { "ServerName": "retro-superfx_mesen", "ToolName": "sfx_resolve_address",
-  "Arguments": { "project": "snes-sfx-demo/X-GSU/IsoEngine", "symbol": "ISO_CAM" } }
+  "Arguments": { "project": "snes-sfx-demo/X-GSU/IsoEngine", "symbol": "draw_cached_trap", "end_symbol": "@trap_finished" } }
 ```
 
 Result fields: `location.path` / `references[].path` (workspace-relative), `location.lineNumber` / `references[].lineNumber` (**1-based**, matches `grep -n` / `read_file`; `line` is the legacy 0-based value), `documentation`, `totalReferences`, `references[].kind` (`call`, `read`, `write`, `macro-invocation`, `use`), `references[].text` (when `contextLines > 0`). Real sources rank above fixture copies under `src/test/resources/`, `.build/`, and `build_tools/`.

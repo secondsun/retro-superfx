@@ -239,3 +239,19 @@ Per workspace invariants, any modification to an active scene atlas (such as `Is
    - Confirm `status == "SUCCESS"` and `metrics.non_black_pixels > 0`.
    - Call **`read_file`** directly on the returned `png_path` to visually inspect the rendered scene.
 
+---
+
+## 5. Implementation & Generator Pointers
+
+When modifying the texture packer tool itself or its generated ca65 output format (`TEXTURES.i`, `TEXTURE_TABLE`, `texture_descriptor`):
+
+- **ca65 Index & `TEXTURE_TABLE` Generator**: [`snes-sfx-demo/build_tools/texture-packer/src/main/kotlin/dev/secondsun/superx/tools/packer/model/AtlasIndexGenerator.kt`](snes-sfx-demo/build_tools/texture-packer/src/main/kotlin/dev/secondsun/superx/tools/packer/model/AtlasIndexGenerator.kt)
+- **Atlas Binary & Shelf-Packing Model**: [`snes-sfx-demo/build_tools/texture-packer/src/main/kotlin/dev/secondsun/superx/tools/packer/model/TextureAtlas.kt`](snes-sfx-demo/build_tools/texture-packer/src/main/kotlin/dev/secondsun/superx/tools/packer/model/TextureAtlas.kt)
+- **Unit Tests**: [`snes-sfx-demo/build_tools/texture-packer/src/test/kotlin/dev/secondsun/superx/tools/packer/model/ModelTest.kt`](snes-sfx-demo/build_tools/texture-packer/src/test/kotlin/dev/secondsun/superx/tools/packer/model/ModelTest.kt)
+- **MCP Tool Wrapper**: [`retro-lsp/src/main/java/dev/secondsun/retrolsp/mcp/tools/SfxTexturePackerTool.java`](retro-lsp/src/main/java/dev/secondsun/retrolsp/mcp/tools/SfxTexturePackerTool.java)
+- **Rebuild Fat JAR After Editing Kotlin Sources**:
+  ```bash
+  mvn -f snes-sfx-demo/build_tools/texture-packer/pom.xml test package
+  ```
+
+
