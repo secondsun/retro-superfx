@@ -25,8 +25,9 @@ EXPECTED_LSP_TOOLS: tuple[str, ...] = (
     "sfx_lookup_symbol",
     "sfx_find_references",
     "sfx_analyze_registers",
-    "sfx_pack_textures",
 )
+
+EXPECTED_STUDIO_TOOLS: tuple[str, ...] = ("sfx_pack_textures",)
 
 
 @dataclass
@@ -35,6 +36,7 @@ class McpSmokeReport:
     issues: list[dict[str, Any]] = field(default_factory=list)
     mesen_tools: list[str] = field(default_factory=list)
     lsp_tools: list[str] = field(default_factory=list)
+    studio_tools: list[str] = field(default_factory=list)
     clean_fixture_errors: int = 0
     buggy_fixture_errors: int = 0
     buggy_fixture_categories: list[str] = field(default_factory=list)
@@ -45,6 +47,7 @@ class McpSmokeReport:
             "issues": list(self.issues),
             "mesen_tools": list(self.mesen_tools),
             "lsp_tools": list(self.lsp_tools),
+            "studio_tools": list(self.studio_tools),
             "clean_fixture_errors": self.clean_fixture_errors,
             "buggy_fixture_errors": self.buggy_fixture_errors,
             "buggy_fixture_categories": list(self.buggy_fixture_categories),
@@ -52,16 +55,22 @@ class McpSmokeReport:
 
 
 class StdioMcpClient:
-    """Single-session JSON-RPC 2.0 stdio client for RetroLspMCP."""
+    """Single-session JSON-RPC 2.0 stdio client for RetroLspMCP or StudioMCP."""
 
-    def __init__(self, workspace_root: Path, timeout_seconds: float = 15.0) -> None:
+    def __init__(
+        self,
+        workspace_root: Path,
+        launcher_rel_path: str = "tools/run-lsp-mcp.sh",
+        timeout_seconds: float = 15.0,
+    ) -> None:
         self.workspace_root = workspace_root.resolve()
+        self.launcher_rel_path = launcher_rel_path
         self.timeout_seconds = timeout_seconds
         self._proc: subprocess.Popen[str] | None = None
         self._next_id = 1
 
     def __enter__(self) -> StdioMcpClient:
-        launcher = self.workspace_root / "tools" / "run-lsp-mcp.sh"
+        launcher = self.workspace_root / self.launcher_rel_path
         self._proc = subprocess.Popen(
             [str(launcher)],
             cwd=str(self.workspace_root),
@@ -123,7 +132,7 @@ class StdioMcpClient:
                 if self._proc.stderr is not None:
                     stderr_out = self._proc.stderr.read()
                 raise RuntimeError(
-                    f"EOF from RetroLspMCP while waiting for '{method}' response. Stderr: {stderr_out}"
+                    f"EOF from MCP server ({self.launcher_rel_path}) while waiting for '{method}' response. Stderr: {stderr_out}"
                 )
             line = line.strip()
             if not line:
@@ -187,10 +196,12 @@ class McpSmokeVerifier:
         workspace_root: Path = DEFAULT_WORKSPACE_ROOT,
         lsp_client: Any | None = None,
         mesen_server: Any | None = None,
+        studio_client: Any | None = None,
     ) -> None:
         self.workspace_root = workspace_root.resolve()
         self._lsp_client = lsp_client
         self._mesen_server = mesen_server
+        self._studio_client = studio_client
 
     def verify(self) -> McpSmokeReport:
         issues: list[dict[str, Any]] = []
@@ -201,12 +212,14 @@ class McpSmokeVerifier:
             buggy_errors,
             buggy_categories,
         ) = self._verify_lsp(issues)
+        studio_tools = self._verify_studio(issues)
 
         return McpSmokeReport(
             passed=len(issues) == 0,
             issues=issues,
             mesen_tools=mesen_tools,
             lsp_tools=lsp_tools,
+            studio_tools=studio_tools,
             clean_fixture_errors=clean_errors,
             buggy_fixture_errors=buggy_errors,
             buggy_fixture_categories=buggy_categories,
@@ -451,3 +464,94 @@ class McpSmokeVerifier:
                 )
 
         return list(tool_map.keys()), clean_errors, buggy_errors, buggy_categories
+
+    def _verify_studio(self, issues: list[dict[str, Any]]) -> list[str]:
+        if self._studio_client is not None:
+            return self._verify_studio_with_client(self._studio_client, issues)
+
+        launcher = self.workspace_root / "sfx-studio" / "scripts" / "run-mcp.sh"
+        if not launcher.exists():
+            return []
+
+        try:
+            with StdioMcpClient(
+                workspace_root=self.workspace_root,
+                launcher_rel_path="sfx-studio/scripts/run-mcp.sh",
+            ) as client:
+                return self._verify_studio_with_client(client, issues)
+        except Exception as exc:
+            issues.append(
+                {
+                    "code": "STUDIO_CONNECTION_FAILED",
+                    "message": f"Failed to communicate with StudioMCP over stdio: {exc}",
+                }
+            )
+            return []
+
+    def _verify_studio_with_client(
+        self, client: Any, issues: list[dict[str, Any]]
+    ) -> list[str]:
+        raw_tools = client.list_tools()
+        tool_map: dict[str, Any] = {}
+        for tool in raw_tools:
+            name = tool.get("name") if isinstance(tool, dict) else getattr(tool, "name", None)
+            schema = (
+                (tool.get("inputSchema") or tool.get("input_schema"))
+                if isinstance(tool, dict)
+                else (getattr(tool, "inputSchema", None) or getattr(tool, "input_schema", None))
+            )
+            if name:
+                tool_map[str(name)] = schema
+
+        for expected in EXPECTED_STUDIO_TOOLS:
+            if expected not in tool_map:
+                issues.append(
+                    {
+                        "code": "MISSING_STUDIO_TOOL",
+                        "message": f"StudioMCP is missing required tool '{expected}'",
+                    }
+                )
+            else:
+                schema = tool_map[expected]
+                if not isinstance(schema, dict) or "properties" not in schema:
+                    issues.append(
+                        {
+                            "code": "INVALID_STUDIO_SCHEMA",
+                            "message": f"StudioMCP tool '{expected}' has an invalid input schema",
+                        }
+                    )
+
+        if "sfx_pack_textures" in tool_map:
+            project_path = (
+                self.workspace_root
+                / "snes-sfx-demo"
+                / "X-GSU"
+                / "IsoEngine"
+                / "Data"
+                / "TEXTURES.sfxproj"
+            )
+            if project_path.exists():
+                call_args = {
+                    "project_path": "snes-sfx-demo/X-GSU/IsoEngine/Data/TEXTURES.sfxproj",
+                    "action": "validate",
+                }
+                try:
+                    res = client.call_tool("sfx_pack_textures", call_args)
+                    status = res.get("status")
+                    valid = res.get("valid")
+                    if status != "SUCCESS" or valid is not True:
+                        issues.append(
+                            {
+                                "code": "STUDIO_VALIDATION_FAILED",
+                                "message": f"sfx_pack_textures validation smoke check failed: {res}",
+                            }
+                        )
+                except Exception as exc:
+                    issues.append(
+                        {
+                            "code": "STUDIO_VALIDATION_FAILED",
+                            "message": f"sfx_pack_textures raised exception: {exc}",
+                        }
+                    )
+
+        return list(tool_map.keys())

@@ -1,0 +1,11 @@
+{
+  "name": "sfx-studio",
+  "displayName": "SuperFX Asset & Level Studio",
+  "version": "1.0.0",
+  "description": "SuperFX Texture Atlas and IsoEngine Level authoring studio: headless packing, BGR555 palette quantization, virtual slices, and asset validation tools.",
+  "suggestedPrompts": [
+    "Pack the Texture Atlas for IsoEngine and export companion files",
+    "Validate the Atlas Document and check descriptor order",
+    "Import bitmap graphics and snap colors to the SNES palette"
+  ]
+}

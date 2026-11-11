@@ -18,15 +18,16 @@ The projects must be built in this sequence:
 1. `java-language-server` (`dev.secondsun:languageserver`)
 2. `retro-common` (`dev.secondsun:retro-common`)
 3. `sfx-optimizer` (`dev.secondsun:sfx-optimizer`)
-4. `retro-lsp` (`dev.secondsun:retro-lsp`)
-5. `snes-sfx-demo` (SNES ROM compilation via `libSFX` and CC65)
+4. `sfx-studio` (`dev.secondsun:sfx-studio`)
+5. `retro-lsp` (`dev.secondsun:retro-lsp`)
+6. `snes-sfx-demo` (SNES ROM compilation via `libSFX` and CC65)
 
 ---
 
 ## 2. Common Workflows
 
 ### A. Quick Workspace Status
-Check git branches, dirty trees, and Maven versions across all 5 repositories:
+Check git branches, dirty trees, and Maven versions across all 6 projects:
 ```bash
 ./tools/status.sh
 ```
@@ -65,6 +66,7 @@ Package the self-contained JLink runtime and install the `.vsix` into VS Code:
 | **`java-language-server`** | `./mvnw clean test` | `./mvnw clean install -DskipGpg=true` | N/A | `./mvnw javadoc:javadoc` |
 | **`retro-common`** | `./mvnw clean test` | `./mvnw clean install -DskipGpg=true` | `./mvnw spotless:check` | `./mvnw javadoc:javadoc` |
 | **`sfx-optimizer`** | `./mvnw clean test` | `./mvnw clean install -DskipGpg=true` | `./mvnw spotless:check` | `./mvnw javadoc:javadoc` |
+| **`sfx-studio`** | `./mvnw clean test` | `./mvnw clean install -DskipGpg=true` | `./mvnw spotless:check` | `./mvnw javadoc:javadoc` |
 | **`retro-lsp`** | `./mvnw clean test` | N/A (End consumer) | `./mvnw spotless:check` | `./mvnw javadoc:javadoc` |
 | **`snes-sfx-demo`** | `make -C X-GSU/tests/<name> clean all` | N/A | N/A | N/A |
 

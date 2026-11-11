@@ -6,7 +6,7 @@ Welcome to the **`retro-superfx`** agentic project root. This workspace coordina
 
 ## 1. Multi-Repository Topology & Architecture
 
-This root acts as an agentic umbrella workspace across 5 separate Git repositories:
+This root acts as an agentic umbrella workspace across 6 projects (5 Git submodules + umbrella-tracked `sfx-studio`):
 
 ```
                                 [java-language-server]
@@ -17,12 +17,14 @@ This root acts as an agentic umbrella workspace across 5 separate Git repositori
                                     [retro-common] ──> [sfx-optimizer] ──> [retro-lsp]
                               (Lexer, parser, AST)     (Register allocator    (VS Code extension
                                           │             & compiler pass)      & server backend)
-                                          │                        │
-                                          │                        ▼ (future compiler hook)
-                                          └───────────────> [snes-sfx-demo]
-                                                      ├── libSFX (SDK & cc65 tools)
-                                                      ├── X-GSU  (Macro DSL & 3D math)
-                                                      └── SpriteScale / edge-table (Demos)
+       [sfx-studio]                       │                        │
+  (Asset & level studio,                  │                        ▼ (future compiler pass)
+   CLI & StudioMCP)                       │                        │
+          │                               ▼                        ▼
+          └───────────────────────> [snes-sfx-demo]
+                                ├── libSFX (SDK & cc65 tools)
+                                ├── X-GSU  (Macro DSL & 3D math)
+                                └── SpriteScale / edge-table (Demos)
 ```
 
 ### Subproject Breakdown
@@ -49,7 +51,12 @@ This root acts as an agentic umbrella workspace across 5 separate Git repositori
    - Backend: Java 26 modular application packaged with `jlink`.
    - Frontend: TypeScript 5.7+ VS Code extension client in `vscode/`.
 
-5. **`snes-sfx-demo`**:
+5. **`sfx-studio`** (`dev.secondsun:sfx-studio`):
+   - 3-module Kotlin/Compose Desktop asset and level studio (`sfx-studio-core`, `sfx-studio-cli`, `sfx-studio-desktop`) + headless stdio `StudioMCP` (`sfx-studio/scripts/run-mcp.sh`).
+   - Generates `.sfxproj` texture atlases, companion binaries (`.bin`, `.pal`), and CA65 assembly headers (`.i`).
+   - Tracked directly in umbrella repo toward progressive monorepo consolidation (ADR 0005).
+
+6. **`snes-sfx-demo`**:
    - SuperFX homebrew codebase containing:
      - **`libSFX`**: SNES bare-metal SDK, bootstrapper, interrupt handlers, and bundled `cc65` toolchain binaries (`ca65`, `ld65`, `superfamicheck`). Contains small customizations from upstream libSFX.
      - **`X-GSU`**: High-level `ca65` macro language (`function`, `call`, `return`, `stack`, `control`), 3D fixed-point vector/matrix math, and automated unit test suite.
@@ -157,7 +164,17 @@ Agents must **strongly prefer calling the `retro-superfx_lsp` MCP tools** by inv
 - **`sfx_analyze_registers`**: Chaitin-Briggs graph coloring, live-range intervals, CFG basic blocks, and register pressure.
 - **`sfx_lookup_symbol`**: Finds where a symbol is **defined** (path, 1-based line, doc comment). Prefer it over `grep` for definition/doc lookups; accepts `path` and `maxResults`. Not for usages, linker addresses, or plain text.
 - **`sfx_find_references`**: Finds usages and references of CA65/X-GSU symbols across the workspace index. Understands `call` to `function`, macro invocations, and scoped symbols; skips comments and string literals; supports `path`, `maxResults`, `includeDefinitions`, and `contextLines`.
+
+### 7. SuperFX Asset & Studio Tools (`retro-superfx_studio` MCP)
+Agents must **strongly prefer calling the `retro-superfx_studio` MCP tools** by invoking the **`call_mcp_tool`** tool (lazy-loaded behind `call_mcp_tool`; no need to read `<appDataDir>/mcp/` schemas first):
 - **`sfx_pack_textures`**: Packs, updates, or validates a SuperFX Texture Atlas (`.sfxproj`), exporting companion binaries (`.bin`, `.pal`), ca65 assembly index (`.i`), and layout PNG, or imports bitmap graphics with Median-Cut color quantization.
+
+Ready-to-copy **`call_mcp_tool`** argument:
+
+```json
+{ "ServerName": "retro-superfx_studio", "ToolName": "sfx_pack_textures",
+  "Arguments": { "project_path": "snes-sfx-demo/X-GSU/IsoEngine/Data/TEXTURES.sfxproj", "action": "validate" } }
+```
 
 #### Mandatory Skill & Tool Routing by Task Type
 
@@ -165,7 +182,7 @@ Agents must **strongly prefer calling the `retro-superfx_lsp` MCP tools** by inv
 |---|---|
 | Bug report, visual glitch, broken behavior, or regression ("review and fix", "appears/disappears", "failing") | Read [`.agents/skills/diagnosing-bugs/SKILL.md`](.agents/skills/diagnosing-bugs/SKILL.md) **first** and build a tight red-capable reproducer loop before reading assembly to form hypotheses. |
 | Running Mesen tests, resolving `.cpu.sym`/`.dbg` addresses, or capturing scene renders | Read [`.agents/skills/sfx-test-runner/SKILL.md`](.agents/skills/sfx-test-runner/SKILL.md) and invoke `call_mcp_tool` with `ServerName: "retro-superfx_mesen"` (never read `tools/mesen-mcp/` Python internals to learn CLI flags). |
-| Authoring, modifying, or packing texture atlases (`.sfxproj`, `.bin`, `.pal`, `TEXTURES.i`) | Read [`.agents/skills/texture-atlas/SKILL.md`](.agents/skills/texture-atlas/SKILL.md), pack via `call_mcp_tool` (`sfx_pack_textures`), and verify with `call_mcp_tool` (`capture_sfx_render`). |
+| Authoring, modifying, or packing texture atlases (`.sfxproj`, `.bin`, `.pal`, `TEXTURES.i`) | Read [`.agents/skills/texture-atlas/SKILL.md`](.agents/skills/texture-atlas/SKILL.md), pack via `call_mcp_tool` (`sfx_pack_textures` on `retro-superfx_studio`), and verify with `call_mcp_tool` (`capture_sfx_render`). |
 | Inspecting captured `.png` screenshots (from `capture_sfx_render` or Mesen Lua scripts) | Call `read_file` directly on the `.png` path for multimodal visual inspection instead of writing blind pixel-diff or ASCII scripts. |
 | Finding where a label / `function` / macro / struct / field / constant is **defined**, plus its doc comment (In/Out/Clobbers) | Call `call_mcp_tool` with `ToolName: "sfx_lookup_symbol"` on `retro-superfx_lsp` (never `grep` `.s`/`.sgs`/`.i`/`.inc` files). |
 | Finding where a symbol is **used** (references, calls, reads, writes) | Call `call_mcp_tool` with `ToolName: "sfx_find_references"` on `retro-superfx_lsp` (never `grep` `.s`/`.sgs`/`.i`/`.inc` files). |
@@ -198,7 +215,7 @@ Ready-to-copy **`call_mcp_tool`** arguments (invoke `call_mcp_tool` with these e
 
 Result fields: `location.path` / `references[].path` (workspace-relative), `location.lineNumber` / `references[].lineNumber` (**1-based**, matches `grep -n` / `read_file`; `line` is the legacy 0-based value), `documentation`, `totalReferences`, `references[].kind` (`call`, `read`, `write`, `macro-invocation`, `use`), `references[].text` (when `contextLines > 0`). Real sources rank above fixture copies under `src/test/resources/`, `.build/`, and `build_tools/`.
 
-### 7. Update & Push Submodules
+### 8. Update & Push Submodules
 Stage modified submodules, generate descriptive commit messages, and push to the active branch on `origin`:
 ```bash
 ./tools/update-submodules.sh
@@ -208,7 +225,7 @@ Stage modified submodules, generate descriptive commit messages, and push to the
 ./tools/update-submodules.sh --split
 ```
 
-### 8. Fetch & Rebase Submodules
+### 9. Fetch & Rebase Submodules
 Fetch latest upstream commits from GitHub and rebase submodules on target branch (default: `prototype`, remote: `origin`):
 ```bash
 ./tools/rebase-submodules.sh
@@ -218,7 +235,7 @@ Fetch latest upstream commits from GitHub and rebase submodules on target branch
 ./tools/rebase-submodules.sh --branch main
 ```
 
-### 9. Agentic Harness Evaluation Suite (`tools/run-evals.sh`)
+### 10. Agentic Harness Evaluation Suite (`tools/run-evals.sh`)
 Validate harness links/symlinks, skill parity, context token budgets, MCP contracts, and SuperFX policy/outcome graders:
 ```bash
 # Tier 0: Static harness lint + live MCP smoke checks

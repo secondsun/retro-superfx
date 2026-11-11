@@ -89,12 +89,16 @@ echo ">>> [3/5] sfx-optimizer..."
     ./mvnw clean ${MAVEN_GOAL} ${EXTRA_FLAGS}
 )
 
-# Step 4: texture-packer (companion CLI JAR required by retro-lsp tests)
+# Step 4: sfx-studio (companion asset & level studio, CLI, and MCP server)
 echo ""
-echo ">>> [4/5] snes-sfx-demo/build_tools/texture-packer..."
+echo ">>> [4/5] sfx-studio..."
+STUDIO_GOAL="package"
+if [ "$DO_INSTALL" = true ]; then
+    STUDIO_GOAL="install"
+fi
 (
-    cd "${ROOT_DIR}/snes-sfx-demo/build_tools/texture-packer"
-    mvn clean package ${EXTRA_FLAGS}
+    cd "${ROOT_DIR}/sfx-studio"
+    ./mvnw clean ${STUDIO_GOAL} ${EXTRA_FLAGS}
 )
 
 # Step 5: retro-lsp

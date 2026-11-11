@@ -7,6 +7,10 @@
     "lsp": {
       "command": "./tools/run-lsp-mcp.sh",
       "cwd": "../../../"
+    },
+    "studio": {
+      "command": "./sfx-studio/scripts/run-mcp.sh",
+      "cwd": "../../../"
     }
   }
 }

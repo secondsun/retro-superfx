@@ -10,6 +10,7 @@ import pytest
 from evals.mcp_smoke import (
     EXPECTED_LSP_TOOLS,
     EXPECTED_MESEN_TOOLS,
+    EXPECTED_STUDIO_TOOLS,
     McpSmokeVerifier,
 )
 
@@ -162,11 +163,52 @@ class FakeLspClient:
         return {}
 
 
+class FakeStudioClient:
+    def __init__(
+        self,
+        tools: list[str] | None = None,
+        pack_res: dict[str, Any] | None = None,
+    ) -> None:
+        names = tools if tools is not None else list(EXPECTED_STUDIO_TOOLS)
+        self._tools = [
+            {
+                "name": name,
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "project_path": {"type": "string"},
+                        "action": {"type": "string"},
+                    },
+                },
+            }
+            for name in names
+        ]
+        self._pack_res = (
+            pack_res
+            if pack_res is not None
+            else {
+                "status": "SUCCESS",
+                "valid": True,
+                "texturesCount": 12,
+                "slicesCount": 4,
+            }
+        )
+
+    def list_tools(self) -> list[dict[str, Any]]:
+        return self._tools
+
+    def call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        if name == "sfx_pack_textures":
+            return self._pack_res
+        return {}
+
+
 def test_fake_passing_contract_succeeds() -> None:
     verifier = McpSmokeVerifier(
         workspace_root=WORKSPACE_ROOT,
         lsp_client=FakeLspClient(),
         mesen_server=FakeMesenServer(),
+        studio_client=FakeStudioClient(),
     )
     report = verifier.verify()
     assert report.passed is True
@@ -175,6 +217,7 @@ def test_fake_passing_contract_succeeds() -> None:
     assert report.buggy_fixture_errors == 3
     assert "HARDWARE_INVARIANT" in report.buggy_fixture_categories
     assert "SYNTAX" in report.buggy_fixture_categories
+    assert set(EXPECTED_STUDIO_TOOLS).issubset(set(report.studio_tools))
 
 
 def test_detects_missing_mesen_tool() -> None:
@@ -183,6 +226,7 @@ def test_detects_missing_mesen_tool() -> None:
         workspace_root=WORKSPACE_ROOT,
         lsp_client=FakeLspClient(),
         mesen_server=FakeMesenServer(tools=missing_one),
+        studio_client=FakeStudioClient(),
     )
     report = verifier.verify()
     assert report.passed is False
@@ -196,11 +240,38 @@ def test_detects_missing_lsp_tool() -> None:
         workspace_root=WORKSPACE_ROOT,
         lsp_client=FakeLspClient(tools=missing_one),
         mesen_server=FakeMesenServer(),
+        studio_client=FakeStudioClient(),
     )
     report = verifier.verify()
     assert report.passed is False
     codes = [issue["code"] for issue in report.issues]
     assert "MISSING_LSP_TOOL" in codes
+
+
+def test_detects_missing_studio_tool() -> None:
+    verifier = McpSmokeVerifier(
+        workspace_root=WORKSPACE_ROOT,
+        lsp_client=FakeLspClient(),
+        mesen_server=FakeMesenServer(),
+        studio_client=FakeStudioClient(tools=[]),
+    )
+    report = verifier.verify()
+    assert report.passed is False
+    codes = [issue["code"] for issue in report.issues]
+    assert "MISSING_STUDIO_TOOL" in codes
+
+
+def test_detects_failed_studio_validation() -> None:
+    verifier = McpSmokeVerifier(
+        workspace_root=WORKSPACE_ROOT,
+        lsp_client=FakeLspClient(),
+        mesen_server=FakeMesenServer(),
+        studio_client=FakeStudioClient(pack_res={"status": "ERROR", "valid": False}),
+    )
+    report = verifier.verify()
+    assert report.passed is False
+    codes = [issue["code"] for issue in report.issues]
+    assert "STUDIO_VALIDATION_FAILED" in codes
 
 
 def test_detects_unexpected_errors_in_clean_fixture() -> None:
@@ -220,6 +291,7 @@ def test_detects_unexpected_errors_in_clean_fixture() -> None:
         workspace_root=WORKSPACE_ROOT,
         lsp_client=FakeLspClient(clean_diag=bad_clean),
         mesen_server=FakeMesenServer(),
+        studio_client=FakeStudioClient(),
     )
     report = verifier.verify()
     assert report.passed is False
@@ -236,6 +308,7 @@ def test_detects_missed_violations_in_buggy_fixture() -> None:
         workspace_root=WORKSPACE_ROOT,
         lsp_client=FakeLspClient(buggy_diag=missed_buggy),
         mesen_server=FakeMesenServer(),
+        studio_client=FakeStudioClient(),
     )
     report = verifier.verify()
     assert report.passed is False
@@ -260,6 +333,7 @@ def test_detects_missing_category_in_buggy_fixture() -> None:
         workspace_root=WORKSPACE_ROOT,
         lsp_client=FakeLspClient(buggy_diag=only_hardware),
         mesen_server=FakeMesenServer(),
+        studio_client=FakeStudioClient(),
     )
     report = verifier.verify()
     assert report.passed is False
@@ -268,6 +342,7 @@ def test_detects_missing_category_in_buggy_fixture() -> None:
 
 
 def test_live_workspace_mcp_smoke_passes() -> None:
+    launcher = WORKSPACE_ROOT / "sfx-studio" / "scripts" / "run-mcp.sh"
     verifier = McpSmokeVerifier(workspace_root=WORKSPACE_ROOT)
     report = verifier.verify()
     assert report.passed is True, f"Live MCP smoke failed: {report.issues}"
@@ -279,6 +354,9 @@ def test_live_workspace_mcp_smoke_passes() -> None:
     assert any(
         cat in report.buggy_fixture_categories for cat in ("SYNTAX", "STACK_INVARIANT")
     )
+    if not launcher.exists():
+        pytest.skip("sfx-studio/scripts/run-mcp.sh does not exist yet")
+    assert set(EXPECTED_STUDIO_TOOLS).issubset(set(report.studio_tools))
 
 
 def test_cli_tier0_mcp_smoke_passes() -> None:

@@ -351,3 +351,38 @@ def test_pre_commit_hook_triggers_tier0_lint_on_staged_harness_files(
     )
     assert bad_hook.returncode != 0
 
+
+def test_symlinked_skill_counted_once_in_context_budget(tmp_path: Path) -> None:
+    ws = _create_minimal_workspace(tmp_path)
+    baseline_report = HarnessLinter().lint_workspace(ws)
+    assert baseline_report.passed is True
+    base_count = baseline_report.context_budget.model_invoked_skill_count
+
+    # Canonical skill in sfx-studio/.agents/skills/foo/SKILL.md
+    canonical_foo = ws / "sfx-studio" / ".agents" / "skills" / "foo"
+    canonical_foo.mkdir(parents=True, exist_ok=True)
+    foo_content = (
+        "---\n"
+        "name: foo\n"
+        "description: Foo skill in sfx-studio.\n"
+        "---\n\n"
+        "# Foo Skill\n"
+    )
+    (canonical_foo / "SKILL.md").write_text(foo_content, encoding="utf-8")
+
+    # Symlink at .agents/skills/foo -> ../../sfx-studio/.agents/skills/foo
+    symlink_foo = ws / ".agents" / "skills" / "foo"
+    symlink_foo.symlink_to("../../sfx-studio/.agents/skills/foo")
+
+    report = HarnessLinter().lint_workspace(ws)
+    assert report.passed is True
+    assert report.issues == []
+    # Both skill paths exist and are checked, but context_budget counts foo once
+    assert report.context_budget.model_invoked_skill_count == base_count + 1
+    foo_chars = len("foo") + len("Foo skill in sfx-studio.")
+    assert (
+        report.context_budget.skill_description_chars
+        == baseline_report.context_budget.skill_description_chars + foo_chars
+    )
+
+

@@ -9,7 +9,7 @@ cd "$root"
 
 # Umbrella repo: run Tier 0 harness contract checks when harness files are staged.
 if [ -x ./tools/run-evals.sh ]; then
-  if git diff --cached --name-only --diff-filter=ACMRD | grep -qE '^(\.agents/|AGENTS\.md|tools/(evals|mesen-mcp|run-lsp-mcp))'; then
+  if git diff --cached --name-only --diff-filter=ACMRD | grep -qE '^(\.agents/|AGENTS\.md|sfx-studio/(\.agents/|AGENTS\.md)|tools/(evals|mesen-mcp|run-lsp-mcp))'; then
     echo "[pre-commit] harness tier 0 (lint)"
     ./tools/run-evals.sh --tier 0 --suite lint || {
       echo "[pre-commit] Harness Tier 0 lint failed." >&2
@@ -29,20 +29,26 @@ if [ -x ./tools/mesen-mcp/.venv/bin/pytest ]; then
   fi
 fi
 
-# snes-sfx-demo: build staged GSU tests, verify test.lua symbol offsets, and package texture-packer.
+# Umbrella repo: run spotless and tests for sfx-studio when its JVM sources are staged.
+if [ -x ./sfx-studio/mvnw ]; then
+  if git diff --cached --name-only --diff-filter=ACMR | grep -qE '^sfx-studio/.*(\.(kt|java|kts)$|(^|/)pom\.xml$)'; then
+    echo "[pre-commit] sfx-studio spotless:check"
+    ./sfx-studio/mvnw -f sfx-studio/pom.xml -q spotless:check || {
+      echo "[pre-commit] sfx-studio format violations. Run './sfx-studio/mvnw -f sfx-studio/pom.xml spotless:apply', re-stage, and commit again." >&2
+      exit 1
+    }
+    echo "[pre-commit] sfx-studio test"
+    ./sfx-studio/mvnw -f sfx-studio/pom.xml -q test || {
+      echo "[pre-commit] sfx-studio tests failed." >&2
+      exit 1
+    }
+  fi
+fi
+
+# snes-sfx-demo: build staged GSU tests and verify test.lua symbol offsets.
 if [ -d "$root/X-GSU/tests" ] && [ -d "$root/libSFX" ]; then
   staged_files="$(git diff --cached --name-only --diff-filter=ACMR)"
   if [ -n "$staged_files" ]; then
-    if echo "$staged_files" | grep -qE '^build_tools/texture-packer/'; then
-      if [ -f "$root/build_tools/texture-packer/pom.xml" ]; then
-        echo "[pre-commit] building and testing build_tools/texture-packer"
-        mvn -q -f "$root/build_tools/texture-packer/pom.xml" test package || {
-          echo "[pre-commit] build_tools/texture-packer build or tests failed." >&2
-          exit 1
-        }
-      fi
-    fi
-
     test_names="$(echo "$staged_files" | grep -E '^X-GSU/tests/[^/]+/' | cut -d/ -f3 | sort -u || true)"
     for test_name in $test_names; do
       [ -n "$test_name" ] || continue

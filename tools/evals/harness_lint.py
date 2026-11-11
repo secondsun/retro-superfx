@@ -17,10 +17,13 @@ SKILL_ROOT_REL_PATHS = (
     ".agents/plugins/retro-superfx/skills",
     "snes-sfx-demo/.agents/skills",
     "retro-lsp/.agents/skills",
+    "sfx-studio/.agents/skills",
+    "sfx-studio/.agents/plugins/sfx-studio/skills",
 )
 
 AGENT_DOT_DIRS = (
     ".agents",
+    "sfx-studio/.agents",
     "snes-sfx-demo/.agents",
     "snes-sfx-demo/X-GSU/.agents",
     "retro-lsp/.agents",
@@ -109,7 +112,15 @@ class HarnessLinter:
                 if child.is_dir() and not child.name.startswith("."):
                     skills_by_name.setdefault(child.name, []).append(child)
 
-        for skill_name, skill_dirs in sorted(skills_by_name.items()):
+        for skill_name, raw_skill_dirs in sorted(skills_by_name.items()):
+            seen_resolved: set[Path] = set()
+            skill_dirs: list[Path] = []
+            for sd in raw_skill_dirs:
+                resolved_sd = sd.resolve()
+                if resolved_sd not in seen_resolved:
+                    seen_resolved.add(resolved_sd)
+                    skill_dirs.append(sd)
+
             if len(skill_dirs) < 2:
                 continue
 
@@ -194,6 +205,7 @@ class HarnessLinter:
     def _collect_subproject_doc_files(self, root: Path) -> list[Path]:
         files: list[Path] = []
         for rel_glob in (
+            "sfx-studio/AGENTS.md",
             "snes-sfx-demo/AGENTS.md",
             "snes-sfx-demo/X-GSU/AGENTS.md",
             "retro-lsp/AGENTS.md",
@@ -215,6 +227,7 @@ class HarnessLinter:
         skill_desc_chars = 0
         model_invoked_count = 0
         manual_only_count = 0
+        seen_resolved_skills: set[Path] = set()
 
         for sf in skill_files:
             rel_sf = str(sf.relative_to(root))
@@ -270,6 +283,12 @@ class HarnessLinter:
                         path=rel_sf,
                     )
                 )
+
+            # Deduplicate by resolved realpath for context budget calculation
+            resolved_sf = sf.resolve()
+            if resolved_sf in seen_resolved_skills:
+                continue
+            seen_resolved_skills.add(resolved_sf)
 
             disable_model = bool(meta.get("disable-model-invocation", False))
             if disable_model:
@@ -443,6 +462,7 @@ class HarnessLinter:
             root / "sfx-optimizer" / "AGENTS.md",
             root / "retro-lsp" / "AGENTS.md",
             root / "retro-lsp" / "scripts",
+            root / "sfx-studio" / "AGENTS.md",
             root / "snes-sfx-demo" / "README.md",
             root / "snes-sfx-demo" / "AGENTS.md",
             root / "snes-sfx-demo" / "X-GSU" / "AGENTS.md",

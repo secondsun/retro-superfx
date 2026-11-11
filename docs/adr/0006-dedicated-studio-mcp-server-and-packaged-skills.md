@@ -1,0 +1,5 @@
+# Dedicated Studio MCP Server and Co-Located Agent Skills in `sfx-studio`
+
+Status: accepted
+
+Asset and level authoring MCP tools (`sfx_pack_textures` and upcoming `Level` authoring tools) are hosted in a dedicated headless stdio MCP server (`retro-superfx_studio`, launched via `sfx-studio/scripts/run-mcp.sh` from `sfx-studio-cli`) rather than wrapped as subprocesses inside `retro-lsp` (`retro-superfx_lsp`), superseding the `retro-superfx_lsp` hosting choice in `snes-sfx-demo` ADR 0004. Keeping asset-packing wrappers inside an assembly language server inverted the build order (`texture-packer` had to build before `retro-lsp`), spawned a fresh JVM per tool call, and left `retro-lsp` accumulating unrelated asset/level editor concerns. Similarly, `sfx-studio` stores its canonical agent skills and standalone plugin manifest under `sfx-studio/.agents/`, exposed at the umbrella root via relative symlinks in `.agents/skills/` (with symlink-target deduplication in `HarnessLinter`), so skills travel with `sfx-studio` without duplicating files or double-counting context budget.

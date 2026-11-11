@@ -6,9 +6,10 @@ This document specifies invariants and rules for AI coding agents and human deve
 
 ## 1. Multi-Repository Workspace Isolation
 
-1. **Independent Git Repositories**:
-   - Every subproject (`java-language-server`, `retro-common`, `sfx-optimizer`, `retro-lsp`, `snes-sfx-demo`) is a standalone Git repository with its own remote, commit history, and branches.
-   - Do **NOT** commit changes from one repository into another.
+1. **Repository Topology & Monorepo Migration (ADR 0005)**:
+   - Five subprojects (`java-language-server`, `retro-common`, `sfx-optimizer`, `retro-lsp`, `snes-sfx-demo`) remain standalone Git repositories (submodules) temporarily.
+   - New companion tooling (`sfx-studio`) is tracked directly in the umbrella repo toward progressive monorepo consolidation.
+   - Do **NOT** commit changes across submodule boundaries or mix submodule commits with umbrella-tracked files.
    - The root directory (`retro-superfx`) acts as an agentic umbrella workspace for cross-cutting tasks.
 2. **Strict Acyclic Dependency Topology**:
    - The dependency flow is strictly directed and acyclic:
@@ -19,8 +20,10 @@ This document specifies invariants and rules for AI coding agents and human deve
             ▼                        ▼
      [retro-common] ──> [sfx-optimizer] ──> [retro-lsp]
             │                  │
-            │                  ▼ (future compiler pass)
-            └───────────> [snes-sfx-demo / X-GSU]
+     [sfx-studio]              ▼ (future compiler pass)
+            │                  │
+            ▼                  ▼
+     [snes-sfx-demo / X-GSU]
      ```
    - Never introduce reverse or circular dependencies between projects.
 
@@ -41,12 +44,12 @@ This document specifies invariants and rules for AI coding agents and human deve
      ```
    - Downstream consumers (`sfx-optimizer` and `retro-lsp`) will otherwise fail to resolve modified API symbols.
 4. **Code Formatting (Mandatory Spotless Rule)**:
-   - **Always run Spotless (`./mvnw spotless:apply`) after modifying any Java or Kotlin code** across any subproject (`java-language-server`, `retro-common`, `sfx-optimizer`, `retro-lsp`).
+   - **Always run Spotless (`./mvnw spotless:apply`) after modifying any Java or Kotlin code** across any subproject (`java-language-server`, `retro-common`, `sfx-optimizer`, `retro-lsp`, `sfx-studio`).
    - Java code enforces Google Java Format; Kotlin enforces KtLint via Spotless.
    - Verify compliance with `./mvnw spotless:check` prior to committing. Never push unformatted JVM code.
 5. **Javadoc Validation (No Javadoc Errors)**:
    - **Before any work is considered complete, the code must not produce Javadoc errors.**
-   - Verify Javadoc generation across modified JVM subprojects using `./mvnw compile javadoc:javadoc` (or `./mvnw test javadoc:javadoc` / `./mvnw compile javadoc:jar`). In modular projects like `retro-lsp`, `compile`/`test` runs `process-resources` (`dependency:copy-dependencies`) so `target/dependency` is populated for JPMS `--module-path` before subsequent lifecycle calls. Ensure there are zero fatal Javadoc compilation errors or broken references.
+   - Verify Javadoc generation across modified JVM subprojects (`java-language-server`, `retro-common`, `sfx-optimizer`, `retro-lsp`, `sfx-studio`) using `./mvnw compile javadoc:javadoc` (or `./mvnw test javadoc:javadoc` / `./mvnw compile javadoc:jar`). In modular projects like `retro-lsp`, `compile`/`test` runs `process-resources` (`dependency:copy-dependencies`) so `target/dependency` is populated for JPMS `--module-path` before subsequent lifecycle calls. Ensure there are zero fatal Javadoc compilation errors or broken references.
 
 
 ---
@@ -86,11 +89,11 @@ This document specifies invariants and rules for AI coding agents and human deve
 
 ## 6. MCP Server & Tool Lifecycle Invariant
 
-Whenever an MCP server is created or modified, or a new tool is added to an existing MCP server (e.g. `retro-superfx_mesen`, `retro-superfx_lsp`):
+Whenever an MCP server is created or modified, or a new tool is added to an existing MCP server (e.g. `retro-superfx_mesen`, `retro-superfx_lsp`, `retro-superfx_studio`):
 1. **Audit Custom Skills**: Audit all related custom skills in `.agents/skills/`. Ensure the new MCP tool is explicitly documented with its required JSON argument schema and designated as the primary execution path over raw shell commands.
 2. **Update Agent Guides & Rules**: Update `AGENTS.md` and relevant rule documents to specify the tool's existence, purpose, and invocation semantics.
 3. **Verify Tool Schemas & Registration**: Ensure the tool's JSON schema is registered under `~/.gemini/antigravity/mcp/<server_name>/` and that the server is configured in `mcp_config.json`.
 4. **End-to-End Verification**: Perform a test call of the new MCP tool to verify schema conformance, stdio/socket transport, and execution before considering the task complete.
-5. **Do Not Kill Live MCP Daemons Mid-Session**: Never run `kill` against active MCP server processes (`mesen_mcp.server` or `retro-lsp --mcp`) during a conversation, as the host does not auto-respawn terminated stdio MCP servers within an active session. Instead, verify MCP server changes via `./tools/mesen-mcp/.venv/bin/pytest` and `./tools/run-evals.sh --tier 0`.
+5. **Do Not Kill Live MCP Daemons Mid-Session**: Never run `kill` against active MCP server processes (`mesen_mcp.server`, `retro-lsp --mcp`, or `sfx-studio/scripts/run-mcp.sh`) during a conversation, as the host does not auto-respawn terminated stdio MCP servers within an active session. Instead, verify MCP server changes via `./tools/mesen-mcp/.venv/bin/pytest` and `./tools/run-evals.sh --tier 0`.
 
 

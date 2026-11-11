@@ -53,6 +53,7 @@ class OutcomeGrader(TraceAndSnippetGrader):
         diagnostic_runner: DiagnosticRunner | None = None,
         lsp_client: Any | None = None,
         mesen_server: Any | None = None,
+        studio_client: Any | None = None,
     ) -> None:
         super().__init__(
             workspace_root=workspace_root,
@@ -60,6 +61,7 @@ class OutcomeGrader(TraceAndSnippetGrader):
         )
         self._lsp_client = lsp_client
         self._mesen_server = mesen_server
+        self._studio_client = studio_client
 
     def evaluate_grader(
         self,
@@ -312,6 +314,15 @@ class OutcomeGrader(TraceAndSnippetGrader):
                 return {}
             text = getattr(content[0], "text", "{}")
             return dict(json.loads(text))
+
+        if server in ("retro-superfx_studio", "studio"):
+            if self._studio_client is not None:
+                return dict(self._studio_client.call_tool(tool, args))
+            with StdioMcpClient(
+                workspace_root=sandbox_root,
+                launcher_rel_path="sfx-studio/scripts/run-mcp.sh",
+            ) as client:
+                return dict(client.call_tool(tool, args))
 
         raise ValueError(f"Unknown MCP server '{server}'")
 

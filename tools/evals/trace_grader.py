@@ -512,9 +512,28 @@ class TraceAndSnippetGrader:
         if not isinstance(actual_args, dict):
             return False
         for key, pattern_or_val in expected_match.items():
-            if key not in actual_args:
+            candidates = [k.strip() for k in key.split("|")] if "|" in key else [key]
+            expanded_candidates: list[str] = []
+            for c in candidates:
+                expanded_candidates.append(c)
+                if "_" in c:
+                    parts = c.split("_")
+                    camel = parts[0] + "".join(p.capitalize() for p in parts[1:])
+                    expanded_candidates.append(camel)
+                else:
+                    snake = re.sub(r"([A-Z])", r"_\1", c).lower()
+                    expanded_candidates.append(snake)
+
+            matched_key = None
+            for c in expanded_candidates:
+                if c in actual_args:
+                    matched_key = c
+                    break
+
+            if matched_key is None:
                 return False
-            actual_val = actual_args[key]
+
+            actual_val = actual_args[matched_key]
             if isinstance(pattern_or_val, str) and isinstance(actual_val, str):
                 if actual_val == pattern_or_val:
                     continue

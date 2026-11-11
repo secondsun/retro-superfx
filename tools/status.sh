@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PROJECTS=("java-language-server" "retro-common" "sfx-optimizer" "retro-lsp" "snes-sfx-demo")
+PROJECTS=("java-language-server" "retro-common" "sfx-optimizer" "retro-lsp" "sfx-studio" "snes-sfx-demo")
 
 echo "=================================================================="
 echo " retro-superfx Multi-Repository Status"
@@ -33,6 +33,21 @@ for proj in "${PROJECTS[@]}"; do
         if [ -n "${dirty}" ]; then
             echo "  Working Tree: DIRTY"
             git -C "${proj_dir}" status --short | sed 's/^/    /'
+        else
+            echo "  Working Tree: CLEAN"
+        fi
+    elif [ -d "${ROOT_DIR}/.git" ]; then
+        branch="$(git -C "${ROOT_DIR}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "detached")"
+        head_commit="$(git -C "${ROOT_DIR}" log -1 --oneline -- "${proj}" 2>/dev/null || true)"
+        [ -z "${head_commit}" ] && head_commit="no commits"
+        dirty="$(git -C "${ROOT_DIR}" status --porcelain -- "${proj}" 2>/dev/null)"
+
+        echo "  Git Mode   : Umbrella-tracked (monorepo)"
+        echo "  Git Branch : ${branch}"
+        echo "  Latest HEAD: ${head_commit}"
+        if [ -n "${dirty}" ]; then
+            echo "  Working Tree: DIRTY"
+            git -C "${ROOT_DIR}" status --short -- "${proj}" | sed 's/^/    /'
         else
             echo "  Working Tree: CLEAN"
         fi

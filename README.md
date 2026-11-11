@@ -6,7 +6,7 @@ An umbrella workspace coordinating retro gaming libraries, compilers, language t
 
 ## Workspace Architecture
 
-This repository links 5 specialized Git submodules:
+This repository coordinates 6 projects (5 specialized Git submodules and umbrella-tracked `sfx-studio`):
 
 ```
                                 [java-language-server]
@@ -17,12 +17,14 @@ This repository links 5 specialized Git submodules:
                                     [retro-common] ──> [sfx-optimizer] ──> [retro-lsp]
                               (Lexer, parser, AST)     (Register allocator    (VS Code extension
                                           │             & compiler pass)      & server backend)
-                                          │                        │
-                                          │                        ▼ (future compiler hook)
-                                          └───────────────> [snes-sfx-demo]
-                                                      ├── libSFX (SDK & cc65 tools)
-                                                      ├── X-GSU  (Macro DSL & 3D math)
-                                                      └── SpriteScale / edge-table (Demos)
+       [sfx-studio]                       │                        │
+  (Asset & level studio,                  │                        ▼ (future compiler pass)
+   CLI & StudioMCP)                       │                        │
+          │                               ▼                        ▼
+          └───────────────────────> [snes-sfx-demo]
+                                ├── libSFX (SDK & cc65 tools)
+                                ├── X-GSU  (Macro DSL & 3D math)
+                                └── SpriteScale / edge-table (Demos)
 ```
 
 | Subproject | Description | Tech Stack |
@@ -31,6 +33,7 @@ This repository links 5 specialized Git submodules:
 | **[`retro-common`](./retro-common)** | Lexer, parser, tokenization, symbol indexing, and doc extraction for CA65 / SuperFX / X-GSU. | Java 26, Maven |
 | **[`sfx-optimizer`](./sfx-optimizer)** | Compiler pass, register allocator (Chaitin-Briggs), stack depth tracker, and web visualizer. | Kotlin, Java 26, Maven |
 | **[`retro-lsp`](./retro-lsp)** | SNES/SuperFX Language Server Protocol backend and VS Code extension client. | Java 26, JLink, TypeScript, Node.js |
+| **[`sfx-studio`](./sfx-studio)** | Asset and level studio (Compose Multiplatform GUI, CLI, and headless stdio StudioMCP). | Kotlin, Compose Multiplatform, Maven |
 | **[`snes-sfx-demo`](./snes-sfx-demo)** | SuperFX homebrew codebase: `libSFX` SDK, `X-GSU` macro language, 3D math, and test suite. | SuperFX Assembly, ca65, C, Lua |
 
 ---
@@ -205,6 +208,19 @@ Exposes:
 - `sfx_lookup_symbol`: Resolves symbol definitions, scopes, and docs.
 - `sfx_find_references`: Finds references and usages of symbols across the workspace index (understands `call`, macros, scopes; skips comments and strings).
 - `sfx_analyze_registers`: Live-range intervals, register pressure, and register coloring suggestions.
+
+---
+
+### Running the Studio MCP Server
+
+To expose SuperFX texture atlas packing and validation tools over stdio for agents:
+
+```bash
+./sfx-studio/scripts/run-mcp.sh
+```
+
+Exposes:
+- `sfx_pack_textures`: Packs, updates, or validates SuperFX Texture Atlases (`.sfxproj`), exporting companion binaries (`.bin`, `.pal`), ca65 assembly includes (`.i`), and layout PNGs.
 
 
 ---
