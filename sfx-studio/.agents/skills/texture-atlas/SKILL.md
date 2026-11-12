@@ -3,7 +3,7 @@ name: texture-atlas
 description: >-
   Author, pack, update, and validate SuperFX texture atlases (.sfxproj) for IsoEngine and 3D GSU scenes.
   Use when asked to create new textures, modify existing textures or palettes, define virtual slices or
-  descriptor aliases, or generate companion binaries (.bin, .pal) and ca65 assembly includes (.i).
+  descriptor aliases, or generate companion binaries (.bin, .pal, .tab) and ca65 assembly includes (.i).
 ---
 
 # SuperFX Texture Atlas Authoring & Packing
@@ -25,8 +25,9 @@ This skill guides agents through creating, updating, validating, and packing Sup
    - 32 bytes (16 little-endian 16-bit words).
    - **Slot 0 is permanently transparent** (`$0000`).
    - **Opaque black is clamped to `$0001`** (`R=1, G=0, B=0`) so black texels and transparent texels remain unambiguous.
-4. **Link-Time Bank 4 Relocation**:
-   - In ca65, `TEXTURE_TABLE` resides in `.segment "GSUDATA"` and points to ROM texel offsets pre-baked at link time using `.loword(textures_binary + TEXTURE_<NAME>_OFFSET)`.
+4. **Link-Time Bank 4 & Relocatable Bank `$71` Tables**:
+   - In ROM-resident scenes (`IsoEngine`), `TEXTURE_TABLE` resides in `.segment "GSUDATA"` (`.i`) with link-time `.loword(textures_binary + TEXTURE_<NAME>_OFFSET)`.
+   - For RAM Bank-`$71` scenes (`gsu_iso`), packing also emits `<NAME>.tab` (`magic = $5453 "ST"`, `entry_count`, `atlas_width`, `stride_shift` + `0`-based 8-byte descriptors matching `$71:0000+` addresses).
 5. **Virtual Slices & Descriptor Aliases**:
    - **Virtual Slice**: Sub-rectangle of an existing Source Texture (e.g. $32 \times 16$ parapet inside stone, $16 \times 32$ foliage fin inside grass). Shares texel data without allocating extra atlas space.
    - **Descriptor Alias**: Alternate symbolic name mapping to an existing descriptor (e.g. `water_deep` -> `water`).
@@ -55,7 +56,7 @@ Call the **`call_mcp_tool`** tool with:
 
 Parameters inside `Arguments`:
 - `project_path` (or `projectPath`): Workspace-relative path to the Atlas Document (`.sfxproj` or `.sfxatlas`).
-- `action`: `"pack"` (default — exports `<NAME>.bin`, `<NAME>.pal`, `<NAME>.i`, and `<NAME>_atlas.png`), `"import"`, or `"validate"`.
+- `action`: `"pack"` (default — exports `<NAME>.bin`, `<NAME>.pal`, `<NAME>.tab`, `<NAME>.i`, and `<NAME>_atlas.png`), `"import"`, or `"validate"`.
 - `auto_pack`: Boolean; when `true`, automatically computes shelf packing for all textures.
 - `output_dir`: Optional alternate destination directory for exported files.
 - `image_paths`: Array of image paths to import (when `action` is `"import"`).
@@ -67,7 +68,7 @@ Returns structured JSON:
 - `valid`: Boolean indicating manifest and packing validity.
 - `atlasWidth`, `atlasHeight`: Computed atlas dimensions.
 - `descriptorCount`: Number of generated descriptors in the Atlas Index.
-- `exportedFiles`: List of written file paths (`.bin`, `.pal`, `.i`, `_atlas.png`).
+- `exportedFiles`: List of written file paths (`.bin`, `.pal`, `.tab`, `.i`, `_atlas.png`).
 
 ### B. Symbol & Reference Search (`sfx_lookup_symbol`, `sfx_find_references`, `sfx_resolve_address`)
 

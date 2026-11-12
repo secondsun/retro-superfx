@@ -23,7 +23,7 @@ ensure_cli_jar() {
 IS_HEADLESS=false
 if [ $# -gt 0 ]; then
     case "$1" in
-        --mcp|help|--help|-h|atlas|pack|import|validate)
+        --mcp|help|--help|-h|atlas|level|pack|import|validate)
             IS_HEADLESS=true
             ;;
     esac

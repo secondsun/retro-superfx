@@ -4,7 +4,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import dev.secondsun.sfxstudio.core.atlas.ProjectService
+import dev.secondsun.sfxstudio.core.level.LevelDocument
+import dev.secondsun.sfxstudio.core.level.MapCell
+import dev.secondsun.sfxstudio.core.level.MapGrid
+import dev.secondsun.sfxstudio.core.level.SFX_LEVEL_EXTENSION
 import dev.secondsun.sfxstudio.desktop.atlas.AtlasEditorState
+import dev.secondsun.sfxstudio.desktop.level.LevelEditorState
 import java.io.File
 import java.util.prefs.Preferences
 
@@ -99,6 +105,7 @@ class StudioState(
 
     // Modals
     var showAboutModal by mutableStateOf(false)
+    var showNewLevelModal by mutableStateOf(false)
     var showExitConfirmationModal by mutableStateOf(false)
     var pendingCloseSessionIndex by mutableStateOf<Int?>(null)
     var errorMessage by mutableStateOf<String?>(null)
@@ -109,7 +116,8 @@ class StudioState(
                 it.isFile &&
                     (
                         it.extension.equals("sfxproj", ignoreCase = true) ||
-                            it.extension.equals("sfxatlas", ignoreCase = true)
+                            it.extension.equals("sfxatlas", ignoreCase = true) ||
+                            it.extension.equals(SFX_LEVEL_EXTENSION, ignoreCase = true)
                     )
             }
         if (validFiles.isNotEmpty()) {
@@ -123,6 +131,55 @@ class StudioState(
 
     fun newAtlasSession(): AtlasEditorState {
         val session = AtlasEditorState(studio = this)
+        _openSessions.add(session)
+        activeSessionIndex = _openSessions.size - 1
+        return session
+    }
+
+    fun newLevelSession(
+        name: String = "untitled_level",
+        atlasFile: File? = null,
+        cols: Int = 8,
+        rows: Int = 8,
+    ): LevelEditorState {
+        val defaultTex =
+            runCatching {
+                when {
+                    atlasFile != null && atlasFile.exists() ->
+                        ProjectService
+                            .loadProject(atlasFile)
+                            .first
+                            .resolvedDescriptors()
+                            .firstOrNull()
+                            ?.name
+                    else ->
+                        _openSessions
+                            .filterIsInstance<AtlasEditorState>()
+                            .firstOrNull()
+                            ?.atlas
+                            ?.resolvedDescriptors()
+                            ?.firstOrNull()
+                            ?.name
+                }
+            }.getOrNull()
+
+        val initialDoc =
+            LevelDocument(
+                name = name,
+                atlasPath = atlasFile?.path ?: "",
+                grid =
+                    MapGrid.filled(
+                        cols = cols.coerceIn(MapGrid.MIN_DIM, MapGrid.MAX_DIM),
+                        rows = rows.coerceIn(MapGrid.MIN_DIM, MapGrid.MAX_DIM),
+                        defaultCell = MapCell(baseHeight = 0, topTex = defaultTex, skirtTex = defaultTex),
+                    ),
+            )
+        val session =
+            LevelEditorState(
+                studio = this,
+                initialDocument = initialDoc,
+                initialAtlasFile = atlasFile,
+            )
         _openSessions.add(session)
         activeSessionIndex = _openSessions.size - 1
         return session
@@ -152,13 +209,24 @@ class StudioState(
         }
 
         try {
-            val session = AtlasEditorState(studio = this)
-            val success = session.openProject(file)
-            if (success) {
-                _openSessions.add(session)
-                activeSessionIndex = _openSessions.size - 1
+            if (file.extension.equals(SFX_LEVEL_EXTENSION, ignoreCase = true)) {
+                val session = LevelEditorState(studio = this)
+                val success = session.openLevel(file)
+                if (success) {
+                    _openSessions.add(session)
+                    activeSessionIndex = _openSessions.size - 1
+                } else {
+                    errorMessage = session.errorMessage ?: "Failed to open level '${file.name}'"
+                }
             } else {
-                errorMessage = session.errorMessage ?: "Failed to open document '${file.name}'"
+                val session = AtlasEditorState(studio = this)
+                val success = session.openProject(file)
+                if (success) {
+                    _openSessions.add(session)
+                    activeSessionIndex = _openSessions.size - 1
+                } else {
+                    errorMessage = session.errorMessage ?: "Failed to open document '${file.name}'"
+                }
             }
         } catch (e: Exception) {
             errorMessage = "Failed to open document: ${e.message}"

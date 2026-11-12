@@ -59,6 +59,7 @@ fun ExportModal(state: AtlasEditorState) {
 
     var incGraphics by remember { mutableStateOf(true) }
     var incPalette by remember { mutableStateOf(true) }
+    var incTable by remember { mutableStateOf(true) }
     var incIndex by remember { mutableStateOf(true) }
     var incPng by remember { mutableStateOf(true) }
 
@@ -184,6 +185,16 @@ fun ExportModal(state: AtlasEditorState) {
 
                     Divider(color = Color(0xFF2A2D34))
 
+                    // Relocatable Texture Table Binary
+                    ExportFileRow(
+                        checked = incTable,
+                        onCheckedChange = { incTable = it },
+                        fileName = "$cleanBase.tab",
+                        description = "Relocatable runtime Texture Table for Bank $71 staging",
+                    )
+
+                    Divider(color = Color(0xFF2A2D34))
+
                     // ca65 Index File
                     ExportFileRow(
                         checked = incIndex,
@@ -218,7 +229,7 @@ fun ExportModal(state: AtlasEditorState) {
 
                     Spacer(modifier = Modifier.width(8.dp))
 
-                    val canExport = (incGraphics || incPalette || incIndex || incPng) && exportDir.isNotBlank()
+                    val canExport = (incGraphics || incPalette || incTable || incIndex || incPng) && exportDir.isNotBlank()
                     Button(
                         onClick = {
                             val targetDir = File(exportDir)
@@ -228,10 +239,12 @@ fun ExportModal(state: AtlasEditorState) {
                                     baseName = cleanBase,
                                     graphicsBinFileName = "$cleanBase.bin",
                                     paletteBinFileName = "$cleanBase.pal",
+                                    tableBinFileName = "$cleanBase.tab",
                                     indexFileName = "$cleanBase.i",
                                     pngFileName = "${cleanBase}_atlas.png",
                                     includeGraphicsBin = incGraphics,
                                     includePaletteBin = incPalette,
+                                    includeTableBin = incTable,
                                     includeIndexFile = incIndex,
                                     includePng = incPng,
                                 )

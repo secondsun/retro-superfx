@@ -6,6 +6,12 @@ import dev.secondsun.sfxstudio.core.atlas.MedianCutQuantizer
 import dev.secondsun.sfxstudio.core.atlas.ProjectService
 import dev.secondsun.sfxstudio.core.atlas.SnesColor
 import dev.secondsun.sfxstudio.core.atlas.TextureImporter
+import dev.secondsun.sfxstudio.core.level.Ca65MapImporter
+import dev.secondsun.sfxstudio.core.level.LevelDocument
+import dev.secondsun.sfxstudio.core.level.LevelDocumentService
+import dev.secondsun.sfxstudio.core.level.LevelValidator
+import dev.secondsun.sfxstudio.core.level.MapCell
+import dev.secondsun.sfxstudio.core.level.MapGrid
 import java.io.File
 import java.nio.file.Path
 import java.util.logging.ConsoleHandler
@@ -57,6 +63,24 @@ object CliMain {
                         "validate" -> runValidate(subArgs.drop(1))
                         else -> {
                             System.err.println("Unknown atlas subcommand: '${subArgs[0]}'")
+                            printUsage()
+                            1
+                        }
+                    }
+                }
+                "level" -> {
+                    val subArgs = args.drop(1)
+                    if (subArgs.isEmpty() || subArgs[0] in listOf("help", "--help", "-h")) {
+                        printUsage()
+                        return if (subArgs.isEmpty()) 1 else 0
+                    }
+                    when (subArgs[0]) {
+                        "create" -> runLevelCreate(subArgs.drop(1))
+                        "pack" -> runLevelPack(subArgs.drop(1))
+                        "validate" -> runLevelValidate(subArgs.drop(1))
+                        "import-ca65" -> runLevelImportCa65(subArgs.drop(1))
+                        else -> {
+                            System.err.println("Unknown level subcommand: '${subArgs[0]}'")
                             printUsage()
                             1
                         }
@@ -122,7 +146,7 @@ object CliMain {
             Usage:
               atlas pack <project.sfxproj|.sfxatlas> [--output-dir <dir>] [--auto-pack]
                 Loads manifest, resolves all virtual slices and aliases, optionally auto-packs,
-                and exports companion binaries (.bin, .pal), assembly index (.i), layout PNG,
+                and exports companion binaries (.bin, .pal, .tab), assembly index (.i), layout PNG,
                 and saves the project.
 
               atlas import <project.sfxproj|.sfxatlas> <images...> [--auto-quantize] [--snap-palette]
@@ -132,8 +156,20 @@ object CliMain {
               atlas validate <project.sfxproj|.sfxatlas>
                 Validates dimensions, bounds, coordinate collisions, slices, and aliases.
 
+              level create <level.sfxlevel> --atlas <atlas.sfxproj> [--cols <4..16>] [--rows <4..16>] [--top-tex <name>] [--skirt-tex <name>]
+                Creates a new isometric Level Document linked to an atlas and exports .map, .i, and _preview.png.
+
+              level pack <level.sfxlevel> [--output-dir <dir>] [--yaw <0..119>]
+                Validates a Level Document against its shared atlas and exports .map, .i, and _preview.png.
+
+              level validate <level.sfxlevel>
+                Validates grid bounds, symbolic texture names, Bank $71 atlas budget, and geometry rules.
+
+              level import-ca65 <input.i> --atlas <atlas.sfxproj> --output <level.sfxlevel> [--yaw <0..119>]
+                Imports a legacy ca65 def_cell map include into a .sfxlevel document and exports companion files.
+
               --mcp [--workspace <path>]
-                Starts the Model Context Protocol (MCP) stdio server for SuperFX texture atlas tools.
+                Starts the Model Context Protocol (MCP) stdio server for SuperFX texture atlas and level tools.
 
             Legacy Aliases:
               pack ...        -> atlas pack ...
@@ -141,6 +177,294 @@ object CliMain {
               validate ...    -> atlas validate ...
             """.trimIndent(),
         )
+    }
+
+    private fun computeRelativeAtlasPath(
+        levelFile: File,
+        atlasFile: File,
+    ): String {
+        val levelDir = (levelFile.absoluteFile.parentFile ?: File(".").absoluteFile).toPath().normalize()
+        val targetAtlas = atlasFile.absoluteFile.toPath().normalize()
+        return try {
+            levelDir.relativize(targetAtlas).toString().replace('\\', '/')
+        } catch (_: IllegalArgumentException) {
+            atlasFile.path
+        }
+    }
+
+    private fun runLevelCreate(args: List<String>): Int {
+        if (args.isEmpty()) {
+            System.err.println(
+                "Usage: level create <level.sfxlevel> --atlas <atlas.sfxproj> [--cols <4..16>] [--rows <4..16>] [--top-tex <name>] [--skirt-tex <name>]",
+            )
+            return 1
+        }
+
+        val levelFile = File(args[0])
+        var atlasFile: File? = null
+        var cols = 8
+        var rows = 8
+        var topTex: String? = null
+        var skirtTex: String? = null
+        var yaw = 15
+
+        var i = 1
+        while (i < args.size) {
+            when (args[i]) {
+                "--atlas" -> {
+                    i++
+                    if (i < args.size) atlasFile = File(args[i])
+                }
+                "--cols" -> {
+                    i++
+                    if (i < args.size) cols = args[i].toInt()
+                }
+                "--rows" -> {
+                    i++
+                    if (i < args.size) rows = args[i].toInt()
+                }
+                "--top-tex" -> {
+                    i++
+                    if (i < args.size) topTex = args[i]
+                }
+                "--skirt-tex" -> {
+                    i++
+                    if (i < args.size) skirtTex = args[i]
+                }
+                "--yaw" -> {
+                    i++
+                    if (i < args.size) yaw = args[i].toInt()
+                }
+                else -> System.err.println("Warning: ignoring unknown argument '${args[i]}'")
+            }
+            i++
+        }
+
+        val reqAtlasFile =
+            atlasFile ?: run {
+                System.err.println("Missing required flag: --atlas <atlas.sfxproj>")
+                return 1
+            }
+        if (!reqAtlasFile.exists()) {
+            throw IllegalArgumentException("Atlas file '${reqAtlasFile.path}' does not exist.")
+        }
+
+        val (atlas, palette, _) = ProjectService.loadProject(reqAtlasFile)
+        val descriptors = atlas.resolvedDescriptors()
+        val defaultTex = descriptors.firstOrNull()?.name
+        val resolvedTop = topTex ?: defaultTex
+        val resolvedSkirt = skirtTex ?: resolvedTop
+        val relAtlasPath = computeRelativeAtlasPath(levelFile, reqAtlasFile)
+
+        val doc =
+            LevelDocument(
+                name = levelFile.nameWithoutExtension,
+                atlasPath = relAtlasPath,
+                grid =
+                    MapGrid.filled(
+                        cols = cols,
+                        rows = rows,
+                        defaultCell = MapCell(baseHeight = 0, topTex = resolvedTop, skirtTex = resolvedSkirt),
+                    ),
+            )
+
+        val validation = LevelValidator.validate(levelFile, doc, overrideAtlas = atlas)
+        if (!validation.valid) {
+            val msgs = validation.errors.joinToString("; ") { "[${it.code}] ${it.message}" }
+            throw IllegalStateException("Level validation failed: $msgs")
+        }
+        for (warn in validation.warnings) {
+            println("Warning [${warn.code}]: ${warn.message}")
+        }
+
+        val exported =
+            LevelDocumentService.saveLevel(
+                levelFile = levelFile,
+                document = doc,
+                atlas = atlas,
+                palette = palette,
+                previewYaw = yaw,
+            )
+        println("Created level '${doc.name}' (${cols}x$rows, ${doc.grid.byteSize} bytes):")
+        println("  Manifest: ${exported.levelFile.absolutePath}")
+        println("  Binary:   ${exported.mapBinFile.absolutePath}")
+        println("  Header:   ${exported.headerFile.absolutePath}")
+        exported.previewPngFile?.let { println("  Preview:  ${it.absolutePath}") }
+        return 0
+    }
+
+    private fun runLevelPack(args: List<String>): Int {
+        if (args.isEmpty()) {
+            System.err.println("Usage: level pack <level.sfxlevel> [--output-dir <dir>] [--yaw <0..119>]")
+            return 1
+        }
+
+        val levelFile = File(args[0])
+        if (!levelFile.exists()) {
+            throw IllegalArgumentException("Level file '${levelFile.path}' does not exist.")
+        }
+
+        var outputDir: File? = null
+        var yaw = 15
+
+        var i = 1
+        while (i < args.size) {
+            when (args[i]) {
+                "--output-dir" -> {
+                    i++
+                    if (i < args.size) outputDir = File(args[i])
+                }
+                "--yaw" -> {
+                    i++
+                    if (i < args.size) yaw = args[i].toInt()
+                }
+                else -> System.err.println("Warning: ignoring unknown argument '${args[i]}'")
+            }
+            i++
+        }
+
+        val doc = LevelDocumentService.loadLevel(levelFile)
+        val atlasFile = LevelDocumentService.resolveAtlasFile(levelFile, doc.atlasPath)
+        if (!atlasFile.exists()) {
+            throw IllegalStateException("Atlas file '${doc.atlasPath}' resolved to '${atlasFile.path}' does not exist.")
+        }
+        val (atlas, palette, _) = ProjectService.loadProject(atlasFile)
+
+        val validation = LevelValidator.validate(levelFile, doc, overrideAtlas = atlas)
+        for (warn in validation.warnings) {
+            println("Warning [${warn.code}]: ${warn.message}")
+        }
+        if (!validation.valid) {
+            val msgs = validation.errors.joinToString("; ") { "[${it.code}] ${it.message}" }
+            throw IllegalStateException("Level validation failed: $msgs")
+        }
+
+        val exported =
+            LevelDocumentService.saveLevel(
+                levelFile = levelFile,
+                document = doc,
+                atlas = atlas,
+                palette = palette,
+                outputDir = outputDir,
+                previewYaw = yaw,
+            )
+        println("Successfully packed level '${doc.name}' (${doc.grid.cols}x${doc.grid.rows}, ${doc.grid.byteSize} bytes):")
+        println("  Binary:  ${exported.mapBinFile.absolutePath}")
+        println("  Header:  ${exported.headerFile.absolutePath}")
+        exported.previewPngFile?.let { println("  Preview: ${it.absolutePath}") }
+        return 0
+    }
+
+    private fun runLevelValidate(args: List<String>): Int {
+        if (args.isEmpty()) {
+            System.err.println("Usage: level validate <level.sfxlevel>")
+            return 1
+        }
+
+        val levelFile = File(args[0])
+        if (!levelFile.exists()) {
+            throw IllegalArgumentException("Level file '${levelFile.path}' does not exist.")
+        }
+
+        val doc = LevelDocumentService.loadLevel(levelFile)
+        val validation = LevelValidator.validate(levelFile, doc)
+        println("Validating level '${levelFile.name}' (${doc.grid.cols}x${doc.grid.rows})...")
+        for (warn in validation.warnings) {
+            println("  Warning [${warn.code}]: ${warn.message}")
+        }
+        if (!validation.valid) {
+            for (err in validation.errors) {
+                System.err.println("  Error [${err.code}]: ${err.message}")
+            }
+            throw IllegalStateException("Validation failed with ${validation.errors.size} error(s).")
+        }
+        println("Validation passed: OK (${validation.warnings.size} warning(s))")
+        return 0
+    }
+
+    private fun runLevelImportCa65(args: List<String>): Int {
+        if (args.isEmpty()) {
+            System.err.println(
+                "Usage: level import-ca65 <input.i> --atlas <atlas.sfxproj> --output <level.sfxlevel> [--yaw <0..119>]",
+            )
+            return 1
+        }
+
+        val inputFile = File(args[0])
+        if (!inputFile.exists()) {
+            throw IllegalArgumentException("Input ca65 file '${inputFile.path}' does not exist.")
+        }
+
+        var atlasFile: File? = null
+        var outputFile: File? = null
+        var yaw = 15
+
+        var i = 1
+        while (i < args.size) {
+            when (args[i]) {
+                "--atlas" -> {
+                    i++
+                    if (i < args.size) atlasFile = File(args[i])
+                }
+                "--output" -> {
+                    i++
+                    if (i < args.size) outputFile = File(args[i])
+                }
+                "--yaw" -> {
+                    i++
+                    if (i < args.size) yaw = args[i].toInt()
+                }
+                else -> System.err.println("Warning: ignoring unknown argument '${args[i]}'")
+            }
+            i++
+        }
+
+        val reqAtlasFile =
+            atlasFile ?: run {
+                System.err.println("Missing required flag: --atlas <atlas.sfxproj>")
+                return 1
+            }
+        val reqOutputFile =
+            outputFile ?: run {
+                System.err.println("Missing required flag: --output <level.sfxlevel>")
+                return 1
+            }
+        if (!reqAtlasFile.exists()) {
+            throw IllegalArgumentException("Atlas file '${reqAtlasFile.path}' does not exist.")
+        }
+
+        val (atlas, palette, _) = ProjectService.loadProject(reqAtlasFile)
+        val relAtlasPath = computeRelativeAtlasPath(reqOutputFile, reqAtlasFile)
+        val doc =
+            Ca65MapImporter.importFile(
+                ca65File = inputFile,
+                atlasPath = relAtlasPath,
+                atlas = atlas,
+                levelName = reqOutputFile.nameWithoutExtension,
+            )
+
+        val validation = LevelValidator.validate(reqOutputFile, doc, overrideAtlas = atlas)
+        for (warn in validation.warnings) {
+            println("Warning [${warn.code}]: ${warn.message}")
+        }
+        if (!validation.valid) {
+            val msgs = validation.errors.joinToString("; ") { "[${it.code}] ${it.message}" }
+            throw IllegalStateException("Imported level failed validation: $msgs")
+        }
+
+        val exported =
+            LevelDocumentService.saveLevel(
+                levelFile = reqOutputFile,
+                document = doc,
+                atlas = atlas,
+                palette = palette,
+                previewYaw = yaw,
+            )
+        println("Imported '${inputFile.name}' -> '${exported.levelFile.path}' (${doc.grid.cols}x${doc.grid.rows}):")
+        println("  Binary:  ${exported.mapBinFile.absolutePath}")
+        println("  Header:  ${exported.headerFile.absolutePath}")
+        exported.previewPngFile?.let { println("  Preview: ${it.absolutePath}") }
+        return 0
     }
 
     private fun runPack(args: List<String>): Int {

@@ -213,14 +213,15 @@ Exposes:
 
 ### Running the Studio MCP Server
 
-To expose SuperFX texture atlas packing and validation tools over stdio for agents:
+To expose SuperFX texture atlas and isometric level authoring tools over stdio for agents:
 
 ```bash
 ./sfx-studio/scripts/run-mcp.sh
 ```
 
 Exposes:
-- `sfx_pack_textures`: Packs, updates, or validates SuperFX Texture Atlases (`.sfxproj`), exporting companion binaries (`.bin`, `.pal`), ca65 assembly includes (`.i`), and layout PNGs.
+- `sfx_pack_textures`: Packs, updates, imports, or validates SuperFX Texture Atlases (`.sfxproj`), exporting companion binaries (`.bin`, `.pal`, relocatable `.tab`), ca65 assembly includes (`.i`), and layout PNGs.
+- `sfx_manage_level`: Creates, patches cells/regions, validates, imports from ca65 `def_cell` `.i`, or packs SuperFX Level Documents (`.sfxlevel`), exporting runtime maps (`.map`), constants headers (`.i`), and software isometric previews (`_preview.png`).
 
 
 ---
@@ -254,8 +255,10 @@ This root repository includes agent configuration and automation guides:
   - `sfx-assembly-rules.md`: Hardware constraints for the SuperFX 3 (FX3) coprocessor.
 - **[`.agents/skills/`](./.agents/skills/)**:
   - `build-workspace`: Multi-repo build and install procedures.
+  - `iso-level`: Author, validate, import, and pack SuperFX isometric levels (`.sfxlevel` / `.map`).
   - `rebase-submodules`: Fetch and rebase Git submodules from GitHub.
   - `sfx-macro-language`: X-GSU ca65 macro language reference (`function`, `call`, `stack`, `control`).
   - `sfx-test-runner`: Automated Mesen CE test execution runbook.
+  - `texture-atlas`: Author, validate, and pack SuperFX texture atlases (`.sfxproj` / `.tab`).
   - `update-submodules`: Stage, commit, and push updated Git submodules to origin.
 

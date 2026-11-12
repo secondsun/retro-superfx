@@ -13,5 +13,5 @@ This map points to context-specific domain glossaries across the workspace.
 
 ## Relationships
 
-- **sfx-studio → snes-sfx-demo / X-GSU**: `sfx-studio` compiles authored Atlas Documents and Level Documents into packed Texture Atlases, palettes, Atlas Indexes, and Level data consumed at build and link time by `snes-sfx-demo`.
+- **sfx-studio → snes-sfx-demo / X-GSU**: `sfx-studio` compiles authored Atlas Documents and Level Documents into packed Texture Atlases, palettes, Texture Tables, Atlas Indexes, and Map Grids consumed at link time or staged at runtime by `snes-sfx-demo`.
 - **retro-common → sfx-optimizer → retro-lsp**: `retro-common` tokenizes and indexes assembly sources; `sfx-optimizer` analyzes CFGs and allocates registers; `retro-lsp` exposes diagnostics and symbol navigation to editors and `RetroLspMCP`.

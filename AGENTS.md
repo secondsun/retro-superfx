@@ -53,7 +53,7 @@ This root acts as an agentic umbrella workspace across 6 projects (5 Git submodu
 
 5. **`sfx-studio`** (`dev.secondsun:sfx-studio`):
    - 3-module Kotlin/Compose Desktop asset and level studio (`sfx-studio-core`, `sfx-studio-cli`, `sfx-studio-desktop`) + headless stdio `StudioMCP` (`sfx-studio/scripts/run-mcp.sh`).
-   - Generates `.sfxproj` texture atlases, companion binaries (`.bin`, `.pal`), and CA65 assembly headers (`.i`).
+   - Generates `.sfxproj` texture atlases (`.bin`, `.pal`, `.tab`, `.i`) and `.sfxlevel` isometric maps (`.map`, `.i`, `_preview.png`).
    - Tracked directly in umbrella repo toward progressive monorepo consolidation (ADR 0005).
 
 6. **`snes-sfx-demo`**:
@@ -167,7 +167,8 @@ Agents must **strongly prefer calling the `retro-superfx_lsp` MCP tools** by inv
 
 ### 7. SuperFX Asset & Studio Tools (`retro-superfx_studio` MCP)
 Agents must **strongly prefer calling the `retro-superfx_studio` MCP tools** by invoking the **`call_mcp_tool`** tool (lazy-loaded behind `call_mcp_tool`; no need to read `<appDataDir>/mcp/` schemas first):
-- **`sfx_pack_textures`**: Packs, updates, or validates a SuperFX Texture Atlas (`.sfxproj`), exporting companion binaries (`.bin`, `.pal`), ca65 assembly index (`.i`), and layout PNG, or imports bitmap graphics with Median-Cut color quantization.
+- **`sfx_pack_textures`**: Packs, updates, or validates a SuperFX Texture Atlas (`.sfxproj`), exporting companion binaries (`.bin`, `.pal`, `.tab`), ca65 assembly index (`.i`), and layout PNG, or imports bitmap graphics with Median-Cut color quantization.
+- **`sfx_manage_level`**: Creates, patches cells/regions, validates, imports from ca65 `def_cell` `.i`, or packs a SuperFX Level Document (`.sfxlevel`), exporting `.map`, constants header (`.i`), and `_preview.png`.
 
 Ready-to-copy **`call_mcp_tool`** argument:
 
@@ -182,7 +183,8 @@ Ready-to-copy **`call_mcp_tool`** argument:
 |---|---|
 | Bug report, visual glitch, broken behavior, or regression ("review and fix", "appears/disappears", "failing") | Read [`.agents/skills/diagnosing-bugs/SKILL.md`](.agents/skills/diagnosing-bugs/SKILL.md) **first** and build a tight red-capable reproducer loop before reading assembly to form hypotheses. |
 | Running Mesen tests, resolving `.cpu.sym`/`.dbg` addresses, or capturing scene renders | Read [`.agents/skills/sfx-test-runner/SKILL.md`](.agents/skills/sfx-test-runner/SKILL.md) and invoke `call_mcp_tool` with `ServerName: "retro-superfx_mesen"` (never read `tools/mesen-mcp/` Python internals to learn CLI flags). |
-| Authoring, modifying, or packing texture atlases (`.sfxproj`, `.bin`, `.pal`, `TEXTURES.i`) | Read [`.agents/skills/texture-atlas/SKILL.md`](.agents/skills/texture-atlas/SKILL.md), pack via `call_mcp_tool` (`sfx_pack_textures` on `retro-superfx_studio`), and verify with `call_mcp_tool` (`capture_sfx_render`). |
+| Authoring, modifying, or packing texture atlases (`.sfxproj`, `.bin`, `.pal`, `.tab`, `TEXTURES.i`) | Read [`.agents/skills/texture-atlas/SKILL.md`](.agents/skills/texture-atlas/SKILL.md), pack via `call_mcp_tool` (`sfx_pack_textures` on `retro-superfx_studio`), and verify with `call_mcp_tool` (`capture_sfx_render`). |
+| Authoring, importing, validating, or packing isometric levels (`.sfxlevel`, `.map`, Bank `$71` staging) | Read [`.agents/skills/iso-level/SKILL.md`](.agents/skills/iso-level/SKILL.md) and invoke `sfx_manage_level` on `retro-superfx_studio` (or `./sfx-studio/scripts/sfx-studio.sh level ...`). |
 | Inspecting captured `.png` screenshots (from `capture_sfx_render` or Mesen Lua scripts) | Call `read_file` directly on the `.png` path for multimodal visual inspection instead of writing blind pixel-diff or ASCII scripts. |
 | Finding where a label / `function` / macro / struct / field / constant is **defined**, plus its doc comment (In/Out/Clobbers) | Call `call_mcp_tool` with `ToolName: "sfx_lookup_symbol"` on `retro-superfx_lsp` (never `grep` `.s`/`.sgs`/`.i`/`.inc` files). |
 | Finding where a symbol is **used** (references, calls, reads, writes) | Call `call_mcp_tool` with `ToolName: "sfx_find_references"` on `retro-superfx_lsp` (never `grep` `.s`/`.sgs`/`.i`/`.inc` files). |
@@ -267,6 +269,7 @@ Workspace customizations are maintained in `.agents/`:
 - **Skills**:
   - [`build-workspace`](.agents/skills/build-workspace/SKILL.md): Build, test, and synchronize local Maven artifacts.
   - [`create-gsu-test`](.agents/skills/create-gsu-test/SKILL.md): Scaffold, configure, and execute new SuperFX unit tests from `test_template`.
+  - [`iso-level`](.agents/skills/iso-level/SKILL.md): Author, edit, import, validate, and pack SuperFX isometric Level Documents (`.sfxlevel` / `.map`).
   - [`lsp-feature-dev`](.agents/skills/lsp-feature-dev/SKILL.md): Design, implement, and test new LSP features in `retro-lsp`.
   - [`rebase-submodules`](.agents/skills/rebase-submodules/SKILL.md): Fetch and rebase Git submodules from GitHub.
   - [`run-gsu-test`](.agents/skills/run-gsu-test/SKILL.md): Build, synchronize symbol addresses, and run existing SuperFX unit tests.

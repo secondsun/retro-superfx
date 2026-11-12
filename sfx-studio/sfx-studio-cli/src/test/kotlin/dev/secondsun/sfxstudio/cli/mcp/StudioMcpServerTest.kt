@@ -8,6 +8,9 @@ import dev.secondsun.sfxstudio.core.atlas.SnesPalette
 import dev.secondsun.sfxstudio.core.atlas.SourceTexture
 import dev.secondsun.sfxstudio.core.atlas.TextureAtlas
 import dev.secondsun.sfxstudio.core.atlas.VirtualSlice
+import dev.secondsun.sfxstudio.core.level.CellRotation
+import dev.secondsun.sfxstudio.core.level.LevelDocumentService
+import dev.secondsun.sfxstudio.core.level.ShapeArchetype
 import io.modelcontextprotocol.spec.McpSchema.TextContent
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -195,6 +198,7 @@ class StudioMcpServerTest {
 
         assertTrue(File(tempDir, "TEST_PACK.bin").exists())
         assertTrue(File(tempDir, "TEST_PACK.pal").exists())
+        assertTrue(File(tempDir, "TEST_PACK.tab").exists())
         assertTrue(File(tempDir, "TEST_PACK.i").exists())
         assertTrue(File(tempDir, "TEST_PACK_atlas.png").exists())
     }
@@ -261,6 +265,126 @@ class StudioMcpServerTest {
     }
 
     @Test
+    fun testManageLevelCreateSetCellsValidateAndPack(
+        @TempDir tempDir: File,
+    ) {
+        val projFile = createSampleProject(tempDir, "LEVEL_MCP_ATLAS")
+        val s = StudioMcpServer(transport = null, workspaceRoot = tempDir.toPath())
+        server = s
+
+        // 1. Create 10x8 level
+        val createRes =
+            s.executeTool(
+                "sfx_manage_level",
+                mapOf(
+                    "action" to "create",
+                    "level_path" to "levels/garden.sfxlevel",
+                    "atlas_path" to projFile.name,
+                    "cols" to 10,
+                    "rows" to 8,
+                    "default_top_tex" to "box",
+                    "default_skirt_tex" to "box_alias",
+                ),
+            )
+        assertFalse(createRes.isError)
+        val createJson = objectMapper.readTree((createRes.content[0] as TextContent).text)
+        assertEquals("SUCCESS", createJson.get("status").asText())
+        assertTrue(createJson.get("valid").asBoolean())
+        assertEquals(10, createJson.get("cols").asInt())
+        assertEquals(8, createJson.get("rows").asInt())
+        assertEquals(8 + 80 * 8, createJson.get("mapByteSize").asInt())
+        assertTrue(File(tempDir, "levels/garden.sfxlevel").exists())
+        assertTrue(File(tempDir, "levels/garden.map").exists())
+        assertTrue(File(tempDir, "levels/garden.i").exists())
+        assertTrue(File(tempDir, "levels/garden_preview.png").exists())
+
+        // 2. Patch region + individual cell
+        val setRes =
+            s.executeTool(
+                "sfx_manage_level",
+                mapOf(
+                    "action" to "set_cells",
+                    "level_path" to "levels/garden.sfxlevel",
+                    "cells" to
+                        listOf(
+                            mapOf(
+                                "col_start" to 2,
+                                "col_end" to 4,
+                                "row_start" to 1,
+                                "row_end" to 3,
+                                "base_height" to 2,
+                            ),
+                            mapOf(
+                                "col" to 1,
+                                "row" to 2,
+                                "base_height" to 0,
+                                "archetype" to "PRIM_STAIRS",
+                                "rotation" to 270,
+                                "panel_tex" to "box_slice",
+                                "panels" to listOf("N", "S"),
+                            ),
+                        ),
+                ),
+            )
+        assertFalse(setRes.isError)
+        val setJson = objectMapper.readTree((setRes.content[0] as TextContent).text)
+        assertEquals("SUCCESS", setJson.get("status").asText())
+        assertTrue(setJson.get("valid").asBoolean())
+
+        val reloaded = LevelDocumentService.loadLevel(File(tempDir, "levels/garden.sfxlevel"))
+        assertEquals(2, reloaded.grid.cellAt(3, 2).baseHeight)
+        assertEquals(ShapeArchetype.PRIM_STAIRS, reloaded.grid.cellAt(1, 2).archetype)
+        assertEquals(CellRotation.ROT_270, reloaded.grid.cellAt(1, 2).rotation)
+        assertTrue(
+            reloaded.grid
+                .cellAt(1, 2)
+                .panels.north,
+        )
+        assertTrue(
+            reloaded.grid
+                .cellAt(1, 2)
+                .panels.south,
+        )
+
+        // 3. Reject unknown texture name cleanly with structured FAIL
+        val badRes =
+            s.executeTool(
+                "sfx_manage_level",
+                mapOf(
+                    "action" to "set_cells",
+                    "level_path" to "levels/garden.sfxlevel",
+                    "cells" to
+                        listOf(
+                            mapOf(
+                                "col" to 0,
+                                "row" to 0,
+                                "top_tex" to "nonexistent_tex",
+                            ),
+                        ),
+                ),
+            )
+        assertFalse(badRes.isError)
+        val badJson = objectMapper.readTree((badRes.content[0] as TextContent).text)
+        assertEquals("FAIL", badJson.get("status").asText())
+        assertFalse(badJson.get("valid").asBoolean())
+        assertTrue(badJson.get("errors").size() >= 1)
+
+        // 4. Validate and pack
+        val valRes =
+            s.executeTool(
+                "sfx_manage_level",
+                mapOf(
+                    "action" to "validate",
+                    "level_path" to "levels/garden.sfxlevel",
+                ),
+            )
+        assertFalse(valRes.isError)
+        val valJson = objectMapper.readTree((valRes.content[0] as TextContent).text)
+        assertEquals("SUCCESS", valJson.get("status").asText())
+        assertTrue(valJson.get("valid").asBoolean())
+    }
+
+    @Test
     fun testWorkspaceSecurityBoundaryRejection(
         @TempDir tempDir: File,
     ) {
@@ -269,7 +393,7 @@ class StudioMcpServerTest {
         workspaceDir.mkdirs()
         outsideDir.mkdirs()
 
-        val outsideProj = createSampleProject(outsideDir, "OUTSIDE")
+        createSampleProject(outsideDir, "OUTSIDE")
 
         val s = StudioMcpServer(transport = null, workspaceRoot = workspaceDir.toPath())
         server = s
@@ -286,6 +410,18 @@ class StudioMcpServerTest {
         assertTrue(result.isError)
         val text = (result.content[0] as TextContent).text
         assertTrue(text.contains("Access denied"))
+
+        val levelEscape =
+            s.executeTool(
+                "sfx_manage_level",
+                mapOf(
+                    "level_path" to "inside.sfxlevel",
+                    "atlas_path" to "../outside/OUTSIDE.sfxproj",
+                    "action" to "create",
+                ),
+            )
+        assertTrue(levelEscape.isError)
+        assertTrue((levelEscape.content[0] as TextContent).text.contains("Access denied"))
     }
 
     @Test
@@ -323,7 +459,9 @@ class StudioMcpServerTest {
             val tools = checkNotNull(listJson.get("result")?.get("tools"))
             assertTrue(tools.isArray)
             val hasPackTextures = (0 until tools.size()).any { tools.get(it).get("name")?.asText() == "sfx_pack_textures" }
+            val hasManageLevel = (0 until tools.size()).any { tools.get(it).get("name")?.asText() == "sfx_manage_level" }
             assertTrue(hasPackTextures, "Expected sfx_pack_textures in tools/list")
+            assertTrue(hasManageLevel, "Expected sfx_manage_level in tools/list")
 
             // 4. Tools call request: validate TEXTURES.sfxproj
             writer.println(

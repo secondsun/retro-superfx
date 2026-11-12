@@ -58,6 +58,7 @@ data class ExportedAssets(
     val paletteBinFile: File,
     val indexFile: File,
     val pngFile: File,
+    val tableBinFile: File? = null,
 )
 
 typealias AtlasDocumentDto = ProjectDto
@@ -151,10 +152,12 @@ object ProjectService {
         paletteBinFileName: String = "$baseName.pal",
         indexFileName: String = "$baseName.i",
         pngFileName: String = "${baseName}_atlas.png",
+        tableBinFileName: String = "$baseName.tab",
         includeGraphicsBin: Boolean = true,
         includePaletteBin: Boolean = true,
         includeIndexFile: Boolean = true,
         includePng: Boolean = true,
+        includeTableBin: Boolean = true,
     ): ExportedAssets {
         destinationDir.mkdirs()
 
@@ -178,7 +181,12 @@ object ProjectService {
             AtlasImageRenderer.writeAtlasPng(atlas, palette, png)
         }
 
-        return ExportedAssets(gBin, pBin, idx, png)
+        val tBin = File(destinationDir, tableBinFileName)
+        if (includeTableBin) {
+            tBin.writeBytes(AtlasTableGenerator.generate(atlas))
+        }
+
+        return ExportedAssets(gBin, pBin, idx, png, tBin)
     }
 
     fun saveProject(
@@ -264,6 +272,10 @@ object ProjectService {
         // ca65 assembly index
         val indexText = AtlasIndexGenerator.generate(atlas, baseName)
         File(parentDir, "$baseName.i").writeText(indexText)
+
+        // Relocatable runtime Texture Table (.tab)
+        val tabBytes = AtlasTableGenerator.generate(atlas)
+        File(parentDir, "$baseName.tab").writeBytes(tabBytes)
 
         // Layout PNG
         val pngFile = File(parentDir, "${baseName}_atlas.png")

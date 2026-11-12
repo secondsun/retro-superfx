@@ -47,8 +47,12 @@ import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
+import dev.secondsun.sfxstudio.core.level.SFX_LEVEL_EXTENSION
 import dev.secondsun.sfxstudio.desktop.atlas.AtlasEditorState
 import dev.secondsun.sfxstudio.desktop.atlas.AtlasEditorWorkspace
+import dev.secondsun.sfxstudio.desktop.level.LevelEditorState
+import dev.secondsun.sfxstudio.desktop.level.LevelEditorWorkspace
+import dev.secondsun.sfxstudio.desktop.level.NewLevelModal
 import dev.secondsun.sfxstudio.desktop.shell.StudioState
 import dev.secondsun.sfxstudio.desktop.ui.PlatformDpi
 import dev.secondsun.sfxstudio.desktop.ui.components.AboutModal
@@ -139,11 +143,16 @@ fun main(args: Array<String>) {
                         studioState.newAtlasSession()
                     }
 
+                    Item("New Level...", shortcut = KeyShortcut(Key.N, ctrl = true, shift = true)) {
+                        studioState.showNewLevelModal = true
+                    }
+
                     Item("Open Document...", shortcut = KeyShortcut(Key.O, ctrl = true)) {
                         val dialog = FileDialog(null as Frame?, "Open SuperFX Document", FileDialog.LOAD)
                         dialog.setFilenameFilter { _, name ->
                             name.endsWith(".sfxproj", ignoreCase = true) ||
-                                name.endsWith(".sfxatlas", ignoreCase = true)
+                                name.endsWith(".sfxatlas", ignoreCase = true) ||
+                                name.endsWith(".$SFX_LEVEL_EXTENSION", ignoreCase = true)
                         }
                         dialog.isVisible = true
                         val file = dialog.file?.let { File(dialog.directory, it) }
@@ -158,8 +167,9 @@ fun main(args: Array<String>) {
                             if (session.documentFile != null) {
                                 session.save()
                             } else {
+                                val defaultExt = if (session is LevelEditorState) SFX_LEVEL_EXTENSION else "sfxproj"
                                 val dialog = FileDialog(null as Frame?, "Save Document", FileDialog.SAVE)
-                                dialog.file = "${session.displayTitle}.sfxproj"
+                                dialog.file = "${session.displayTitle}.$defaultExt"
                                 dialog.isVisible = true
                                 val file = dialog.file?.let { File(dialog.directory, it) }
                                 if (file != null) {
@@ -172,8 +182,9 @@ fun main(args: Array<String>) {
                     Item("Save As...") {
                         val session = studioState.activeSession
                         if (session != null) {
+                            val defaultExt = if (session is LevelEditorState) SFX_LEVEL_EXTENSION else "sfxproj"
                             val dialog = FileDialog(null as Frame?, "Save Document As", FileDialog.SAVE)
-                            dialog.file = "${session.displayTitle}.sfxproj"
+                            dialog.file = "${session.displayTitle}.$defaultExt"
                             dialog.isVisible = true
                             val file = dialog.file?.let { File(dialog.directory, it) }
                             if (file != null) {
@@ -326,6 +337,7 @@ fun main(args: Array<String>) {
                         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                             when (val session = studioState.activeSession) {
                                 is AtlasEditorState -> AtlasEditorWorkspace(session)
+                                is LevelEditorState -> LevelEditorWorkspace(session)
                                 null -> {
                                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -385,6 +397,7 @@ fun main(args: Array<String>) {
 
                     // --- Modals ---
                     AboutModal(studioState)
+                    NewLevelModal(studioState)
                     ExitConfirmationModal(studioState, onConfirmExit = ::exitApplication)
                     CloseTabConfirmationModal(studioState)
 

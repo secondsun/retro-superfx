@@ -1,5 +1,6 @@
 package dev.secondsun.sfxstudio.cli
 
+import dev.secondsun.sfxstudio.core.atlas.AtlasTableGenerator
 import dev.secondsun.sfxstudio.core.atlas.DescriptorAlias
 import dev.secondsun.sfxstudio.core.atlas.ProjectService
 import dev.secondsun.sfxstudio.core.atlas.SnesColor
@@ -7,6 +8,9 @@ import dev.secondsun.sfxstudio.core.atlas.SnesPalette
 import dev.secondsun.sfxstudio.core.atlas.SourceTexture
 import dev.secondsun.sfxstudio.core.atlas.TextureAtlas
 import dev.secondsun.sfxstudio.core.atlas.VirtualSlice
+import dev.secondsun.sfxstudio.core.level.LevelBinarySerializer
+import dev.secondsun.sfxstudio.core.level.LevelDocumentService
+import dev.secondsun.sfxstudio.core.level.ShapeArchetype
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -57,8 +61,14 @@ class CliMainTest {
 
         assertTrue(File(tempDir, "TEST_LEGACY.bin").exists())
         assertTrue(File(tempDir, "TEST_LEGACY.pal").exists())
+        assertTrue(File(tempDir, "TEST_LEGACY.tab").exists())
         assertTrue(File(tempDir, "TEST_LEGACY.i").exists())
         assertTrue(File(tempDir, "TEST_LEGACY_atlas.png").exists())
+
+        val parsedTab = AtlasTableGenerator.parse(File(tempDir, "TEST_LEGACY.tab").readBytes())
+        assertEquals(3, parsedTab.entryCount)
+        assertEquals(32, parsedTab.atlasWidth)
+        assertEquals(5, parsedTab.strideShift)
 
         val includeContent = File(tempDir, "TEST_LEGACY.i").readText()
         assertTrue(includeContent.contains("TEXTURE_ID_BOX = 0"))
@@ -84,6 +94,7 @@ class CliMainTest {
 
         assertTrue(File(tempDir, "TEST_NOUN.bin").exists())
         assertTrue(File(tempDir, "TEST_NOUN.pal").exists())
+        assertTrue(File(tempDir, "TEST_NOUN.tab").exists())
         assertTrue(File(tempDir, "TEST_NOUN.i").exists())
         assertTrue(File(tempDir, "TEST_NOUN_atlas.png").exists())
     }
@@ -112,6 +123,7 @@ class CliMainTest {
         assertTrue(File(outDir, "TEST_AUTOPACK.sfxproj").exists())
         assertTrue(File(outDir, "TEST_AUTOPACK.bin").exists())
         assertTrue(File(outDir, "TEST_AUTOPACK.pal").exists())
+        assertTrue(File(outDir, "TEST_AUTOPACK.tab").exists())
         assertTrue(File(outDir, "TEST_AUTOPACK.i").exists())
         assertTrue(File(outDir, "TEST_AUTOPACK_atlas.png").exists())
     }
@@ -149,15 +161,118 @@ class CliMainTest {
     }
 
     @Test
+    fun testLevelCreateValidatePackAndImportCa65(
+        @TempDir tempDir: File,
+    ) {
+        val projFile = createSampleProject(tempDir, "LEVEL_ATLAS")
+        val levelFile = File(tempDir, "courtyard.sfxlevel")
+
+        val createCode =
+            CliMain.execute(
+                arrayOf(
+                    "level",
+                    "create",
+                    levelFile.absolutePath,
+                    "--atlas",
+                    projFile.absolutePath,
+                    "--cols",
+                    "6",
+                    "--rows",
+                    "5",
+                    "--top-tex",
+                    "box",
+                    "--skirt-tex",
+                    "box_dup",
+                ),
+            )
+        assertEquals(0, createCode)
+        assertTrue(levelFile.exists())
+        assertTrue(File(tempDir, "courtyard.map").exists())
+        assertTrue(File(tempDir, "courtyard.i").exists())
+        assertTrue(File(tempDir, "courtyard_preview.png").exists())
+
+        val valCode = CliMain.execute(arrayOf("level", "validate", levelFile.absolutePath))
+        assertEquals(0, valCode)
+
+        val outDir = File(tempDir, "packed_level")
+        val packCode =
+            CliMain.execute(
+                arrayOf(
+                    "level",
+                    "pack",
+                    levelFile.absolutePath,
+                    "--output-dir",
+                    outDir.absolutePath,
+                    "--yaw",
+                    "45",
+                ),
+            )
+        assertEquals(0, packCode)
+        assertTrue(File(outDir, "courtyard.map").exists())
+        assertTrue(File(outDir, "courtyard.i").exists())
+        assertTrue(File(outDir, "courtyard_preview.png").exists())
+
+        // Test legacy ca65 import
+        val ca65File = File(tempDir, "legacy_map.i")
+        ca65File.writeText(
+            """
+            MAP_COLS = 4
+            MAP_ROWS = 4
+            def_cell 0, PRIM_FLAT, TEXTURE_ID_BOX, TEXTURE_ID_BOX_DUP, 0, PANEL_NONE
+            def_cell 1, PRIM_STAIRS | ROT_90, TEXTURE_ID_BOX, TEXTURE_ID_BOX_DUP, TEXTURE_ID_BOX_HALF, PANEL_N | PANEL_W
+            def_cell 0, PRIM_FLAT, TEXTURE_ID_BOX, TEXTURE_ID_BOX_DUP, 0, PANEL_NONE
+            def_cell 0, PRIM_FLAT, TEXTURE_ID_BOX, TEXTURE_ID_BOX_DUP, 0, PANEL_NONE
+            def_cell 0, PRIM_FLAT, TEXTURE_ID_BOX, TEXTURE_ID_BOX_DUP, 0, PANEL_NONE
+            def_cell 0, PRIM_FLAT, TEXTURE_ID_BOX, TEXTURE_ID_BOX_DUP, 0, PANEL_NONE
+            def_cell 0, PRIM_FLAT, TEXTURE_ID_BOX, TEXTURE_ID_BOX_DUP, 0, PANEL_NONE
+            def_cell 0, PRIM_FLAT, TEXTURE_ID_BOX, TEXTURE_ID_BOX_DUP, 0, PANEL_NONE
+            def_cell 0, PRIM_FLAT, TEXTURE_ID_BOX, TEXTURE_ID_BOX_DUP, 0, PANEL_NONE
+            def_cell 0, PRIM_FLAT, TEXTURE_ID_BOX, TEXTURE_ID_BOX_DUP, 0, PANEL_NONE
+            def_cell 0, PRIM_FLAT, TEXTURE_ID_BOX, TEXTURE_ID_BOX_DUP, 0, PANEL_NONE
+            def_cell 0, PRIM_FLAT, TEXTURE_ID_BOX, TEXTURE_ID_BOX_DUP, 0, PANEL_NONE
+            def_cell 0, PRIM_FLAT, TEXTURE_ID_BOX, TEXTURE_ID_BOX_DUP, 0, PANEL_NONE
+            def_cell 0, PRIM_FLAT, TEXTURE_ID_BOX, TEXTURE_ID_BOX_DUP, 0, PANEL_NONE
+            def_cell 0, PRIM_FLAT, TEXTURE_ID_BOX, TEXTURE_ID_BOX_DUP, 0, PANEL_NONE
+            def_cell 0, PRIM_FLAT, TEXTURE_ID_BOX, TEXTURE_ID_BOX_DUP, 0, PANEL_NONE
+            """.trimIndent(),
+        )
+        val importedLevelFile = File(tempDir, "imported.sfxlevel")
+        val importCode =
+            CliMain.execute(
+                arrayOf(
+                    "level",
+                    "import-ca65",
+                    ca65File.absolutePath,
+                    "--atlas",
+                    projFile.absolutePath,
+                    "--output",
+                    importedLevelFile.absolutePath,
+                ),
+            )
+        assertEquals(0, importCode)
+        val importedDoc = LevelDocumentService.loadLevel(importedLevelFile)
+        assertEquals(4, importedDoc.grid.cols)
+        assertEquals(4, importedDoc.grid.rows)
+        assertEquals(ShapeArchetype.PRIM_STAIRS, importedDoc.grid.cellAt(1, 0).archetype)
+
+        val (atlas, _, _) = ProjectService.loadProject(projFile)
+        val parsedBin = LevelBinarySerializer.deserialize(File(tempDir, "imported.map").readBytes(), atlas)
+        assertEquals(importedDoc.grid, parsedBin)
+    }
+
+    @Test
     fun testHelpAndUnknownCommands() {
         assertEquals(0, CliMain.execute(arrayOf("help")))
         assertEquals(0, CliMain.execute(arrayOf("--help")))
         assertEquals(0, CliMain.execute(arrayOf("-h")))
         assertEquals(0, CliMain.execute(arrayOf("atlas", "help")))
+        assertEquals(0, CliMain.execute(arrayOf("level", "help")))
 
         assertEquals(1, CliMain.execute(emptyArray()))
         assertEquals(1, CliMain.execute(arrayOf("atlas")))
         assertEquals(1, CliMain.execute(arrayOf("atlas", "unknown_subcommand")))
+        assertEquals(1, CliMain.execute(arrayOf("level")))
+        assertEquals(1, CliMain.execute(arrayOf("level", "unknown_subcommand")))
         assertEquals(1, CliMain.execute(arrayOf("unknown_verb")))
     }
 

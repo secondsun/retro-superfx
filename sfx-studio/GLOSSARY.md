@@ -11,7 +11,7 @@ The authoring specification for a single Texture Atlas, holding its color palett
 _Avoid_: Project file, texture project, atlas manifest
 
 **Level Document**:
-The authoring specification for a single Level, combining its Map Grid surface geometry and cell-aligned gameplay layers with a reference to a shared Atlas Document.
+The authoring specification for a single Level, pairing its visual Map Grid and shared Atlas Document reference with optional cell-aligned gameplay layers.
 _Avoid_: Map project, stage file, scene file
 
 ### Texture Authoring & Export
@@ -29,5 +29,9 @@ An alternate symbolic identifier in an Atlas Document that resolves to the same 
 _Avoid_: Texture alias, duplicate ID, linked texture
 
 **Atlas Index**:
-The exported symbolic catalog describing a Texture Atlas's dimensions and each entry's identifier, coordinates, dimensions, and offset for consumption by the runtime engine.
+The exported symbolic catalog describing a Texture Atlas's dimensions and each entry's identifier, coordinates, dimensions, and offset for consumption by link-time builds.
 _Avoid_: Index file, texture header
+
+**Texture Table**:
+The exported relocatable catalog of Texture Descriptors paired with a Texture Atlas for runtime lookup without link-time symbol binding.
+_Avoid_: Descriptor binary, texture LUT, slot file
