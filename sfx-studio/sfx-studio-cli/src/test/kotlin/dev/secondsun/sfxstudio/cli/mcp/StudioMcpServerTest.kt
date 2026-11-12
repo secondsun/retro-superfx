@@ -426,11 +426,15 @@ class StudioMcpServerTest {
 
     @Test
     fun testStdioJsonRpcRoundtrip() {
-        val launcher = File("/home/summers/Projects/retro-superfx/sfx-studio/scripts/run-mcp.sh")
+        val workspaceRoot =
+            generateSequence(File(System.getProperty("user.dir")).canonicalFile) { it.parentFile }
+                .firstOrNull { File(it, "sfx-studio/scripts/run-mcp.sh").exists() }
+                ?: error("Could not locate workspace root containing sfx-studio/scripts/run-mcp.sh")
+        val launcher = File(workspaceRoot, "sfx-studio/scripts/run-mcp.sh")
         assertTrue(launcher.exists() && launcher.canExecute())
 
         val pb = ProcessBuilder(launcher.absolutePath)
-        pb.directory(File("/home/summers/Projects/retro-superfx"))
+        pb.directory(workspaceRoot)
         val proc = pb.start()
 
         val writer = PrintWriter(proc.outputStream, true)

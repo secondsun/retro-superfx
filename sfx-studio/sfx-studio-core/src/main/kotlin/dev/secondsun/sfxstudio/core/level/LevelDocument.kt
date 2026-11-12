@@ -373,7 +373,9 @@ object LevelBinarySerializer {
         symbol: String?,
         descriptors: List<TextureDescriptorInfo>,
     ): Int {
-        if (symbol.isNullOrBlank() || symbol == "0" || symbol.equals("NONE", ignoreCase = true) ||
+        if (symbol.isNullOrBlank() ||
+            symbol == "0" ||
+            symbol.equals("NONE", ignoreCase = true) ||
             symbol.equals("TEX_NONE", ignoreCase = true)
         ) {
             return 0
