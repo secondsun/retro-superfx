@@ -1,5 +1,6 @@
 package dev.secondsun.sfxstudio.desktop.level
 
+import androidx.compose.ui.input.key.Key
 import dev.secondsun.sfxstudio.core.atlas.ProjectService
 import dev.secondsun.sfxstudio.core.atlas.SnesColor
 import dev.secondsun.sfxstudio.core.atlas.SnesPalette
@@ -227,5 +228,69 @@ class LevelEditorStateTest {
         studio.openDocument(levelFile)
         assertEquals(countBefore, studio.openSessions.size)
         assertEquals(levelSession, studio.activeSession)
+    }
+
+    @Test
+    fun testCameraPanRotationPivotAndKeyBindings() {
+        val level = LevelEditorState()
+        assertEquals(15, level.cameraYaw)
+        assertEquals(0, level.cameraPanX)
+        assertEquals(0, level.cameraPanY)
+
+        // Verify Q/W/E/A/S/D and Arrow key mappings
+        assertEquals(IsoCameraControlAction.ROTATE_CW, mapKeyToCameraAction(Key.Q))
+        assertEquals(IsoCameraControlAction.PAN_UP, mapKeyToCameraAction(Key.W))
+        assertEquals(IsoCameraControlAction.PAN_UP, mapKeyToCameraAction(Key.DirectionUp))
+        assertEquals(IsoCameraControlAction.ROTATE_CCW, mapKeyToCameraAction(Key.E))
+        assertEquals(IsoCameraControlAction.PAN_NEG_X, mapKeyToCameraAction(Key.A))
+        assertEquals(IsoCameraControlAction.PAN_NEG_X, mapKeyToCameraAction(Key.DirectionLeft))
+        assertEquals(IsoCameraControlAction.PAN_DOWN, mapKeyToCameraAction(Key.S))
+        assertEquals(IsoCameraControlAction.PAN_DOWN, mapKeyToCameraAction(Key.DirectionDown))
+        assertEquals(IsoCameraControlAction.PAN_POS_X, mapKeyToCameraAction(Key.D))
+        assertEquals(IsoCameraControlAction.PAN_POS_X, mapKeyToCameraAction(Key.DirectionRight))
+
+        // Row 1: Q rotates clockwise (+1 yaw), W pans camera up (+2 panY), E rotates CCW (-1 yaw)
+        IsoCameraControlAction.ROTATE_CW.perform(level)
+        assertEquals(16, level.cameraYaw)
+        IsoCameraControlAction.ROTATE_CCW.perform(level)
+        assertEquals(15, level.cameraYaw)
+
+        IsoCameraControlAction.PAN_UP.perform(level)
+        assertEquals(2, level.cameraPanY)
+        IsoCameraControlAction.PAN_DOWN.perform(level)
+        assertEquals(0, level.cameraPanY)
+
+        // Row 2: A pans -X (+2 panX / model right), D pans +X (-2 panX / model left)
+        IsoCameraControlAction.PAN_NEG_X.perform(level)
+        assertEquals(2, level.cameraPanX)
+        IsoCameraControlAction.PAN_POS_X.perform(level)
+        assertEquals(0, level.cameraPanX)
+
+        // Test gsu_iso_camera.i screen-center pivot:
+        // At yaw = 0 (cos = 1, sin = 0), panX = 32, panY = 0 -> rotating 90 deg CW (yaw = 30, cos = 0, sin = 1)
+        // moves the offset from (+32, 0) to (0, +16) due to the 2:1 isometric foreshortening!
+        level.resetCamera()
+        level.cameraYaw = 0
+        level.panCameraBy(32, 0)
+        assertEquals(32, level.cameraPanX)
+        assertEquals(0, level.cameraPanY)
+
+        level.rotateCameraClockwise(30)
+        assertEquals(30, level.cameraYaw)
+        assertEquals(0, level.cameraPanX)
+        assertEquals(16, level.cameraPanY)
+
+        // Full 360-degree rotation in 120 single-step (3°) increments must have zero cumulative drift
+        repeat(90) {
+            level.rotateCameraClockwise(1)
+        }
+        assertEquals(0, level.cameraYaw)
+        assertEquals(32, level.cameraPanX)
+        assertEquals(0, level.cameraPanY)
+
+        // Clamping at +/-128 pixels
+        level.panCameraBy(500, -500)
+        assertEquals(128, level.cameraPanX)
+        assertEquals(-128, level.cameraPanY)
     }
 }

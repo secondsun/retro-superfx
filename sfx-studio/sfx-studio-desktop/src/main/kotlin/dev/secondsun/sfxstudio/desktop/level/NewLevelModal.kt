@@ -89,7 +89,7 @@ fun NewLevelModal(studio: StudioState) {
                             focusedBorderColor = Color(0xFF3B82F6),
                             unfocusedBorderColor = Color(0xFF4B5563),
                         ),
-                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                    modifier = Modifier.fillMaxWidth(),
                 )
 
                 Spacer(modifier = Modifier.height(12.dp))
@@ -112,7 +112,7 @@ fun NewLevelModal(studio: StudioState) {
                                 focusedBorderColor = Color(0xFF3B82F6),
                                 unfocusedBorderColor = Color(0xFF4B5563),
                             ),
-                        modifier = Modifier.weight(1f).height(48.dp),
+                        modifier = Modifier.weight(1f),
                     )
                     Button(
                         onClick = {
@@ -128,7 +128,7 @@ fun NewLevelModal(studio: StudioState) {
                             }
                         },
                         colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFF3B82F6)),
-                        modifier = Modifier.height(48.dp),
+                        modifier = Modifier.height(56.dp),
                     ) {
                         Text("Browse...", color = Color.White, fontSize = 12.sp)
                     }
@@ -154,7 +154,7 @@ fun NewLevelModal(studio: StudioState) {
                                     focusedBorderColor = Color(0xFF3B82F6),
                                     unfocusedBorderColor = Color(0xFF4B5563),
                                 ),
-                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                            modifier = Modifier.fillMaxWidth(),
                         )
                     }
                     Column(modifier = Modifier.weight(1f)) {
@@ -171,7 +171,7 @@ fun NewLevelModal(studio: StudioState) {
                                     focusedBorderColor = Color(0xFF3B82F6),
                                     unfocusedBorderColor = Color(0xFF4B5563),
                                 ),
-                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                            modifier = Modifier.fillMaxWidth(),
                         )
                     }
                 }

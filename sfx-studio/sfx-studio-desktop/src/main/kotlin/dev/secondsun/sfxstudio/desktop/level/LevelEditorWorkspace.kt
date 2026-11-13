@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -30,9 +31,11 @@ import androidx.compose.material.ButtonDefaults
 import androidx.compose.material.Checkbox
 import androidx.compose.material.CheckboxDefaults
 import androidx.compose.material.Divider
-import androidx.compose.material.Slider
-import androidx.compose.material.SliderDefaults
+import androidx.compose.material.DropdownMenu
+import androidx.compose.material.DropdownMenuItem
+import androidx.compose.material.Surface
 import androidx.compose.material.Text
+import androidx.compose.material.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -53,7 +56,9 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isAltPressed
 import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isMetaPressed
 import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
@@ -61,10 +66,12 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import dev.secondsun.sfxstudio.core.atlas.SnesPalette
 import dev.secondsun.sfxstudio.core.atlas.TextureAtlas
 import dev.secondsun.sfxstudio.core.atlas.TextureDescriptorInfo
@@ -77,16 +84,77 @@ import dev.secondsun.sfxstudio.core.level.MapGrid
 import dev.secondsun.sfxstudio.core.level.SFX_LEVEL_EXTENSION
 import dev.secondsun.sfxstudio.core.level.ShapeArchetype
 import dev.secondsun.sfxstudio.desktop.ui.TextureComposeRenderer
+import kotlinx.coroutines.delay
 import java.awt.FileDialog
 import java.awt.Frame
 import java.io.File
 import kotlin.math.roundToInt
+
+enum class IsoCameraControlAction(
+    val symbol: String,
+    val keyLabel: String,
+) {
+    ROTATE_CW("↻", "Q"),
+    PAN_UP("↑", "W"),
+    ROTATE_CCW("↺", "E"),
+    PAN_NEG_X("←", "A"),
+    PAN_DOWN("↓", "S"),
+    PAN_POS_X("→", "D"),
+    ;
+
+    fun perform(state: LevelEditorState) {
+        when (this) {
+            ROTATE_CW -> state.rotateCameraClockwise()
+            PAN_UP -> state.panCameraUp()
+            ROTATE_CCW -> state.rotateCameraCounterClockwise()
+            PAN_NEG_X -> state.panCameraNegativeX()
+            PAN_DOWN -> state.panCameraDown()
+            PAN_POS_X -> state.panCameraPositiveX()
+        }
+    }
+}
+
+internal fun mapKeyToCameraAction(key: Key): IsoCameraControlAction? =
+    when (key) {
+        Key.Q -> IsoCameraControlAction.ROTATE_CW
+        Key.W, Key.DirectionUp -> IsoCameraControlAction.PAN_UP
+        Key.E -> IsoCameraControlAction.ROTATE_CCW
+        Key.A, Key.DirectionLeft -> IsoCameraControlAction.PAN_NEG_X
+        Key.S, Key.DirectionDown -> IsoCameraControlAction.PAN_DOWN
+        Key.D, Key.DirectionRight -> IsoCameraControlAction.PAN_POS_X
+        else -> null
+    }
 
 @Composable
 fun LevelEditorWorkspace(state: LevelEditorState) {
     val focusRequester = remember { FocusRequester() }
     LaunchedEffect(state.sessionId) {
         focusRequester.requestFocus()
+    }
+
+    var heldCameraKeys by remember { mutableStateOf(emptySet<Key>()) }
+    var pressedMouseCameraAction by remember { mutableStateOf<IsoCameraControlAction?>(null) }
+    var showTexturePickerModal by remember { mutableStateOf(false) }
+
+    val activeCameraActions: Set<IsoCameraControlAction> =
+        remember(heldCameraKeys, pressedMouseCameraAction) {
+            buildSet {
+                for (k in heldCameraKeys) {
+                    mapKeyToCameraAction(k)?.let { add(it) }
+                }
+                pressedMouseCameraAction?.let { add(it) }
+            }
+        }
+
+    LaunchedEffect(activeCameraActions, state) {
+        if (activeCameraActions.isEmpty()) return@LaunchedEffect
+        delay(140L)
+        while (true) {
+            for (act in activeCameraActions) {
+                act.perform(state)
+            }
+            delay(33L)
+        }
     }
 
     val resolvedPair = state.resolveAtlasAndPalette()
@@ -113,7 +181,24 @@ fun LevelEditorWorkspace(state: LevelEditorState) {
                 .focusRequester(focusRequester)
                 .focusable()
                 .onPreviewKeyEvent { event ->
+                    val camAction = mapKeyToCameraAction(event.key)
+                    if (event.type == KeyEventType.KeyUp) {
+                        if (event.key in heldCameraKeys) {
+                            heldCameraKeys = heldCameraKeys - event.key
+                            return@onPreviewKeyEvent true
+                        }
+                        return@onPreviewKeyEvent false
+                    }
                     if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+
+                    if (camAction != null && !event.isCtrlPressed && !event.isAltPressed && !event.isMetaPressed) {
+                        if (event.key !in heldCameraKeys) {
+                            heldCameraKeys = heldCameraKeys + event.key
+                            camAction.perform(state)
+                        }
+                        return@onPreviewKeyEvent true
+                    }
+
                     when {
                         event.isCtrlPressed && event.key == Key.Z && event.isShiftPressed -> {
                             state.redo()
@@ -151,14 +236,6 @@ fun LevelEditorWorkspace(state: LevelEditorState) {
                             state.stepSelectedHeight(1)
                             true
                         }
-                        !event.isCtrlPressed && event.key == Key.Q -> {
-                            state.rotateCamera90CounterClockwise()
-                            true
-                        }
-                        !event.isCtrlPressed && event.key == Key.E -> {
-                            state.rotateCamera90Clockwise()
-                            true
-                        }
                         else -> false
                     }
                 },
@@ -167,40 +244,58 @@ fun LevelEditorWorkspace(state: LevelEditorState) {
         DiagnosticsBanner(state, validation)
 
         Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
-            LevelLeftPaletteDock(
-                state = state,
-                atlas = atlas,
-                palette = palette,
-                descriptors = descriptors,
-            )
+            LevelLeftPaletteDock(state = state)
 
-            Box(
+            Column(
                 modifier =
                     Modifier
                         .weight(1f)
                         .fillMaxHeight()
                         .background(Color(0xFF121418)),
             ) {
-                when (state.centerViewMode) {
-                    LevelCenterViewMode.SPLIT -> {
-                        Row(modifier = Modifier.fillMaxSize()) {
-                            Box(modifier = Modifier.weight(1.15f).fillMaxHeight()) {
-                                Iso3DViewport(state, atlas, palette)
-                            }
-                            Box(
-                                modifier =
-                                    Modifier
-                                        .width(1.dp)
-                                        .fillMaxHeight()
-                                        .background(Color(0xFF2A2D34)),
-                            )
-                            Box(modifier = Modifier.weight(0.85f).fillMaxHeight()) {
-                                TopDownGridViewport(state, atlas, palette, validation)
+                CenterPreviewTabBar(state = state)
+
+                Box(
+                    modifier =
+                        Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                            .background(Color(0xFF121418)),
+                ) {
+                    when (state.centerViewMode) {
+                        LevelCenterViewMode.SPLIT -> {
+                            Row(modifier = Modifier.fillMaxSize()) {
+                                Box(modifier = Modifier.weight(1.15f).fillMaxHeight()) {
+                                    Iso3DViewport(
+                                        state = state,
+                                        atlas = atlas,
+                                        palette = palette,
+                                        activeCameraActions = activeCameraActions,
+                                        onCameraButtonPressChange = { pressedMouseCameraAction = it },
+                                    )
+                                }
+                                Box(
+                                    modifier =
+                                        Modifier
+                                            .width(1.dp)
+                                            .fillMaxHeight()
+                                            .background(Color(0xFF2A2D34)),
+                                )
+                                Box(modifier = Modifier.weight(0.85f).fillMaxHeight()) {
+                                    TopDownGridViewport(state, atlas, palette, validation)
+                                }
                             }
                         }
+                        LevelCenterViewMode.ISO_3D ->
+                            Iso3DViewport(
+                                state = state,
+                                atlas = atlas,
+                                palette = palette,
+                                activeCameraActions = activeCameraActions,
+                                onCameraButtonPressChange = { pressedMouseCameraAction = it },
+                            )
+                        LevelCenterViewMode.TOP_DOWN_2D -> TopDownGridViewport(state, atlas, palette, validation)
                     }
-                    LevelCenterViewMode.ISO_3D -> Iso3DViewport(state, atlas, palette)
-                    LevelCenterViewMode.TOP_DOWN_2D -> TopDownGridViewport(state, atlas, palette, validation)
                 }
             }
 
@@ -208,8 +303,22 @@ fun LevelEditorWorkspace(state: LevelEditorState) {
                 state = state,
                 descriptors = descriptors,
                 validation = validation,
+                onOpenTexturePicker = { slot ->
+                    state.activeTextureSlot = slot
+                    showTexturePickerModal = true
+                },
             )
         }
+    }
+
+    if (showTexturePickerModal) {
+        TextureSlotPickerModal(
+            state = state,
+            atlas = atlas,
+            palette = palette,
+            descriptors = descriptors,
+            onDismiss = { showTexturePickerModal = false },
+        )
     }
 
     state.errorMessage?.let { err ->
@@ -244,65 +353,12 @@ private fun LevelTopToolbar(state: LevelEditorState) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        // Tool buttons
-        ToolbarChip("Select [V]", state.activeTool == LevelTool.SELECT) {
-            state.activeTool = LevelTool.SELECT
-        }
-        ToolbarChip("Brush [B]", state.activeTool == LevelTool.BRUSH) {
-            state.activeTool = LevelTool.BRUSH
-        }
-        ToolbarChip("Pick [I]", state.activeTool == LevelTool.EYEDROPPER) {
-            state.activeTool = LevelTool.EYEDROPPER
-        }
-
-        ToolbarDivider()
-
         ToolbarActionButton("Undo", enabled = state.canUndo) { state.undo() }
         ToolbarActionButton("Redo", enabled = state.canRedo) { state.redo() }
 
-        ToolbarDivider()
-
-        ToolbarActionButton("-1h ([)") { state.stepSelectedHeight(-1) }
-        ToolbarActionButton("+1h (])") { state.stepSelectedHeight(1) }
-        ToolbarActionButton("Rot 90° [R]") { state.rotateSelectedClockwise() }
-
-        ToolbarDivider()
-
-        ToolbarChip("Split", state.centerViewMode == LevelCenterViewMode.SPLIT) {
-            state.centerViewMode = LevelCenterViewMode.SPLIT
-        }
-        ToolbarChip("3D Iso", state.centerViewMode == LevelCenterViewMode.ISO_3D) {
-            state.centerViewMode = LevelCenterViewMode.ISO_3D
-        }
-        ToolbarChip("2D Grid", state.centerViewMode == LevelCenterViewMode.TOP_DOWN_2D) {
-            state.centerViewMode = LevelCenterViewMode.TOP_DOWN_2D
-        }
-
-        ToolbarDivider()
-
-        ToolbarActionButton("-90° [Q]") { state.rotateCamera90CounterClockwise() }
-        Text(
-            text = "Yaw ${state.cameraYaw * 3}°",
-            color = Color(0xFFCBD5E1),
-            fontSize = 11.sp,
-            modifier = Modifier.width(56.dp),
-        )
-        Slider(
-            value = state.cameraYaw.toFloat(),
-            onValueChange = { state.cameraYaw = it.roundToInt().coerceIn(0, 119) },
-            valueRange = 0f..119f,
-            colors =
-                SliderDefaults.colors(
-                    thumbColor = Color(0xFF38BDF8),
-                    activeTrackColor = Color(0xFF3B82F6),
-                ),
-            modifier = Modifier.width(100.dp),
-        )
-        ToolbarActionButton("+90° [E]") { state.rotateCamera90Clockwise() }
-
         Spacer(modifier = Modifier.weight(1f))
 
-        ToolbarActionButton("Import .i...") {
+        ToolbarActionButton("Import .i") {
             val dialog = FileDialog(null as Frame?, "Import Legacy ca65 Map (.i)", FileDialog.LOAD)
             dialog.setFilenameFilter { _, name -> name.endsWith(".i", ignoreCase = true) }
             dialog.isVisible = true
@@ -332,6 +388,52 @@ private fun LevelTopToolbar(state: LevelEditorState) {
             modifier = Modifier.height(28.dp),
         ) {
             Text("Save & Pack .map", color = Color.White, fontSize = 11.sp)
+        }
+    }
+}
+
+@Composable
+private fun CenterPreviewTabBar(state: LevelEditorState) {
+    val tabs =
+        listOf(
+            LevelCenterViewMode.SPLIT to "Split",
+            LevelCenterViewMode.ISO_3D to "3D Iso",
+            LevelCenterViewMode.TOP_DOWN_2D to "2D Grid",
+        )
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .height(30.dp)
+                .background(Color(0xFF191B21))
+                .border(1.dp, Color(0xFF282B33))
+                .padding(horizontal = 6.dp),
+        verticalAlignment = Alignment.Bottom,
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        for ((mode, label) in tabs) {
+            val selected = state.centerViewMode == mode
+            Box(
+                modifier =
+                    Modifier
+                        .height(26.dp)
+                        .clip(RoundedCornerShape(topStart = 4.dp, topEnd = 4.dp))
+                        .background(if (selected) Color(0xFF121418) else Color(0xFF20232B))
+                        .border(
+                            width = 1.dp,
+                            color = if (selected) Color(0xFF3B82F6) else Color(0xFF2A2E38),
+                            shape = RoundedCornerShape(topStart = 4.dp, topEnd = 4.dp),
+                        ).clickable { state.centerViewMode = mode }
+                        .padding(horizontal = 14.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = label,
+                    color = if (selected) Color.White else Color(0xFF94A3B8),
+                    fontSize = 11.sp,
+                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                )
+            }
         }
     }
 }
@@ -380,16 +482,11 @@ private fun DiagnosticsBanner(
 }
 
 @Composable
-private fun LevelLeftPaletteDock(
-    state: LevelEditorState,
-    atlas: TextureAtlas?,
-    palette: SnesPalette?,
-    descriptors: List<TextureDescriptorInfo>,
-) {
+private fun LevelLeftPaletteDock(state: LevelEditorState) {
     Column(
         modifier =
             Modifier
-                .width(248.dp)
+                .width(216.dp)
                 .fillMaxHeight()
                 .background(Color(0xFF1D1F26))
                 .border(1.dp, Color(0xFF2B2E36))
@@ -397,6 +494,74 @@ private fun LevelLeftPaletteDock(
                 .padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
+        // GIMP-style Toolbox grid
+        Text("Toolbox", color = Color(0xFF94A3B8), fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            GimpToolButton(
+                icon = "⬚",
+                label = "Select",
+                shortcut = "V",
+                selected = state.activeTool == LevelTool.SELECT,
+                modifier = Modifier.weight(1f),
+                onClick = { state.activeTool = LevelTool.SELECT },
+            )
+            GimpToolButton(
+                icon = "✎",
+                label = "Brush",
+                shortcut = "B",
+                selected = state.activeTool == LevelTool.BRUSH,
+                modifier = Modifier.weight(1f),
+                onClick = { state.activeTool = LevelTool.BRUSH },
+            )
+            GimpToolButton(
+                icon = "💧",
+                label = "Pick",
+                shortcut = "I",
+                selected = state.activeTool == LevelTool.EYEDROPPER,
+                modifier = Modifier.weight(1f),
+                onClick = { state.activeTool = LevelTool.EYEDROPPER },
+            )
+        }
+
+        Divider(color = Color(0xFF2C2F37))
+
+        // GIMP-style Tool Options
+        val toolTitle =
+            when (state.activeTool) {
+                LevelTool.SELECT -> "Tool Options: Select"
+                LevelTool.BRUSH -> "Tool Options: Brush"
+                LevelTool.EYEDROPPER -> "Tool Options: Eyedropper"
+            }
+        Text(toolTitle, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+
+        Text("Brush Layer Mask", color = Color(0xFF94A3B8), fontSize = 10.sp)
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            ToolOptionToggleRow("Height", state.brushMask.applyHeight) {
+                state.brushMask = state.brushMask.copy(applyHeight = !state.brushMask.applyHeight)
+            }
+            ToolOptionToggleRow("Shape & Rotation", state.brushMask.applyArchetypeAndRotation) {
+                state.brushMask =
+                    state.brushMask.copy(
+                        applyArchetypeAndRotation = !state.brushMask.applyArchetypeAndRotation,
+                    )
+            }
+            ToolOptionToggleRow("Top Texture", state.brushMask.applyTopTex) {
+                state.brushMask = state.brushMask.copy(applyTopTex = !state.brushMask.applyTopTex)
+            }
+            ToolOptionToggleRow("Skirt Texture", state.brushMask.applySkirtTex) {
+                state.brushMask = state.brushMask.copy(applySkirtTex = !state.brushMask.applySkirtTex)
+            }
+            ToolOptionToggleRow("Panel & Flags", state.brushMask.applyPanelTexAndFlags) {
+                state.brushMask =
+                    state.brushMask.copy(applyPanelTexAndFlags = !state.brushMask.applyPanelTexAndFlags)
+            }
+        }
+
+        Divider(color = Color(0xFF2C2F37))
+
         // Linked Atlas card
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -408,9 +573,17 @@ private fun LevelLeftPaletteDock(
                 val atlasLabel =
                     state.resolveAtlasFile()?.name
                         ?: state.document.atlasPath.ifBlank { "(Unlinked)" }
-                Text(atlasLabel, color = Color(0xFF67E8F9), fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+                Text(
+                    text = atlasLabel,
+                    color = Color(0xFF67E8F9),
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
-            ToolbarActionButton("Link...") {
+            Spacer(modifier = Modifier.width(6.dp))
+            ToolbarActionButton("Link") {
                 val dialog = FileDialog(null as Frame?, "Link Texture Atlas", FileDialog.LOAD)
                 dialog.setFilenameFilter { _, name ->
                     name.endsWith(".sfxproj", ignoreCase = true) ||
@@ -423,145 +596,81 @@ private fun LevelLeftPaletteDock(
                 }
             }
         }
+    }
+}
 
-        Divider(color = Color(0xFF2C2F37))
+@Composable
+private fun GimpToolButton(
+    icon: String,
+    label: String,
+    shortcut: String,
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    Column(
+        modifier =
+            modifier
+                .clip(RoundedCornerShape(5.dp))
+                .background(if (selected) Color(0xFF253B5E) else Color(0xFF16181D))
+                .border(
+                    width = 1.dp,
+                    color = if (selected) Color(0xFF60A5FA) else Color(0xFF2E323C),
+                    shape = RoundedCornerShape(5.dp),
+                ).clickable(onClick = onClick)
+                .padding(vertical = 8.dp, horizontal = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        Text(icon, color = Color.White, fontSize = 15.sp)
+        Text(
+            text = label,
+            color = if (selected) Color.White else Color(0xFFCBD5E1),
+            fontSize = 10.sp,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+        )
+        Text(
+            text = "[$shortcut]",
+            color = if (selected) Color(0xFF93C5FD) else Color(0xFF64748B),
+            fontSize = 9.sp,
+            fontFamily = FontFamily.Monospace,
+        )
+    }
+}
 
-        // Brush Layer Masks
-        Text("Brush Layer Mask", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            ToolbarChip("H", state.brushMask.applyHeight) {
-                state.brushMask = state.brushMask.copy(applyHeight = !state.brushMask.applyHeight)
-            }
-            ToolbarChip("Shape", state.brushMask.applyArchetypeAndRotation) {
-                state.brushMask =
-                    state.brushMask.copy(
-                        applyArchetypeAndRotation = !state.brushMask.applyArchetypeAndRotation,
-                    )
-            }
-            ToolbarChip("Top", state.brushMask.applyTopTex) {
-                state.brushMask = state.brushMask.copy(applyTopTex = !state.brushMask.applyTopTex)
-            }
-            ToolbarChip("Skirt", state.brushMask.applySkirtTex) {
-                state.brushMask = state.brushMask.copy(applySkirtTex = !state.brushMask.applySkirtTex)
-            }
-            ToolbarChip("Panel", state.brushMask.applyPanelTexAndFlags) {
-                state.brushMask = state.brushMask.copy(applyPanelTexAndFlags = !state.brushMask.applyPanelTexAndFlags)
-            }
-        }
-
-        Divider(color = Color(0xFF2C2F37))
-
-        // Active Texture Target Slot
-        Text("Assign Texture Slot", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            ToolbarChip("Top", state.activeTextureSlot == ActiveTextureSlot.TOP) {
-                state.activeTextureSlot = ActiveTextureSlot.TOP
-            }
-            ToolbarChip("Skirt", state.activeTextureSlot == ActiveTextureSlot.SKIRT) {
-                state.activeTextureSlot = ActiveTextureSlot.SKIRT
-            }
-            ToolbarChip("Panel", state.activeTextureSlot == ActiveTextureSlot.PANEL) {
-                state.activeTextureSlot = ActiveTextureSlot.PANEL
-            }
-            if (state.activeTextureSlot == ActiveTextureSlot.PANEL) {
-                ToolbarActionButton("Clear") { state.assignTextureToActiveSlot(null) }
-            }
-        }
-
-        if (atlas == null || palette == null || descriptors.isEmpty()) {
-            Text(
-                text = "Link an Atlas Document (.sfxproj) to browse textures.",
-                color = Color(0xFF94A3B8),
-                fontSize = 11.sp,
-            )
-        } else {
-            val activeSelectedName =
-                when (state.activeTextureSlot) {
-                    ActiveTextureSlot.TOP -> state.primarySelectedCell()?.topTex ?: state.brushCell.topTex
-                    ActiveTextureSlot.SKIRT -> state.primarySelectedCell()?.skirtTex ?: state.brushCell.skirtTex
-                    ActiveTextureSlot.PANEL -> state.primarySelectedCell()?.panelTex ?: state.brushCell.panelTex
-                }
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                for ((descIdx, desc) in descriptors.withIndex()) {
-                    val isSelected = desc.name == activeSelectedName
-                    val previewBmp =
-                        remember(atlas, palette, desc) {
-                            state
-                                .extractDescriptorPreview(atlas, desc)
-                                ?.let { TextureComposeRenderer.renderToImageBitmap(it, palette) }
-                        }
-                    Row(
-                        modifier =
-                            Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(4.dp))
-                                .background(if (isSelected) Color(0xFF25354D) else Color(0xFF16181D))
-                                .border(
-                                    1.dp,
-                                    if (isSelected) Color(0xFF3B82F6) else Color(0xFF2A2D34),
-                                    RoundedCornerShape(4.dp),
-                                ).clickable { state.assignTextureToActiveSlot(desc.name) }
-                                .padding(horizontal = 6.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        if (previewBmp != null) {
-                            Image(
-                                bitmap = previewBmp,
-                                contentDescription = desc.name,
-                                filterQuality = FilterQuality.None,
-                                modifier =
-                                    Modifier
-                                        .size(24.dp)
-                                        .background(Color(0xFF0B0C0E))
-                                        .border(1.dp, Color(0xFF334155)),
-                            )
-                        }
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(desc.name, color = Color.White, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
-                            Text(
-                                "${desc.width}x${desc.height} (#$descIdx)",
-                                color = Color(0xFF94A3B8),
-                                fontSize = 10.sp,
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        Divider(color = Color(0xFF2C2F37))
-
-        // Shape Archetypes
-        Text("Shape Archetypes (12)", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-        val activeArch =
-            if (state.activeTool == LevelTool.SELECT) {
-                state.primarySelectedCell()?.archetype ?: state.brushCell.archetype
-            } else {
-                state.brushCell.archetype
-            }
-        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            for (arch in ShapeArchetype.entries) {
-                val selected = arch == activeArch
-                Row(
-                    modifier =
-                        Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(4.dp))
-                            .background(if (selected) Color(0xFF25354D) else Color(0xFF16181D))
-                            .border(
-                                1.dp,
-                                if (selected) Color(0xFF3B82F6) else Color(0xFF2A2D34),
-                                RoundedCornerShape(4.dp),
-                            ).clickable { state.setSelectedArchetype(arch) }
-                            .padding(horizontal = 8.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text("${arch.id}. ${arch.displayName}", color = Color.White, fontSize = 11.sp)
-                }
-            }
-        }
+@Composable
+private fun ToolOptionToggleRow(
+    label: String,
+    checked: Boolean,
+    onToggle: () -> Unit,
+) {
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(4.dp))
+                .background(if (checked) Color(0xFF202B3D) else Color(0xFF16181D))
+                .border(
+                    width = 1.dp,
+                    color = if (checked) Color(0xFF3B82F6) else Color(0xFF2A2D34),
+                    shape = RoundedCornerShape(4.dp),
+                ).clickable(onClick = onToggle)
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = label,
+            color = if (checked) Color.White else Color(0xFF94A3B8),
+            fontSize = 11.sp,
+        )
+        Text(
+            text = if (checked) "ON" else "OFF",
+            color = if (checked) Color(0xFF60A5FA) else Color(0xFF64748B),
+            fontSize = 10.sp,
+            fontWeight = FontWeight.SemiBold,
+            fontFamily = FontFamily.Monospace,
+        )
     }
 }
 
@@ -570,6 +679,8 @@ private fun Iso3DViewport(
     state: LevelEditorState,
     atlas: TextureAtlas?,
     palette: SnesPalette?,
+    activeCameraActions: Set<IsoCameraControlAction> = emptySet(),
+    onCameraButtonPressChange: (IsoCameraControlAction?) -> Unit = {},
 ) {
     if (atlas == null || palette == null) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -583,12 +694,14 @@ private fun Iso3DViewport(
     }
 
     val renderResult: IsoRenderResult =
-        remember(state.document.grid, atlas, palette, state.cameraYaw) {
+        remember(state.document.grid, atlas, palette, state.cameraYaw, state.cameraPanX, state.cameraPanY) {
             IsoSoftwareRenderer.render(
                 grid = state.document.grid,
                 atlas = atlas,
                 palette = palette,
                 yawIndex = state.cameraYaw,
+                panX = state.cameraPanX,
+                panY = state.cameraPanY,
             )
         }
     val composeBitmap =
@@ -727,7 +840,9 @@ private fun Iso3DViewport(
         }
 
         Text(
-            text = "3D Software Preview (256x160 • Yaw ${state.cameraYaw})",
+            text =
+                "3D Software Preview (256x160 • Yaw ${state.cameraYaw * 3}° • " +
+                    "Pan ${state.cameraPanX}, ${state.cameraPanY})",
             color = Color(0xFF94A3B8),
             fontSize = 10.sp,
             modifier =
@@ -735,6 +850,107 @@ private fun Iso3DViewport(
                     .align(Alignment.TopStart)
                     .background(Color(0xAA111215), RoundedCornerShape(4.dp))
                     .padding(horizontal = 6.dp, vertical = 2.dp),
+        )
+
+        IsoCameraControlsOverlay(
+            state = state,
+            activeActions = activeCameraActions,
+            onButtonPressChange = onCameraButtonPressChange,
+            modifier =
+                Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(6.dp),
+        )
+    }
+}
+
+@Composable
+private fun IsoCameraControlsOverlay(
+    state: LevelEditorState,
+    activeActions: Set<IsoCameraControlAction>,
+    onButtonPressChange: (IsoCameraControlAction?) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val row1 =
+        listOf(
+            IsoCameraControlAction.ROTATE_CW,
+            IsoCameraControlAction.PAN_UP,
+            IsoCameraControlAction.ROTATE_CCW,
+        )
+    val row2 =
+        listOf(
+            IsoCameraControlAction.PAN_NEG_X,
+            IsoCameraControlAction.PAN_DOWN,
+            IsoCameraControlAction.PAN_POS_X,
+        )
+
+    Column(
+        modifier =
+            modifier
+                .background(Color(0x99111318), RoundedCornerShape(6.dp))
+                .border(1.dp, Color(0x88334155), RoundedCornerShape(6.dp))
+                .padding(4.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        for (row in listOf(row1, row2)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                for (action in row) {
+                    val isActive = action in activeActions
+                    IsoCameraOverlayButton(
+                        action = action,
+                        isActive = isActive,
+                        onPressStart = {
+                            action.perform(state)
+                            onButtonPressChange(action)
+                        },
+                        onPressEnd = {
+                            onButtonPressChange(null)
+                        },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun IsoCameraOverlayButton(
+    action: IsoCameraControlAction,
+    isActive: Boolean,
+    onPressStart: () -> Unit,
+    onPressEnd: () -> Unit,
+) {
+    val bgColor = if (isActive) Color(0xCC2563EB) else Color(0xAA1E222B)
+    val borderColor = if (isActive) Color(0xEE60A5FA) else Color(0xAA3B4252)
+    val textColor = if (isActive) Color.White else Color(0xFFE2E8F0)
+
+    Box(
+        modifier =
+            Modifier
+                .size(width = 44.dp, height = 28.dp)
+                .clip(RoundedCornerShape(4.dp))
+                .background(bgColor)
+                .border(1.dp, borderColor, RoundedCornerShape(4.dp))
+                .pointerInput(action) {
+                    detectTapGestures(
+                        onPress = {
+                            onPressStart()
+                            try {
+                                tryAwaitRelease()
+                            } finally {
+                                onPressEnd()
+                            }
+                        },
+                    )
+                },
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = "${action.symbol} ${action.keyLabel}",
+            color = textColor,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Medium,
+            fontFamily = FontFamily.Monospace,
         )
     }
 }
@@ -993,10 +1209,12 @@ private fun LevelRightInspectorDock(
     state: LevelEditorState,
     descriptors: List<TextureDescriptorInfo>,
     validation: LevelValidationResult,
+    onOpenTexturePicker: (ActiveTextureSlot) -> Unit,
 ) {
     val grid = state.document.grid
     val primaryCoord = state.selectedCells.firstOrNull()
     val inspectedCell = state.primarySelectedCell() ?: state.brushCell
+    var archetypeMenuExpanded by remember { mutableStateOf(false) }
 
     Column(
         modifier =
@@ -1053,7 +1271,7 @@ private fun LevelRightInspectorDock(
             }
         Text(selHeader, color = Color(0xFF38BDF8), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
 
-        // Base Height Stepper
+        // Base Height Stepper (unified with [ / ] keyboard shortcuts)
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -1065,13 +1283,70 @@ private fun LevelRightInspectorDock(
                 fontSize = 11.sp,
             )
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                ToolbarActionButton("-") { state.stepSelectedHeight(-1) }
-                ToolbarActionButton("+") { state.stepSelectedHeight(1) }
+                ToolbarActionButton("- [[]") { state.stepSelectedHeight(-1) }
+                ToolbarActionButton("+ []]") { state.stepSelectedHeight(1) }
             }
         }
 
-        // Rotation selector
-        Text("Rotation", color = Color(0xFF94A3B8), fontSize = 11.sp)
+        // Shape Archetype dropdown
+        Text("Shape Archetype", color = Color(0xFF94A3B8), fontSize = 11.sp)
+        Box(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Color(0xFF16181D))
+                        .border(1.dp, Color(0xFF3B3F4A), RoundedCornerShape(4.dp))
+                        .clickable { archetypeMenuExpanded = true }
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "${inspectedCell.archetype.id}. ${inspectedCell.archetype.displayName}",
+                    color = Color.White,
+                    fontSize = 11.sp,
+                )
+                Text("▾", color = Color(0xFF94A3B8), fontSize = 11.sp)
+            }
+            DropdownMenu(
+                expanded = archetypeMenuExpanded,
+                onDismissRequest = { archetypeMenuExpanded = false },
+                modifier = Modifier.background(Color(0xFF22242B)),
+            ) {
+                for (arch in ShapeArchetype.entries) {
+                    DropdownMenuItem(
+                        onClick = {
+                            state.setSelectedArchetype(arch)
+                            archetypeMenuExpanded = false
+                        },
+                    ) {
+                        Text(
+                            text = "${arch.id}. ${arch.displayName}",
+                            color = if (arch == inspectedCell.archetype) Color(0xFF60A5FA) else Color.White,
+                            fontSize = 11.sp,
+                            fontWeight =
+                                if (arch == inspectedCell.archetype) {
+                                    FontWeight.SemiBold
+                                } else {
+                                    FontWeight.Normal
+                                },
+                        )
+                    }
+                }
+            }
+        }
+
+        // Rotation selector (unified with Rot 90° [R])
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Rotation", color = Color(0xFF94A3B8), fontSize = 11.sp)
+            ToolbarActionButton("↻ 90° [R]") { state.rotateSelectedClockwise() }
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             for (rot in CellRotation.entries) {
                 ToolbarChip(
@@ -1085,25 +1360,25 @@ private fun LevelRightInspectorDock(
 
         Divider(color = Color(0xFF2C2F37))
 
-        // Assigned Textures summary
+        // Assigned Textures summary (click any slot to open picker popup)
         Text("Cell Texture Slots", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
         InspectorTextureSlotRow(
             label = "Top",
             texName = inspectedCell.topTex,
             active = state.activeTextureSlot == ActiveTextureSlot.TOP,
-            onClick = { state.activeTextureSlot = ActiveTextureSlot.TOP },
+            onClick = { onOpenTexturePicker(ActiveTextureSlot.TOP) },
         )
         InspectorTextureSlotRow(
             label = "Skirt",
             texName = inspectedCell.skirtTex,
             active = state.activeTextureSlot == ActiveTextureSlot.SKIRT,
-            onClick = { state.activeTextureSlot = ActiveTextureSlot.SKIRT },
+            onClick = { onOpenTexturePicker(ActiveTextureSlot.SKIRT) },
         )
         InspectorTextureSlotRow(
             label = "Panel",
             texName = inspectedCell.panelTex,
             active = state.activeTextureSlot == ActiveTextureSlot.PANEL,
-            onClick = { state.activeTextureSlot = ActiveTextureSlot.PANEL },
+            onClick = { onOpenTexturePicker(ActiveTextureSlot.PANEL) },
         )
 
         if (descriptors.isNotEmpty() && state.selectedCells.isNotEmpty()) {
@@ -1244,12 +1519,134 @@ private fun ToolbarActionButton(
 }
 
 @Composable
-private fun ToolbarDivider() {
-    Box(
-        modifier =
-            Modifier
-                .width(1.dp)
-                .height(22.dp)
-                .background(Color(0xFF333742)),
-    )
+private fun TextureSlotPickerModal(
+    state: LevelEditorState,
+    atlas: TextureAtlas?,
+    palette: SnesPalette?,
+    descriptors: List<TextureDescriptorInfo>,
+    onDismiss: () -> Unit,
+) {
+    val slotLabel =
+        when (state.activeTextureSlot) {
+            ActiveTextureSlot.TOP -> "Top"
+            ActiveTextureSlot.SKIRT -> "Skirt"
+            ActiveTextureSlot.PANEL -> "Panel"
+        }
+    val activeSelectedName =
+        when (state.activeTextureSlot) {
+            ActiveTextureSlot.TOP -> state.primarySelectedCell()?.topTex ?: state.brushCell.topTex
+            ActiveTextureSlot.SKIRT -> state.primarySelectedCell()?.skirtTex ?: state.brushCell.skirtTex
+            ActiveTextureSlot.PANEL -> state.primarySelectedCell()?.panelTex ?: state.brushCell.panelTex
+        }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            modifier = Modifier.width(380.dp),
+            shape = RoundedCornerShape(8.dp),
+            color = Color(0xFF22242B),
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "Select $slotLabel Texture",
+                        color = Color.White,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    if (state.activeTextureSlot == ActiveTextureSlot.PANEL) {
+                        ToolbarActionButton("Clear (none)") {
+                            state.assignTextureToActiveSlot(null)
+                            onDismiss()
+                        }
+                    }
+                }
+
+                if (atlas == null || palette == null || descriptors.isEmpty()) {
+                    Text(
+                        text = "Link an Atlas Document (.sfxproj) to browse textures.",
+                        color = Color(0xFF94A3B8),
+                        fontSize = 12.sp,
+                    )
+                } else {
+                    Column(
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 360.dp)
+                                .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        for ((descIdx, desc) in descriptors.withIndex()) {
+                            val isSelected = desc.name == activeSelectedName
+                            val previewBmp =
+                                remember(atlas, palette, desc) {
+                                    state
+                                        .extractDescriptorPreview(atlas, desc)
+                                        ?.let { TextureComposeRenderer.renderToImageBitmap(it, palette) }
+                                }
+                            Row(
+                                modifier =
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(4.dp))
+                                        .background(if (isSelected) Color(0xFF25354D) else Color(0xFF16181D))
+                                        .border(
+                                            1.dp,
+                                            if (isSelected) Color(0xFF3B82F6) else Color(0xFF2A2D34),
+                                            RoundedCornerShape(4.dp),
+                                        ).clickable {
+                                            state.assignTextureToActiveSlot(desc.name)
+                                            onDismiss()
+                                        }.padding(horizontal = 8.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                if (previewBmp != null) {
+                                    Image(
+                                        bitmap = previewBmp,
+                                        contentDescription = desc.name,
+                                        filterQuality = FilterQuality.None,
+                                        modifier =
+                                            Modifier
+                                                .size(28.dp)
+                                                .background(Color(0xFF0B0C0E))
+                                                .border(1.dp, Color(0xFF334155)),
+                                    )
+                                }
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = desc.name,
+                                        color = Color.White,
+                                        fontSize = 12.sp,
+                                        fontFamily = FontFamily.Monospace,
+                                    )
+                                    Text(
+                                        text = "${desc.width}x${desc.height} (#$descIdx)",
+                                        color = Color(0xFF94A3B8),
+                                        fontSize = 10.sp,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text("Close", color = Color(0xFF94A3B8))
+                    }
+                }
+            }
+        }
+    }
 }

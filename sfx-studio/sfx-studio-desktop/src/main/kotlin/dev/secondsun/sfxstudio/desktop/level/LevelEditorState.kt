@@ -12,6 +12,7 @@ import dev.secondsun.sfxstudio.core.level.Ca65MapImporter
 import dev.secondsun.sfxstudio.core.level.CellRotation
 import dev.secondsun.sfxstudio.core.level.DiagnosticSeverity
 import dev.secondsun.sfxstudio.core.level.EdgePanels
+import dev.secondsun.sfxstudio.core.level.IsoSoftwareRenderer
 import dev.secondsun.sfxstudio.core.level.LevelDocument
 import dev.secondsun.sfxstudio.core.level.LevelDocumentService
 import dev.secondsun.sfxstudio.core.level.LevelValidationResult
@@ -106,6 +107,10 @@ class LevelEditorState(
     // Viewport state
     var centerViewMode by mutableStateOf(LevelCenterViewMode.SPLIT)
     var cameraYaw by mutableStateOf(15)
+    var cameraPanX by mutableStateOf(0)
+    var cameraPanY by mutableStateOf(0)
+    private var camXQ6: Int = 0
+    private var camZQ6: Int = 0
     var isoZoom by mutableStateOf(2.0f)
 
     // Undo / Redo history
@@ -552,12 +557,101 @@ class LevelEditorState(
         }
     }
 
+    fun rotateCameraClockwise(steps: Int = 1) {
+        cameraYaw = (((cameraYaw + steps) % 120) + 120) % 120
+        syncCamToScreen()
+    }
+
+    fun rotateCameraCounterClockwise(steps: Int = 1) {
+        cameraYaw = (((cameraYaw - steps) % 120) + 120) % 120
+        syncCamToScreen()
+    }
+
     fun rotateCamera90CounterClockwise() {
-        cameraYaw = (cameraYaw + 90) % 120
+        rotateCameraCounterClockwise(30)
     }
 
     fun rotateCamera90Clockwise() {
-        cameraYaw = (cameraYaw + 30) % 120
+        rotateCameraClockwise(30)
+    }
+
+    /**
+     * Pans the camera up (moving the model down on screen, +Y screen offset).
+     */
+    fun panCameraUp(pixels: Int = PAN_STEP_PIXELS) {
+        panCameraBy(0, pixels)
+    }
+
+    /**
+     * Pans the camera down (moving the model up on screen, -Y screen offset).
+     */
+    fun panCameraDown(pixels: Int = PAN_STEP_PIXELS) {
+        panCameraBy(0, -pixels)
+    }
+
+    /**
+     * Pans the camera down the negative X axis (moving the model right on screen, +X screen offset).
+     */
+    fun panCameraNegativeX(pixels: Int = PAN_STEP_PIXELS) {
+        panCameraBy(pixels, 0)
+    }
+
+    /**
+     * Pans the camera in the positive X direction (moving the model left on screen, -X screen offset).
+     */
+    fun panCameraPositiveX(pixels: Int = PAN_STEP_PIXELS) {
+        panCameraBy(-pixels, 0)
+    }
+
+    fun panCameraBy(
+        deltaPanX: Int,
+        deltaPanY: Int,
+    ) {
+        cameraPanX = (cameraPanX + deltaPanX).coerceIn(-MAX_PAN_PIXELS, MAX_PAN_PIXELS)
+        cameraPanY = (cameraPanY + deltaPanY).coerceIn(-MAX_PAN_PIXELS, MAX_PAN_PIXELS)
+        syncScreenToCam()
+    }
+
+    fun resetCamera() {
+        cameraYaw = 15
+        cameraPanX = 0
+        cameraPanY = 0
+        camXQ6 = 0
+        camZQ6 = 0
+    }
+
+    private fun fmult(
+        a: Int,
+        b: Int,
+    ): Int = ((a.toLong() * b.toLong()) shr 16).toInt()
+
+    /**
+     * Matches `iso_camera_sync_screen_to_cam` in `gsu_iso_camera.i`:
+     * updates world-space `camXQ6` and `camZQ6` from screen-space `(cameraPanX, cameraPanY)`.
+     */
+    private fun syncScreenToCam() {
+        val sin = IsoSoftwareRenderer.sinQ14(cameraYaw)
+        val cos = IsoSoftwareRenderer.cosQ14(cameraYaw)
+        val dxQ6 = cameraPanX shl 6
+        val dzQ6 = cameraPanY shl 7
+        camXQ6 = (fmult(dxQ6, cos) + fmult(dzQ6, sin)) shl 2
+        camZQ6 = (fmult(dzQ6, cos) - fmult(dxQ6, sin)) shl 2
+    }
+
+    /**
+     * Matches `iso_camera_sync_cam_to_screen` in `gsu_iso_camera.i`:
+     * rotates world-space `(camXQ6, camZQ6)` around the viewport center `(128, 80)`
+     * and clamps the resulting screen-space offset to `[-MAX_PAN_PIXELS, MAX_PAN_PIXELS]`.
+     */
+    private fun syncCamToScreen() {
+        val sin = IsoSoftwareRenderer.sinQ14(cameraYaw)
+        val cos = IsoSoftwareRenderer.cosQ14(cameraYaw)
+        val dxQ4 = fmult(camXQ6, cos) - fmult(camZQ6, sin)
+        val dzQ4 = fmult(camXQ6, sin) + fmult(camZQ6, cos)
+        val dx = (dxQ4 + 8) shr 4
+        val dy = ((dzQ4 + 8) shr 4) shr 1
+        cameraPanX = dx.coerceIn(-MAX_PAN_PIXELS, MAX_PAN_PIXELS)
+        cameraPanY = dy.coerceIn(-MAX_PAN_PIXELS, MAX_PAN_PIXELS)
     }
 
     private fun clampSelectionToBounds() {
@@ -710,6 +804,8 @@ class LevelEditorState(
 
     companion object {
         const val MAX_HISTORY = 50
+        const val PAN_STEP_PIXELS = 2
+        const val MAX_PAN_PIXELS = 128
 
         private fun canonicalOrAbsolute(file: File): File =
             try {
