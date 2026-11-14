@@ -1,16 +1,12 @@
 """Headless framebuffer rendering capture and image verification for SuperFX scenes."""
 
 import hashlib
-import os
 from pathlib import Path
-import subprocess
-import tempfile
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional
 
 from PIL import Image
 
 from mesen_mcp.session import MesenRunner, SfxTestSession
-from mesen_mcp.utils import resolve_test_dir
 
 
 def _compute_image_metrics(png_path: Path) -> Dict[str, Any]:
@@ -21,7 +17,6 @@ def _compute_image_metrics(png_path: Path) -> Dict[str, Any]:
         get_pixels = getattr(img_rgb, "get_flattened_data", img_rgb.getdata)
         pixels = list(get_pixels())
 
-    # Count non-black pixels and compute bounding box
     non_black = 0
     min_x, min_y = width, height
     max_x, max_y = -1, -1
@@ -40,15 +35,10 @@ def _compute_image_metrics(png_path: Path) -> Dict[str, Any]:
             if y > max_y:
                 max_y = y
 
-    bbox = None
-    if non_black > 0:
-        bbox = [min_x, min_y, max_x, max_y]
+    bbox = [min_x, min_y, max_x, max_y] if non_black > 0 else None
 
-    # File hash
-    with open(png_path, "rb") as f:
-        md5_hash = hashlib.md5(f.read()).hexdigest()
+    md5_hash = hashlib.md5(png_path.read_bytes()).hexdigest()
 
-    # Perceptual average hash (8x8 grayscale)
     with Image.open(png_path) as img:
         small = img.convert("L").resize((8, 8), Image.Resampling.BILINEAR)
         get_p_pixels = getattr(small, "get_flattened_data", small.getdata)
@@ -67,72 +57,24 @@ def _compute_image_metrics(png_path: Path) -> Dict[str, Any]:
     }
 
 
-def capture_sfx_render(
-    scene_test_name: str,
-    output_png_path: Optional[str] = None,
-    settle_frames: int = 0,
-    timeout_seconds: int = 15,
-    mesen_path: Optional[str] = None,
-    runner: Optional[MesenRunner] = None,
-) -> Dict[str, Any]:
-    """Execute a SuperFX scene or test ROM headlessly and capture its framebuffer.
-
-    Args:
-        scene_test_name: Name of the scene demo or test directory (e.g. 'SpriteScale', 'IsoEngine', 'sqrt').
-        output_png_path: Optional target file path for the captured PNG.
-        settle_frames: Minimum frame count to wait before capturing (default: 0).
-            When 0, defaults to 60 for continuous scenes without test_stop, or 8 post-stop frames for tests.
-        timeout_seconds: Maximum execution time in seconds (default: 15).
-        mesen_path: Optional explicit path to Mesen executable.
-        runner: Optional MesenRunner instance.
-    """
-    try:
-        session = SfxTestSession.from_test_name(
-            scene_test_name, runner=runner, mesen_path=mesen_path
-        )
-        if (session.test_dir / "Makefile").is_file():
-            session.compile()
-    except FileNotFoundError as e:
-        return {
-            "status": "FAIL",
-            "error": str(e),
-            "png_path": None,
-            "metrics": {},
-        }
-    except RuntimeError as e:
-        return {
-            "status": "FAIL",
-            "error": "Compilation failed",
-            "output": str(e),
-            "png_path": None,
-            "metrics": {},
-        }
-
-    # Locate symbols for test_stop if available
-    test_stop_addr = session.symbols.get_offset("test_stop")
-
-    # Resolve output PNG path
-    if output_png_path:
-        target_png = Path(output_png_path).resolve()
-        target_png.parent.mkdir(parents=True, exist_ok=True)
-    else:
-        fd, tmp_file = tempfile.mkstemp(prefix="sfx_capture_", suffix=".png")
-        os.close(fd)
-        target_png = Path(tmp_file).resolve()
-
-    # Generate ephemeral Lua capture script
-    escaped_png_path = str(target_png).replace("\\", "\\\\").replace('"', '\\"')
+def _build_capture_lua(
+    session: SfxTestSession, target_png: Path, settle_frames: int
+) -> str:
+    test_stop_addr = session.resolve_gsu_exec_addr("test_stop")
+    escaped_png_path = (
+        str(target_png).replace("\\", "\\\\").replace('"', '\\"')
+    )
 
     test_stop_hook = ""
     if test_stop_addr is not None:
-        test_stop_hook = f"""
-emu.addMemoryCallback(function(address, value)
-    gsu_stopped = true
-end, emu.callbackType.exec, 0x{test_stop_addr:04X}, 0x{test_stop_addr:04X}, 4, emu.memType.gsuWorkRam)
-"""
+        cb = session.emit_gsu_exec_callback(
+            "function(address, value) gsu_stopped = true end",
+            test_stop_addr,
+        )
+        test_stop_hook = f"\n{cb}\n"
 
     has_test_stop_lua = "true" if test_stop_addr is not None else "false"
-    lua_code = f"""-- Ephemeral Mesen Render Capture Script
+    return f"""-- Ephemeral Mesen Render Capture Script
 local target_png = "{escaped_png_path}"
 local frameCount = 0
 local postStopFrames = 0
@@ -169,45 +111,47 @@ emu.addEventCallback(function()
         doCapture()
     end
 end, emu.eventType.endFrame)
+{test_stop_hook}"""
 
-{test_stop_hook}
-"""
 
-    with tempfile.NamedTemporaryFile(
-        suffix=".lua", mode="w", encoding="utf-8", delete=False
-    ) as lua_tmp:
-        lua_script_path = lua_tmp.name
-        lua_tmp.write(lua_code)
-
+def capture_sfx_render(
+    scene_test_name: str,
+    output_png_path: Optional[str] = None,
+    settle_frames: int = 0,
+    timeout_seconds: int = 15,
+    mesen_path: Optional[str] = None,
+    runner: Optional[MesenRunner] = None,
+) -> Dict[str, Any]:
+    """Execute a SuperFX scene or test ROM headlessly and capture its framebuffer."""
     try:
-        proc = session.run_lua(
-            Path(lua_script_path), timeout_seconds=timeout_seconds
+        session = SfxTestSession.from_test_name(
+            scene_test_name, runner=runner, mesen_path=mesen_path
         )
-        combined_output = proc.stdout + (("\n" + proc.stderr) if proc.stderr else "")
-
-        if not target_png.is_file() or target_png.stat().st_size == 0:
-            return {
-                "status": "FAIL",
-                "error": "Mesen did not generate screenshot file",
-                "output": combined_output.strip(),
-                "png_path": None,
-                "metrics": {},
-            }
-
-        metrics = _compute_image_metrics(target_png)
-        return {
-            "status": "SUCCESS",
-            "png_path": str(target_png),
-            "metrics": metrics,
-        }
-
-    except subprocess.TimeoutExpired as te:
-        stdout = te.stdout or ""
-        stderr = te.stderr or ""
+    except FileNotFoundError as e:
         return {
             "status": "FAIL",
-            "error": f"Execution timed out after {timeout_seconds} seconds",
-            "output": (stdout + "\n" + stderr).strip(),
+            "error": str(e),
+            "png_path": None,
+            "metrics": {},
+        }
+
+    try:
+        outcome = session.run_harness(
+            lambda s, ctx: _build_capture_lua(
+                s,
+                target_png=ctx.output_png_path,  # type: ignore[arg-type]
+                settle_frames=settle_frames,
+            ),
+            timeout_seconds=timeout_seconds,
+            output_png_path=output_png_path,
+            keep_temp_png_on_success=(output_png_path is None),
+            compile_mode="if_stale",
+        )
+    except RuntimeError as e:
+        return {
+            "status": "FAIL",
+            "error": "Compilation failed",
+            "output": str(e),
             "png_path": None,
             "metrics": {},
         }
@@ -219,9 +163,28 @@ end, emu.eventType.endFrame)
             "png_path": None,
             "metrics": {},
         }
-    finally:
-        try:
-            if os.path.isfile(lua_script_path):
-                os.remove(lua_script_path)
-        except OSError:
-            pass
+
+    if outcome.timed_out:
+        return {
+            "status": "FAIL",
+            "error": f"Execution timed out after {timeout_seconds} seconds",
+            "output": outcome.output,
+            "png_path": None,
+            "metrics": {},
+        }
+
+    if outcome.png_path is None:
+        return {
+            "status": "FAIL",
+            "error": "Mesen did not generate screenshot file",
+            "output": outcome.output,
+            "png_path": None,
+            "metrics": {},
+        }
+
+    metrics = _compute_image_metrics(outcome.png_path)
+    return {
+        "status": "SUCCESS",
+        "png_path": str(outcome.png_path),
+        "metrics": metrics,
+    }

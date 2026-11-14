@@ -4,56 +4,34 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 /**
- * Generates and parses relocatable runtime Texture Table (`.tab`) binaries for staging in
- * SuperFX Game Pak RAM Bank `$71` (ADR 0007).
+ * Internal binary generator and parser for relocatable runtime Texture Table (`.tab`) binaries
+ * staged in SuperFX Game Pak RAM Bank `$71` (ADR 0007).
  *
- * Binary layout (all fields unsigned 16-bit little-endian words):
- * - Header (8 bytes):
- *   - `+0`: `magic` (`0x5453`, ASCII `"ST"`)
- *   - `+2`: `entryCount` (`0..256`)
- *   - `+4`: `atlasWidth` (`16, 32, 64, 128, 256`)
- *   - `+6`: `strideShift` (`log2(atlasWidth)`)
- * - Descriptor entries (`entryCount * 8` bytes):
- *   - `+0`: `atlasOffset` (`0`-based byte offset in `.bin`, equal to Bank `$71:0000+` pointer)
- *   - `+2`: `uMask` (`width - 1`)
- *   - `+4`: `vMaskShifted` (`(height - 1) << strideShift`)
- *   - `+6`: `vOffsetMask` (`((height - 1) << strideShift) | ((1 << strideShift) - 1)`)
+ * Public callers access `.tab` serialization and parsing through [DescriptorTable.toTabBinary]
+ * and [DescriptorTable.parseTabBinary].
  */
-object AtlasTableGenerator {
+internal object AtlasTableGenerator {
     const val MAGIC: Int = 0x5453 // 'S' (0x53), 'T' (0x54) little-endian
     const val HEADER_BYTES: Int = 8
     const val ENTRY_BYTES: Int = 8
     const val MAX_ENTRIES: Int = 256
 
-    data class TableEntry(
-        val atlasOffset: Int,
-        val uMask: Int,
-        val vMaskShifted: Int,
-        val vOffsetMask: Int,
-    )
+    fun generate(atlas: TextureAtlas): ByteArray = generate(DescriptorTable.buildFromAtlasOrThrow(atlas))
 
-    data class ParsedTable(
-        val magic: Int,
-        val entryCount: Int,
-        val atlasWidth: Int,
-        val strideShift: Int,
-        val entries: List<TableEntry>,
-    )
-
-    fun generate(atlas: TextureAtlas): ByteArray {
-        val descriptors = atlas.resolvedDescriptors()
+    fun generate(table: DescriptorTable): ByteArray {
+        val descriptors = table.entries
         require(descriptors.size <= MAX_ENTRIES) {
             "Texture Table supports at most $MAX_ENTRIES descriptors, got ${descriptors.size}"
         }
 
-        val strideShift = atlas.strideShift
+        val strideShift = table.strideShift
         val fracMask = (1 shl strideShift) - 1
         val totalBytes = HEADER_BYTES + descriptors.size * ENTRY_BYTES
         val buf = ByteBuffer.allocate(totalBytes).order(ByteOrder.LITTLE_ENDIAN)
 
         buf.putShort(MAGIC.toShort())
         buf.putShort(descriptors.size.toShort())
-        buf.putShort(atlas.width.toShort())
+        buf.putShort(table.atlasWidth.toShort())
         buf.putShort(strideShift.toShort())
 
         for (desc in descriptors) {
@@ -68,7 +46,7 @@ object AtlasTableGenerator {
         return buf.array()
     }
 
-    fun parse(bytes: ByteArray): ParsedTable {
+    fun parse(bytes: ByteArray): DescriptorTable.ParsedTab {
         require(bytes.size >= HEADER_BYTES) {
             "Texture Table (.tab) must be at least $HEADER_BYTES bytes, got ${bytes.size}"
         }
@@ -87,7 +65,7 @@ object AtlasTableGenerator {
 
         val entries =
             List(entryCount) {
-                TableEntry(
+                DescriptorTable.TabEntry(
                     atlasOffset = buf.short.toInt() and 0xFFFF,
                     uMask = buf.short.toInt() and 0xFFFF,
                     vMaskShifted = buf.short.toInt() and 0xFFFF,
@@ -95,7 +73,7 @@ object AtlasTableGenerator {
                 )
             }
 
-        return ParsedTable(
+        return DescriptorTable.ParsedTab(
             magic = magic,
             entryCount = entryCount,
             atlasWidth = atlasWidth,

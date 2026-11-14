@@ -1,6 +1,4 @@
-from pathlib import Path
-import pytest
-from mesen_mcp.dbg_parser import parse_dbg_file, parse_dbg_string, DbgData
+from mesen_mcp.dbg_parser import parse_dbg_file, parse_dbg_string
 
 
 SAMPLE_DBG = """\
@@ -11,16 +9,18 @@ scope\tid=0,name="",mod=0,size=48,span=0
 scope\tid=1,name="gsu_sqrt32",mod=0,size=63,parent=0,span=1
 span\tid=0,seg=0,start=0,size=2,type=0
 span\tid=1,seg=0,start=2,size=4,type=1
-line\tid=10,file=0,line=42
+line\tid=10,file=0,line=42,span=0+1
 sym\tid=0,name="test_setup",addrsize=absolute,scope=0,def=10,val=0x700003,seg=0,type=lab
 sym\tid=1,name="test_stop",addrsize=absolute,scope=0,def=20,val=0x700020,seg=0,type=lab
 sym\tid=2,name="INPUT",addrsize=absolute,scope=0,def=30,val=0x700AC0,seg=0,type=lab
 sym\tid=3,name="OUTPUT",addrsize=absolute,scope=0,def=40,val=0x700AC4,seg=0,type=lab
+sym\tid=4,name="STAGED_TAB",addrsize=absolute,scope=0,def=10,val=0x718000,seg=0,type=lab
 """
 
 
-def test_parse_dbg_string():
+def test_parse_dbg_string_records_and_24bit_symbols():
     data = parse_dbg_string(SAMPLE_DBG)
+    assert data.version == "2.0"
     assert len(data.files) == 1
     assert data.files[0].name == "Test.s"
     assert len(data.segments) == 1
@@ -29,45 +29,26 @@ def test_parse_dbg_string():
     assert data.scopes[1].name == "gsu_sqrt32"
     assert len(data.spans) == 2
     assert data.spans[0].start == 0
+    assert data.lines[10].spans == [0, 1]
 
-    assert "test_setup" in data.symbols
     assert data.get_symbol_address("test_setup") == 0x700003
     assert data.get_symbol_offset("test_setup") == 0x0003
     assert data.get_symbol_bank("test_setup") == 0x70
 
-    assert data.get_symbol_offset("test_stop") == 0x0020
-    assert data.get_symbol_offset("INPUT") == 0x0AC0
-    assert data.get_symbol_offset("OUTPUT") == 0x0AC4
+    assert data.get_symbol_address("STAGED_TAB") == 0x718000
+    assert data.get_symbol_bank("STAGED_TAB") == 0x71
+    assert data.get_symbol_offset("STAGED_TAB") == 0x8000
 
-    assert len(data.lines) == 1
-    assert data.lines[10].line == 42
     sym = data.get_symbol("test_setup")
     assert sym is not None
-    loc = data.get_symbol_def_location(sym)
-    assert loc == {"path": "Test.s", "lineNumber": 42}
+    assert sym.is_word_aligned is False
+    assert data.get_symbol_def_location(sym) == {"path": "Test.s", "lineNumber": 42}
 
 
-def test_parse_dbg_sqrt_file():
-    root_dir = Path(__file__).resolve().parents[3]
-    dbg_path = root_dir / "snes-sfx-demo" / "X-GSU" / "tests" / "sqrt" / "Test.dbg"
+def test_parse_dbg_file_roundtrip(tmp_path):
+    dbg_file = tmp_path / "Test.dbg"
+    dbg_file.write_text(SAMPLE_DBG, encoding="utf-8")
 
-    if not dbg_path.exists():
-        pytest.skip(f"Test.dbg not found at {dbg_path}")
-
-    data = parse_dbg_file(dbg_path)
-    assert len(data.scopes) > 0
-    assert len(data.spans) > 0
-    assert len(data.symbols) > 0
-
-    # Key symbols from sqrt test
-    assert "test_stop" in data.symbols
-    assert "test_setup" in data.symbols
-    assert "INPUT" in data.symbols
-    assert "OUTPUT" in data.symbols
-
-    assert data.get_symbol_offset("test_setup") == 0x0003
-    assert data.get_symbol_offset("test_stop") == 0x0020
-    input_offset = data.get_symbol_offset("INPUT")
-    output_offset = data.get_symbol_offset("OUTPUT")
-    assert input_offset is not None and input_offset > 0
-    assert output_offset == input_offset + 4
+    data = parse_dbg_file(dbg_file)
+    assert data.get_symbol_address("INPUT") == 0x700AC0
+    assert data.get_symbol_address("OUTPUT") == 0x700AC4

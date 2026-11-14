@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.AlertDialog
@@ -47,7 +46,6 @@ import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
-import dev.secondsun.sfxstudio.core.level.SFX_LEVEL_EXTENSION
 import dev.secondsun.sfxstudio.desktop.atlas.AtlasEditorState
 import dev.secondsun.sfxstudio.desktop.atlas.AtlasEditorWorkspace
 import dev.secondsun.sfxstudio.desktop.level.LevelEditorState
@@ -58,8 +56,6 @@ import dev.secondsun.sfxstudio.desktop.ui.PlatformDpi
 import dev.secondsun.sfxstudio.desktop.ui.components.AboutModal
 import dev.secondsun.sfxstudio.desktop.ui.components.CloseTabConfirmationModal
 import dev.secondsun.sfxstudio.desktop.ui.components.ExitConfirmationModal
-import java.awt.FileDialog
-import java.awt.Frame
 import java.io.File
 import kotlin.system.exitProcess
 
@@ -74,6 +70,16 @@ fun main(args: Array<String>) {
 
     application {
         val studioState = remember { StudioState(initialFiles = fileArgs) }
+
+        fun menuShortcut(
+            key: Key,
+            shift: Boolean = false,
+        ): KeyShortcut =
+            if (studioState.platform.isMacOs) {
+                KeyShortcut(key, meta = true, shift = shift)
+            } else {
+                KeyShortcut(key, ctrl = true, shift = shift)
+            }
 
         val windowState =
             rememberWindowState(
@@ -139,61 +145,27 @@ fun main(args: Array<String>) {
             // --- Native Menu Bar ---
             MenuBar {
                 Menu("File", mnemonic = 'F') {
-                    Item("New Atlas", shortcut = KeyShortcut(Key.N, ctrl = true)) {
+                    Item("New Atlas", shortcut = menuShortcut(Key.N)) {
                         studioState.newAtlasSession()
                     }
 
-                    Item("New Level...", shortcut = KeyShortcut(Key.N, ctrl = true, shift = true)) {
+                    Item("New Level...", shortcut = menuShortcut(Key.N, shift = true)) {
                         studioState.showNewLevelModal = true
                     }
 
-                    Item("Open Document...", shortcut = KeyShortcut(Key.O, ctrl = true)) {
-                        val dialog = FileDialog(null as Frame?, "Open SuperFX Document", FileDialog.LOAD)
-                        dialog.setFilenameFilter { _, name ->
-                            name.endsWith(".sfxproj", ignoreCase = true) ||
-                                name.endsWith(".sfxatlas", ignoreCase = true) ||
-                                name.endsWith(".$SFX_LEVEL_EXTENSION", ignoreCase = true)
-                        }
-                        dialog.isVisible = true
-                        val file = dialog.file?.let { File(dialog.directory, it) }
-                        if (file != null) {
-                            studioState.openDocument(file)
-                        }
+                    Item("Open Document...", shortcut = menuShortcut(Key.O)) {
+                        studioState.promptOpenDocument()
                     }
 
-                    Item("Save", shortcut = KeyShortcut(Key.S, ctrl = true)) {
-                        val session = studioState.activeSession
-                        if (session != null) {
-                            if (session.documentFile != null) {
-                                session.save()
-                            } else {
-                                val defaultExt = if (session is LevelEditorState) SFX_LEVEL_EXTENSION else "sfxproj"
-                                val dialog = FileDialog(null as Frame?, "Save Document", FileDialog.SAVE)
-                                dialog.file = "${session.displayTitle}.$defaultExt"
-                                dialog.isVisible = true
-                                val file = dialog.file?.let { File(dialog.directory, it) }
-                                if (file != null) {
-                                    session.saveAs(file)
-                                }
-                            }
-                        }
+                    Item("Save", shortcut = menuShortcut(Key.S)) {
+                        studioState.saveActiveSession()
                     }
 
-                    Item("Save As...") {
-                        val session = studioState.activeSession
-                        if (session != null) {
-                            val defaultExt = if (session is LevelEditorState) SFX_LEVEL_EXTENSION else "sfxproj"
-                            val dialog = FileDialog(null as Frame?, "Save Document As", FileDialog.SAVE)
-                            dialog.file = "${session.displayTitle}.$defaultExt"
-                            dialog.isVisible = true
-                            val file = dialog.file?.let { File(dialog.directory, it) }
-                            if (file != null) {
-                                session.saveAs(file)
-                            }
-                        }
+                    Item("Save As...", shortcut = menuShortcut(Key.S, shift = true)) {
+                        studioState.saveActiveSessionAs()
                     }
 
-                    Item("Close Tab", shortcut = KeyShortcut(Key.W, ctrl = true)) {
+                    Item("Close Tab", shortcut = menuShortcut(Key.W)) {
                         if (studioState.openSessions.isNotEmpty()) {
                             studioState.requestCloseSession(studioState.activeSessionIndex)
                         }
@@ -201,13 +173,13 @@ fun main(args: Array<String>) {
 
                     Separator()
 
-                    Item("Export Assets...", shortcut = KeyShortcut(Key.E, ctrl = true)) {
+                    Item("Export Assets...", shortcut = menuShortcut(Key.E)) {
                         (studioState.activeSession as? AtlasEditorState)?.showExportModal = true
                     }
 
                     Separator()
 
-                    Item("Import Bitmap...", shortcut = KeyShortcut(Key.I, ctrl = true)) {
+                    Item("Import Bitmap...", shortcut = menuShortcut(Key.I)) {
                         (studioState.activeSession as? AtlasEditorState)?.promptImportFile()
                     }
 
@@ -219,7 +191,7 @@ fun main(args: Array<String>) {
 
                     Separator()
 
-                    Item("Exit", shortcut = KeyShortcut(Key.Q, ctrl = true)) {
+                    Item("Exit", shortcut = menuShortcut(Key.Q)) {
                         if (studioState.hasAnyUnsavedChanges) {
                             studioState.showExitConfirmationModal = true
                         } else {
@@ -229,15 +201,15 @@ fun main(args: Array<String>) {
                 }
 
                 Menu("View", mnemonic = 'V') {
-                    Item("Zoom In (UI)", shortcut = KeyShortcut(Key.Equals, ctrl = true)) {
+                    Item("Zoom In (UI)", shortcut = menuShortcut(Key.Equals)) {
                         studioState.zoomInUi()
                     }
 
-                    Item("Zoom Out (UI)", shortcut = KeyShortcut(Key.Minus, ctrl = true)) {
+                    Item("Zoom Out (UI)", shortcut = menuShortcut(Key.Minus)) {
                         studioState.zoomOutUi()
                     }
 
-                    Item("Reset UI Scale (100%)", shortcut = KeyShortcut(Key.Zero, ctrl = true)) {
+                    Item("Reset UI Scale (100%)", shortcut = menuShortcut(Key.Zero)) {
                         studioState.resetUiScale()
                     }
 
@@ -401,12 +373,12 @@ fun main(args: Array<String>) {
                     ExitConfirmationModal(studioState, onConfirmExit = ::exitApplication)
                     CloseTabConfirmationModal(studioState)
 
-                    // Studio Error Dialog
+                    // Single Studio Error Modal
                     studioState.errorMessage?.let { errorText ->
                         AlertDialog(
                             onDismissRequest = { studioState.errorMessage = null },
                             title = { Text("Notice", color = Color.White) },
-                            text = { Text(errorText, color = Color(0xFFEF4444)) },
+                            text = { Text(errorText, color = Color(0xFFFCA5A5), fontSize = 12.sp) },
                             confirmButton = {
                                 Button(
                                     onClick = { studioState.errorMessage = null },

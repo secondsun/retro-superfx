@@ -29,3 +29,6 @@ mesen-mcp = "mesen_mcp.server:main"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "emulator: end-to-end smoke tests requiring a real Mesen CE executable",
+]

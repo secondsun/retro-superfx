@@ -1,158 +1,127 @@
+import os
 from pathlib import Path
-import pytest
 import subprocess
-from mesen_mcp.session import (
+import pytest
+
+from mesen_mcp import (
+    BuildArtifactIndex,
     FakeMesenRunner,
     SfxTestSession,
+    SubprocessMesenRunner,
     SymbolTable,
 )
-from mesen_mcp.utils import resolve_test_dir
 
 
-def test_symbol_table_offsets_and_aliases():
-    table = SymbolTable(
-        symbols={
-            "my_var": 0x1000,
-            "VECTOR_ADD_OUT": 0x2000,
-            "test_setup": 0x0004,
-        },
-        sizes={
-            "my_var": 4,
-        },
+def test_symbol_table_facade_over_build_artifact_index():
+    idx = BuildArtifactIndex.from_strings(
+        cpu_sym_text=(
+            "al 700004 .test_setup\n"
+            "al 701000 .MY_VAR\n"
+            "al 701004 .VECTOR_ADD_OUT\n"
+            "al 718000 .STAGED_TAB\n"
+        )
     )
+    table = SymbolTable.from_index(idx)
 
-    # Exact match
-    assert table.get_offset("my_var") == 0x1000
-    # Case insensitivity
     assert table.get_offset("MY_VAR") == 0x1000
-    assert table.get_offset("Test_Setup") == 0x0004
-
-    # OUTPUT alias resolution
-    assert table.get_offset("OUTPUT") == 0x2000
-    assert table.get_offset("output") == 0x2000
-
-    # Unknown
-    assert table.get_offset("unknown_symbol") is None
-
-    # Sizes
-    assert table.get_size("my_var") == 4
+    assert table.get_offset("my_var") == 0x1000
     assert table.get_size("MY_VAR") == 4
-    assert table.get_size("unspecified_var", default=2) == 2
+    assert table.get_offset("OUTPUT") == 0x1004
+    # Bank $71 linear offset 0x18000 preserved through SymbolTable facade
+    assert table.get_offset("STAGED_TAB") == 0x18000
+    assert table.get_address("STAGED_TAB") == 0x718000
 
 
-def test_fake_mesen_runner():
-    runner = FakeMesenRunner(stdout="TEST PASSED\n", stderr="", returncode=0)
-    proc = runner.run("/usr/local/bin/mesen", ["--testrunner", "Test.sfc", "test.lua"], timeout=10)
+def test_fake_mesen_runner_captures_lua_and_invokes_on_run(tmp_path):
+    lua_file = tmp_path / "harness.lua"
+    lua_file.write_text("-- test harness\nemu.stop(0)\n", encoding="utf-8")
 
-    assert proc.returncode == 0
-    assert proc.stdout == "TEST PASSED\n"
-    assert runner.last_cmd == ["/usr/local/bin/mesen", "--testrunner", "Test.sfc", "test.lua"]
+    seen = {}
 
+    def hook(cmd, lua_code):
+        seen["cmd"] = cmd
+        seen["lua"] = lua_code
+        return None
 
-def test_sfx_test_session_with_fake_runner(tmp_path):
-    # Create fake test directory
-    test_dir = tmp_path / "fake_test"
-    test_dir.mkdir()
-    sfc_file = test_dir / "Test.sfc"
-    sfc_file.write_bytes(b"\x00" * 100)
-    lua_file = test_dir / "test.lua"
-    lua_file.write_text("local OUTPUT = 0x0000\nlocal other = 123\n")
+    runner = FakeMesenRunner(stdout="OK\n", on_run=hook)
+    proc = runner.run("/bin/mesen", ["--testrunner", str(lua_file), "Test.sfc"], timeout=5)
 
-    runner = FakeMesenRunner(stdout="TEST PASSED: SFX Math Assertions Satisfied\n", returncode=0)
-    session = SfxTestSession(test_dir=test_dir, test_name="fake_test", runner=runner, mesen_path="/dummy/mesen")
-
-    # Inject mock symbols
-    session._symbols = SymbolTable(symbols={"VECTOR_ADD_OUT": 0x3456})
-
-    # Test sync_lua_script using OUTPUT alias
-    session.sync_lua_script(lua_file)
-    synced_content = lua_file.read_text()
-    assert "local OUTPUT = 0x3456" in synced_content
-
-    # Test run_lua
-    proc = session.run_lua(lua_file, timeout_seconds=5)
-    assert proc.returncode == 0
-    assert "TEST PASSED" in proc.stdout
-    assert runner.last_cmd[0] == "/dummy/mesen"
-    assert runner.last_cmd[1] == "--testrunner"
-    assert str(sfc_file) in runner.last_cmd
-    assert str(lua_file) in runner.last_cmd
+    assert proc.stdout == "OK\n"
+    assert runner.last_lua_code == "-- test harness\nemu.stop(0)\n"
+    assert runner.lua_scripts == ["-- test harness\nemu.stop(0)\n"]
+    assert seen["lua"] == runner.last_lua_code
 
 
-def test_fake_runner_default_mesen_path(tmp_path):
-    test_dir = tmp_path / "fake_test_default_path"
-    test_dir.mkdir()
-    sfc_file = test_dir / "Test.sfc"
-    sfc_file.write_bytes(b"\x00" * 10)
-    lua_file = test_dir / "test.lua"
-    lua_file.write_text("local foo = 1\n")
+def test_session_incremental_compile_if_stale(tmp_path, monkeypatch):
+    proj = tmp_path / "inc_proj"
+    proj.mkdir()
+    makefile = proj / "Makefile"
+    makefile.write_text("all:\n\t@true\n", encoding="utf-8")
+    src = proj / "main.sgs"
+    src.write_text("; kernel\n", encoding="utf-8")
+    sfc = proj / "Test.sfc"
+    sfc.write_bytes(b"\x00" * 32)
+    dbg = proj / "Test.dbg"
+    dbg.write_text("version\tmajor=2,minor=0\n", encoding="utf-8")
 
-    runner = FakeMesenRunner(stdout="TEST PASSED\n", returncode=0)
-    # mesen_path is None; should default to "mesen" without find_mesen error
-    session = SfxTestSession(test_dir=test_dir, test_name="fake_test", runner=runner, mesen_path=None)
+    make_calls = []
 
-    # compile() should skip without throwing even without a Makefile
-    session.compile()
+    def fake_subprocess_run(cmd, **kwargs):
+        make_calls.append(cmd)
+        # Touch artifacts to simulate fresh build
+        os.utime(sfc, (3000, 3000))
+        os.utime(dbg, (3000, 3000))
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
-    proc = session.run_lua(lua_file, timeout_seconds=5)
-    assert proc.returncode == 0
-    assert runner.last_cmd[0] == "mesen"
-    assert runner.last_cmd[1] == "--testrunner"
+    monkeypatch.setattr(subprocess, "run", fake_subprocess_run)
+
+    # 1. Fresh artifacts (newer than source and Makefile) -> compile(mode="if_stale") skips make!
+    os.utime(makefile, (1000, 1000))
+    os.utime(src, (1000, 1000))
+    os.utime(sfc, (2000, 2000))
+    os.utime(dbg, (2000, 2000))
+
+    session = SfxTestSession(
+        test_dir=proj, test_name="inc_proj", runner=SubprocessMesenRunner()
+    )
+    assert session.compile(mode="if_stale") is False
+    assert make_calls == []
+
+    # 2. Source updated -> incremental `make all` runs WITHOUT `clean`!
+    os.utime(src, (2500, 2500))
+    assert session.compile(mode="if_stale") is True
+    assert len(make_calls) == 1
+    assert make_calls[0] == ["make", "-C", str(proj.resolve()), "all"]
+    assert "clean" not in make_calls[0]
+
+    # 3. Directory without Makefile skips gracefully without error
+    prebuilt = tmp_path / "prebuilt_rom"
+    prebuilt.mkdir()
+    (prebuilt / "SuperFX.sfc").write_bytes(b"\x00" * 32)
+    prebuilt_session = SfxTestSession(
+        test_dir=prebuilt, test_name="prebuilt", runner=SubprocessMesenRunner()
+    )
+    assert prebuilt_session.compile(mode="always", force=True) is False
 
 
-def test_symbol_table_load_merges_dbg_and_cpu_sym_for_custom_symbols(tmp_path):
-    test_dir = tmp_path / "custom_sym_test"
-    test_dir.mkdir()
+def test_session_run_harness_cleans_temp_files_on_value_error(tmp_path):
+    proj = tmp_path / "err_proj"
+    proj.mkdir()
+    (proj / "Test.sfc").write_bytes(b"\x00" * 16)
+    (proj / "Test.cpu.sym").write_text("al 808000 .ROM_ONLY\n", encoding="utf-8")
 
-    # Create Test.dbg with base symbols
-    dbg_content = """\
-version\tmajor=2,minor=0
-file\tid=0,name="Test.s",size=100,mtime=0x0,mod=0
-seg\tid=0,name="CODE",start=0x808000,size=0x10,addrsize=absolute,type=ro,oname="Test.sfc",ooffs=0
-span\tid=0,seg=0,start=0,size=2,type=0
-line\tid=0,file=0,line=1
-sym\tid=0,name="test_setup",addrsize=absolute,scope=0,def=0,val=0x700004,seg=0,type=lab
-sym\tid=1,name="test_stop",addrsize=absolute,scope=0,def=0,val=0x700020,seg=0,type=lab
-"""
-    (test_dir / "Test.dbg").write_text(dbg_content, encoding="utf-8")
-
-    # Create Test.cpu.sym with custom symbols not present in Test.dbg
-    cpu_sym_content = """\
-al 700004 .test_setup
-al 700020 .test_stop
-al 700010 .TEST_CASE_IDX
-al 700014 .TEST_RESULT
-"""
-    (test_dir / "Test.cpu.sym").write_text(cpu_sym_content, encoding="utf-8")
-
-    # Create test.lua with custom symbols and a loop counter
-    lua_file = test_dir / "test.lua"
-    lua_file.write_text(
-        "local test_setup = 0x0000\n"
-        "local test_stop = 0x0000\n"
-        "local TEST_CASE_IDX = 0x0000\n"
-        "local TEST_RESULT = 0x0000\n"
-        "local fail_count = 0\n"
+    leaked_paths = []
+    session = SfxTestSession(
+        test_dir=proj, test_name="err_proj", runner=FakeMesenRunner()
     )
 
-    runner = FakeMesenRunner(stdout="TEST PASSED\n", returncode=0)
-    session = SfxTestSession(test_dir=test_dir, test_name="custom_sym_test", runner=runner)
+    def bad_builder(s, ctx):
+        leaked_paths.append(ctx.results_json_path)
+        return "\n".join(s.emit_lua_overrides({"ROM_ONLY": 1}))
 
-    # Verify SymbolTable loaded symbols from both Test.dbg and Test.cpu.sym
-    table = session.symbols
-    assert table.get_offset("test_setup") == 0x0004
-    assert table.get_offset("test_stop") == 0x0020
-    assert table.get_offset("TEST_CASE_IDX") == 0x0010
-    assert table.get_offset("TEST_RESULT") == 0x0014
+    with pytest.raises(ValueError, match="emu.memType.gsuWorkRam"):
+        session.run_harness(bad_builder, json_sentinel="MATH_RESULTS_JSON")
 
-    # Verify sync_lua_script updates custom symbols from Test.cpu.sym even when Test.dbg is present
-    session.sync_lua_script(lua_file)
-    synced = lua_file.read_text(encoding="utf-8")
-    assert "local test_setup = 0x0004" in synced
-    assert "local test_stop = 0x0020" in synced
-    assert "local TEST_CASE_IDX = 0x0010" in synced
-    assert "local TEST_RESULT = 0x0014" in synced
-    assert "local fail_count = 0" in synced
-
-
-
+    assert len(leaked_paths) == 1
+    assert leaked_paths[0] is not None
+    assert not leaked_paths[0].exists()

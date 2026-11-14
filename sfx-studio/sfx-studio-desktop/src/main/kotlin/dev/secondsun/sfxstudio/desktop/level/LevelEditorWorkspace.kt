@@ -25,7 +25,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.AlertDialog
 import androidx.compose.material.Button
 import androidx.compose.material.ButtonDefaults
 import androidx.compose.material.Checkbox
@@ -72,6 +71,8 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import dev.secondsun.sfxstudio.core.atlas.DescriptorLookup
+import dev.secondsun.sfxstudio.core.atlas.DescriptorTable
 import dev.secondsun.sfxstudio.core.atlas.SnesPalette
 import dev.secondsun.sfxstudio.core.atlas.TextureAtlas
 import dev.secondsun.sfxstudio.core.atlas.TextureDescriptorInfo
@@ -81,13 +82,9 @@ import dev.secondsun.sfxstudio.core.level.IsoRenderResult
 import dev.secondsun.sfxstudio.core.level.IsoSoftwareRenderer
 import dev.secondsun.sfxstudio.core.level.LevelValidationResult
 import dev.secondsun.sfxstudio.core.level.MapGrid
-import dev.secondsun.sfxstudio.core.level.SFX_LEVEL_EXTENSION
 import dev.secondsun.sfxstudio.core.level.ShapeArchetype
 import dev.secondsun.sfxstudio.desktop.ui.TextureComposeRenderer
 import kotlinx.coroutines.delay
-import java.awt.FileDialog
-import java.awt.Frame
-import java.io.File
 import kotlin.math.roundToInt
 
 enum class IsoCameraControlAction(
@@ -160,14 +157,11 @@ fun LevelEditorWorkspace(state: LevelEditorState) {
     val resolvedPair = state.resolveAtlasAndPalette()
     val atlas = resolvedPair?.first
     val palette = resolvedPair?.second
-    val descriptors =
+    val descriptorTable =
         remember(atlas) {
-            try {
-                atlas?.resolvedDescriptors().orEmpty()
-            } catch (_: Exception) {
-                emptyList()
-            }
+            atlas?.descriptorTable()?.getOrNull()
         }
+    val descriptors = descriptorTable?.entries.orEmpty()
     val validation =
         remember(state.document, atlas) {
             state.currentValidation()
@@ -190,8 +184,10 @@ fun LevelEditorWorkspace(state: LevelEditorState) {
                         return@onPreviewKeyEvent false
                     }
                     if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    val primaryMod = event.isCtrlPressed || event.isMetaPressed
+                    val noMod = !event.isCtrlPressed && !event.isMetaPressed && !event.isAltPressed
 
-                    if (camAction != null && !event.isCtrlPressed && !event.isAltPressed && !event.isMetaPressed) {
+                    if (camAction != null && noMod) {
                         if (event.key !in heldCameraKeys) {
                             heldCameraKeys = heldCameraKeys + event.key
                             camAction.perform(state)
@@ -200,39 +196,43 @@ fun LevelEditorWorkspace(state: LevelEditorState) {
                     }
 
                     when {
-                        event.isCtrlPressed && event.key == Key.Z && event.isShiftPressed -> {
+                        primaryMod && event.key == Key.Z && event.isShiftPressed -> {
                             state.redo()
                             true
                         }
-                        event.isCtrlPressed && event.key == Key.Z -> {
+                        primaryMod && event.key == Key.Z -> {
                             state.undo()
                             true
                         }
-                        event.isCtrlPressed && event.key == Key.Y -> {
+                        primaryMod && event.key == Key.Y -> {
                             state.redo()
                             true
                         }
-                        !event.isCtrlPressed && event.key == Key.V -> {
+                        primaryMod && event.key == Key.S && !event.isShiftPressed -> {
+                            state.requestSave()
+                            true
+                        }
+                        noMod && event.key == Key.V -> {
                             state.activeTool = LevelTool.SELECT
                             true
                         }
-                        !event.isCtrlPressed && event.key == Key.B -> {
+                        noMod && event.key == Key.B -> {
                             state.activeTool = LevelTool.BRUSH
                             true
                         }
-                        !event.isCtrlPressed && event.key == Key.I -> {
+                        noMod && event.key == Key.I -> {
                             state.activeTool = LevelTool.EYEDROPPER
                             true
                         }
-                        !event.isCtrlPressed && event.key == Key.R -> {
+                        noMod && event.key == Key.R -> {
                             state.rotateSelectedClockwise()
                             true
                         }
-                        !event.isCtrlPressed && event.key == Key.LeftBracket -> {
+                        noMod && event.key == Key.LeftBracket -> {
                             state.stepSelectedHeight(-1)
                             true
                         }
-                        !event.isCtrlPressed && event.key == Key.RightBracket -> {
+                        noMod && event.key == Key.RightBracket -> {
                             state.stepSelectedHeight(1)
                             true
                         }
@@ -282,7 +282,7 @@ fun LevelEditorWorkspace(state: LevelEditorState) {
                                             .background(Color(0xFF2A2D34)),
                                 )
                                 Box(modifier = Modifier.weight(0.85f).fillMaxHeight()) {
-                                    TopDownGridViewport(state, atlas, palette, validation)
+                                    TopDownGridViewport(state, descriptorTable, palette, validation)
                                 }
                             }
                         }
@@ -294,7 +294,7 @@ fun LevelEditorWorkspace(state: LevelEditorState) {
                                 activeCameraActions = activeCameraActions,
                                 onCameraButtonPressChange = { pressedMouseCameraAction = it },
                             )
-                        LevelCenterViewMode.TOP_DOWN_2D -> TopDownGridViewport(state, atlas, palette, validation)
+                        LevelCenterViewMode.TOP_DOWN_2D -> TopDownGridViewport(state, descriptorTable, palette, validation)
                     }
                 }
             }
@@ -314,28 +314,10 @@ fun LevelEditorWorkspace(state: LevelEditorState) {
     if (showTexturePickerModal) {
         TextureSlotPickerModal(
             state = state,
-            atlas = atlas,
+            descriptorTable = descriptorTable,
             palette = palette,
             descriptors = descriptors,
             onDismiss = { showTexturePickerModal = false },
-        )
-    }
-
-    state.errorMessage?.let { err ->
-        AlertDialog(
-            onDismissRequest = { state.errorMessage = null },
-            title = { Text("Level Editor Notice", color = Color.White) },
-            text = { Text(err, color = Color(0xFFFCA5A5), fontSize = 12.sp) },
-            confirmButton = {
-                Button(
-                    onClick = { state.errorMessage = null },
-                    colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFF3B82F6)),
-                ) {
-                    Text("OK", color = Color.White)
-                }
-            },
-            backgroundColor = Color(0xFF22242B),
-            shape = RoundedCornerShape(8.dp),
         )
     }
 }
@@ -358,31 +340,12 @@ private fun LevelTopToolbar(state: LevelEditorState) {
 
         Spacer(modifier = Modifier.weight(1f))
 
-        ToolbarActionButton("Import .i") {
-            val dialog = FileDialog(null as Frame?, "Import Legacy ca65 Map (.i)", FileDialog.LOAD)
-            dialog.setFilenameFilter { _, name -> name.endsWith(".i", ignoreCase = true) }
-            dialog.isVisible = true
-            val picked = dialog.file?.let { File(dialog.directory, it) }
-            if (picked != null) {
-                state.importCa65Map(picked)
-            }
+        ToolbarActionButton("Import .i...") {
+            state.promptImportCa65Map()
         }
 
         Button(
-            onClick = {
-                val existing = state.currentLevelFile
-                if (existing != null) {
-                    state.saveAs(existing)
-                } else {
-                    val dialog = FileDialog(null as Frame?, "Save & Pack Level (.sfxlevel)", FileDialog.SAVE)
-                    dialog.file = "${state.displayTitle}.$SFX_LEVEL_EXTENSION"
-                    dialog.isVisible = true
-                    val picked = dialog.file?.let { File(dialog.directory, it) }
-                    if (picked != null) {
-                        state.saveAs(picked)
-                    }
-                }
-            },
+            onClick = { state.requestSave() },
             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
             colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFF059669)),
             modifier = Modifier.height(28.dp),
@@ -583,17 +546,8 @@ private fun LevelLeftPaletteDock(state: LevelEditorState) {
                 )
             }
             Spacer(modifier = Modifier.width(6.dp))
-            ToolbarActionButton("Link") {
-                val dialog = FileDialog(null as Frame?, "Link Texture Atlas", FileDialog.LOAD)
-                dialog.setFilenameFilter { _, name ->
-                    name.endsWith(".sfxproj", ignoreCase = true) ||
-                        name.endsWith(".sfxatlas", ignoreCase = true)
-                }
-                dialog.isVisible = true
-                val picked = dialog.file?.let { File(dialog.directory, it) }
-                if (picked != null) {
-                    state.linkAtlasFile(picked)
-                }
+            ToolbarActionButton("Link...") {
+                state.promptLinkAtlas()
             }
         }
     }
@@ -818,7 +772,6 @@ private fun Iso3DViewport(
                 filterQuality = FilterQuality.None,
             )
 
-            // Draw wireframe selection floor polygons
             val cols = state.document.grid.cols
             for ((selC, selR) in state.selectedCells) {
                 val cellIdx = selR * cols + selC
@@ -976,43 +929,37 @@ private fun mapCanvasToRenderPixel(
 @Composable
 private fun TopDownGridViewport(
     state: LevelEditorState,
-    atlas: TextureAtlas?,
+    descriptorTable: DescriptorTable?,
     palette: SnesPalette?,
     validation: LevelValidationResult,
 ) {
     val grid = state.document.grid
-    // Precompute average RGB swatch per descriptor for fast 2D grid tinting
-    val texTintMap =
-        remember(atlas, palette) {
-            if (atlas == null || palette == null) {
+    // Precompute average RGB swatch per descriptor index directly via DescriptorTable.extractPixels
+    val texTintByIndex =
+        remember(descriptorTable, palette) {
+            if (descriptorTable == null || palette == null) {
                 emptyMap()
             } else {
                 buildMap {
-                    val descriptors = runCatching { atlas.resolvedDescriptors() }.getOrDefault(emptyList())
-                    val atlasBin = atlas.generateBinary()
-                    for (desc in descriptors) {
+                    for ((idx, desc) in descriptorTable.entries.withIndex()) {
+                        val pixels = descriptorTable.extractPixels(desc)
                         var rSum = 0L
                         var gSum = 0L
                         var bSum = 0L
                         var count = 0L
-                        for (v in 0 until desc.height) {
-                            for (u in 0 until desc.width) {
-                                val idx = desc.romOffset + v * atlas.width + u
-                                if (idx in atlasBin.indices) {
-                                    val slot = atlasBin[idx].toInt() and 0x0F
-                                    if (slot != 0) {
-                                        val rgb = palette[slot].rgb888
-                                        rSum += (rgb shr 16) and 0xFF
-                                        gSum += (rgb shr 8) and 0xFF
-                                        bSum += rgb and 0xFF
-                                        count++
-                                    }
-                                }
+                        for (b in pixels) {
+                            val slot = b.toInt() and 0x0F
+                            if (slot != 0) {
+                                val rgb = palette[slot].rgb888
+                                rSum += (rgb shr 16) and 0xFF
+                                gSum += (rgb shr 8) and 0xFF
+                                bSum += rgb and 0xFF
+                                count++
                             }
                         }
                         if (count > 0) {
                             put(
-                                desc.name,
+                                idx,
                                 Color(
                                     red = (rSum / count).toInt(),
                                     green = (gSum / count).toInt(),
@@ -1097,7 +1044,9 @@ private fun TopDownGridViewport(
                     val cell = grid.cellAt(c, r)
                     val x = originX + c * cellPix
                     val y = originY + r * cellPix
-                    val baseCol = texTintMap[cell.topTex] ?: Color(0xFF283040)
+                    val resolvedIdx =
+                        (descriptorTable?.lookup(cell.topTex) as? DescriptorLookup.Found)?.index
+                    val baseCol = resolvedIdx?.let { texTintByIndex[it] } ?: Color(0xFF283040)
                     val shadeBoost = (cell.baseHeight * 0.04f).coerceAtMost(0.35f)
                     val shaded =
                         Color(
@@ -1112,7 +1061,6 @@ private fun TopDownGridViewport(
                         size = Size(cellPix - 2f, cellPix - 2f),
                     )
 
-                    // Draw edge panel ticks along N/E/S/W borders
                     val panelColor = if (cell.panels.tall2h) Color(0xFFFBBF24) else Color(0xFF22D3EE)
                     val tickThick = (cellPix * 0.12f).coerceIn(2f, 5f)
                     if (cell.panels.north) {
@@ -1128,7 +1076,6 @@ private fun TopDownGridViewport(
                         drawRect(panelColor, Offset(x + cellPix - 2f - tickThick, y + 2f), Size(tickThick, cellPix - 4f))
                     }
 
-                    // Draw rotation direction line for sloped/directional archetypes
                     if (!cell.archetype.isRotationallySymmetric) {
                         val cx = x + cellPix * 0.5f
                         val cy = y + cellPix * 0.5f
@@ -1144,7 +1091,6 @@ private fun TopDownGridViewport(
                         drawCircle(Color.White, radius = 2.5f, center = tip)
                     }
 
-                    // Diagnostic outline
                     when (state.hasDiagnosticAt(c, r, validation)) {
                         DiagnosticSeverity.ERROR ->
                             drawRect(
@@ -1163,7 +1109,6 @@ private fun TopDownGridViewport(
                         null -> {}
                     }
 
-                    // Selection outline
                     if ((c to r) in state.selectedCells) {
                         drawRect(
                             color = Color(0xFF38BDF8),
@@ -1227,7 +1172,6 @@ private fun LevelRightInspectorDock(
                 .padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        // Grid Dimensions section
         Text("Map Grid (${grid.cols}x${grid.rows})", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -1262,7 +1206,6 @@ private fun LevelRightInspectorDock(
 
         Divider(color = Color(0xFF2C2F37))
 
-        // Selection Header
         val selHeader =
             when {
                 state.selectedCells.size > 1 -> "${state.selectedCells.size} Cells Selected"
@@ -1389,7 +1332,6 @@ private fun LevelRightInspectorDock(
 
         Divider(color = Color(0xFF2C2F37))
 
-        // Perimeter Edge Panels
         Text("Perimeter Edge Panels", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             ToolbarChip("N", inspectedCell.panels.north) {
@@ -1428,7 +1370,6 @@ private fun LevelRightInspectorDock(
             Text("Tall 2h Wall Panel (32px)", color = Color(0xFFCBD5E1), fontSize = 11.sp)
         }
 
-        // Per-cell diagnostics
         if (primaryCoord != null) {
             val cellDiags =
                 validation.allDiagnostics.filter {
@@ -1521,7 +1462,7 @@ private fun ToolbarActionButton(
 @Composable
 private fun TextureSlotPickerModal(
     state: LevelEditorState,
-    atlas: TextureAtlas?,
+    descriptorTable: DescriptorTable?,
     palette: SnesPalette?,
     descriptors: List<TextureDescriptorInfo>,
     onDismiss: () -> Unit,
@@ -1538,6 +1479,7 @@ private fun TextureSlotPickerModal(
             ActiveTextureSlot.SKIRT -> state.primarySelectedCell()?.skirtTex ?: state.brushCell.skirtTex
             ActiveTextureSlot.PANEL -> state.primarySelectedCell()?.panelTex ?: state.brushCell.panelTex
         }
+    val selectedIndex = (descriptorTable?.lookup(activeSelectedName) as? DescriptorLookup.Found)?.index
 
     Dialog(onDismissRequest = onDismiss) {
         Surface(
@@ -1568,7 +1510,7 @@ private fun TextureSlotPickerModal(
                     }
                 }
 
-                if (atlas == null || palette == null || descriptors.isEmpty()) {
+                if (descriptorTable == null || palette == null || descriptors.isEmpty()) {
                     Text(
                         text = "Link an Atlas Document (.sfxproj) to browse textures.",
                         color = Color(0xFF94A3B8),
@@ -1584,12 +1526,13 @@ private fun TextureSlotPickerModal(
                         verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
                         for ((descIdx, desc) in descriptors.withIndex()) {
-                            val isSelected = desc.name == activeSelectedName
+                            val isSelected = descIdx == selectedIndex
                             val previewBmp =
-                                remember(atlas, palette, desc) {
-                                    state
-                                        .extractDescriptorPreview(atlas, desc)
-                                        ?.let { TextureComposeRenderer.renderToImageBitmap(it, palette) }
+                                remember(descriptorTable, palette, desc) {
+                                    TextureComposeRenderer.renderToImageBitmap(
+                                        descriptorTable.extractPreviewTexture(desc),
+                                        palette,
+                                    )
                                 }
                             Row(
                                 modifier =
@@ -1608,18 +1551,16 @@ private fun TextureSlotPickerModal(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                             ) {
-                                if (previewBmp != null) {
-                                    Image(
-                                        bitmap = previewBmp,
-                                        contentDescription = desc.name,
-                                        filterQuality = FilterQuality.None,
-                                        modifier =
-                                            Modifier
-                                                .size(28.dp)
-                                                .background(Color(0xFF0B0C0E))
-                                                .border(1.dp, Color(0xFF334155)),
-                                    )
-                                }
+                                Image(
+                                    bitmap = previewBmp,
+                                    contentDescription = desc.name,
+                                    filterQuality = FilterQuality.None,
+                                    modifier =
+                                        Modifier
+                                            .size(28.dp)
+                                            .background(Color(0xFF0B0C0E))
+                                            .border(1.dp, Color(0xFF334155)),
+                                )
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
                                         text = desc.name,

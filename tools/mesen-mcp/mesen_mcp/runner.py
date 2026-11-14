@@ -2,7 +2,6 @@
 
 from pathlib import Path
 import re
-import subprocess
 from typing import Any, Dict, Optional
 
 from mesen_mcp.session import MesenRunner, SfxTestSession
@@ -40,55 +39,14 @@ def parse_sfx_test_header(test_dir: Path) -> Dict[str, str]:
     return {"status": "active", "reason": ""}
 
 
-def _sync_lua_labels(sym_map: Any, lua_path: Path) -> None:
-    """Backward compatibility wrapper for synchronizing Lua labels."""
-    if hasattr(sym_map, "get_offset"):
-        from mesen_mcp.session import SymbolTable
-        table = sym_map
-    elif isinstance(sym_map, dict):
-        from mesen_mcp.session import SymbolTable
-        table = SymbolTable(symbols=sym_map)
-    else:
-        return
-
-    content = lua_path.read_text(encoding="utf-8")
-    import re
-    var_pattern = re.compile(
-        r"^(\s*(?:local\s+)?([A-Za-z0-9_]+)\s*=\s*)(0x[0-9A-Fa-f]+|\d+)(.*)$"
-    )
-    lines = content.splitlines()
-    updated_lines = []
-
-    for line in lines:
-        m = var_pattern.match(line)
-        if m:
-            prefix, var_name, current_val_str, suffix = m.groups()
-            if var_name.lower() in ("index", "fail_count", "i", "j", "k"):
-                updated_lines.append(line)
-                continue
-            target_offset = table.get_offset(var_name)
-
-            if target_offset is not None:
-                target_hex = f"0x{target_offset:04X}"
-                try:
-                    current_val = (
-                        int(current_val_str, 16)
-                        if current_val_str.startswith(("0x", "0X"))
-                        else int(current_val_str)
-                    )
-                except ValueError:
-                    current_val = None
-
-                if current_val != target_offset:
-                    updated_lines.append(f"{prefix}{target_hex}{suffix}")
-                else:
-                    updated_lines.append(line)
-            else:
-                updated_lines.append(line)
-        else:
-            updated_lines.append(line)
-
-    lua_path.write_text("\n".join(updated_lines) + "\n", encoding="utf-8")
+def _find_test_lua_script(test_dir: Path) -> Optional[Path]:
+    primary = test_dir / "test.lua"
+    if primary.is_file():
+        return primary
+    for candidate in sorted(test_dir.glob("*.lua")):
+        if candidate.is_file():
+            return candidate
+    return None
 
 
 def run_sfx_suite(
@@ -96,15 +54,19 @@ def run_sfx_suite(
     mesen_path: Optional[str] = None,
     runner: Optional[MesenRunner] = None,
     skip_compile: bool = False,
+    tests_root: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """Execute all active SuperFX unit tests, skipping templates and WIP suites."""
-    root_dir = get_repo_root()
-    tests_root = root_dir / "snes-sfx-demo" / "X-GSU" / "tests"
-    if not tests_root.is_dir():
+    resolved_root = (
+        Path(tests_root).resolve()
+        if tests_root is not None
+        else (get_repo_root() / "snes-sfx-demo" / "X-GSU" / "tests")
+    )
+    if not resolved_root.is_dir():
         return {
             "status": "FAIL",
             "test": "all",
-            "error": f"Tests root directory not found: {tests_root}",
+            "error": f"Tests root directory not found: {resolved_root}",
             "output": "",
         }
 
@@ -115,7 +77,7 @@ def run_sfx_suite(
     failed_tests = []
     output_lines = []
 
-    for test_dir in sorted(tests_root.iterdir()):
+    for test_dir in sorted(resolved_root.iterdir()):
         if not test_dir.is_dir():
             continue
         test_name = test_dir.name
@@ -137,12 +99,13 @@ def run_sfx_suite(
             continue
 
         res = run_sfx_test(
-            test_name=test_name,
+            test_name=str(test_dir) if tests_root is not None else test_name,
             timeout_seconds=timeout_seconds,
             mesen_path=mesen_path,
             runner=runner,
             skip_compile=skip_compile,
         )
+        res["test"] = test_name
         results.append(res)
         if res["status"] == "PASS":
             pass_count += 1
@@ -183,7 +146,7 @@ def run_sfx_test(
     runner: Optional[MesenRunner] = None,
     skip_compile: bool = False,
 ) -> Dict[str, Any]:
-    """Compile and headlessly execute a SuperFX unit test in Mesen."""
+    """Incrementally compile and headlessly execute a SuperFX unit test via an ephemeral synced Lua script."""
     if test_name.strip().lower() == "all":
         return run_sfx_suite(
             timeout_seconds=timeout_seconds,
@@ -191,6 +154,7 @@ def run_sfx_test(
             runner=runner,
             skip_compile=skip_compile,
         )
+
     try:
         test_dir = resolve_test_dir(test_name)
     except FileNotFoundError as e:
@@ -216,18 +180,30 @@ def run_sfx_test(
             "output": f"SKIP ({header_meta['status']}): {reason}",
         }
 
-    try:
-        session = SfxTestSession.from_test_name(
-            test_name, runner=runner, mesen_path=mesen_path
-        )
-        session.compile(skip=skip_compile)
-    except FileNotFoundError as e:
+    lua_script = _find_test_lua_script(test_dir)
+    if lua_script is None:
         return {
             "status": "FAIL",
             "test": test_name,
-            "error": str(e),
+            "error": f"No Lua test script found in {test_dir}",
             "output": "",
         }
+
+    session = SfxTestSession(
+        test_dir=test_dir,
+        test_name=test_name,
+        runner=runner,
+        mesen_path=mesen_path,
+    )
+
+    try:
+        outcome = session.run_harness(
+            lambda s, _ctx: s.sync_lua_source(
+                lua_script.read_text(encoding="utf-8", errors="replace")
+            ),
+            timeout_seconds=timeout_seconds,
+            compile_mode="skip" if skip_compile else "if_stale",
+        )
     except RuntimeError as e:
         return {
             "status": "FAIL",
@@ -235,49 +211,6 @@ def run_sfx_test(
             "exit_code": 1,
             "error": "Compilation failed",
             "output": str(e),
-        }
-
-    # Locate Lua test script and synchronize symbols
-    lua_script = session.test_dir / "test.lua"
-    if not lua_script.is_file():
-        lua_candidates = list(session.test_dir.glob("*.lua"))
-        if lua_candidates:
-            lua_script = lua_candidates[0]
-        else:
-            return {
-                "status": "FAIL",
-                "test": test_name,
-                "error": f"No Lua test script found in {session.test_dir}",
-                "output": "",
-            }
-
-    session.sync_lua_script(lua_script)
-
-    try:
-        proc = session.run_lua(lua_script, timeout_seconds=timeout_seconds)
-        combined_output = proc.stdout + (("\n" + proc.stderr) if proc.stderr else "")
-        upper_stdout = proc.stdout.upper()
-        has_explicit_fail = "TEST FAILED" in upper_stdout or "FAIL:" in upper_stdout
-        status = (
-            "PASS"
-            if proc.returncode == 0 and not has_explicit_fail
-            else "FAIL"
-        )
-        return {
-            "status": status,
-            "test": test_name,
-            "exit_code": proc.returncode,
-            "output": combined_output.strip(),
-        }
-    except subprocess.TimeoutExpired as te:
-        stdout = te.stdout or ""
-        stderr = te.stderr or ""
-        return {
-            "status": "FAIL",
-            "test": test_name,
-            "exit_code": -1,
-            "error": f"Test execution timed out after {timeout_seconds} seconds",
-            "output": (stdout + "\n" + stderr).strip(),
         }
     except Exception as e:
         return {
@@ -287,8 +220,30 @@ def run_sfx_test(
             "output": "",
         }
 
+    if outcome.timed_out:
+        return {
+            "status": "FAIL",
+            "test": test_name,
+            "exit_code": -1,
+            "error": f"Test execution timed out after {timeout_seconds} seconds",
+            "output": outcome.output,
+        }
 
-# Re-export key verification, capture, and profiling APIs
+    upper_stdout = outcome.stdout.upper()
+    has_explicit_fail = "TEST FAILED" in upper_stdout or "FAIL:" in upper_stdout
+    status = (
+        "PASS"
+        if outcome.exit_code == 0 and not has_explicit_fail
+        else "FAIL"
+    )
+    return {
+        "status": status,
+        "test": test_name,
+        "exit_code": outcome.exit_code,
+        "output": outcome.output,
+    }
+
+
 from mesen_mcp.math_verifier import assert_sfx_math
 from mesen_mcp.profiler import profile_sfx_execution
 from mesen_mcp.render_capture import capture_sfx_render

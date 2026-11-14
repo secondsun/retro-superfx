@@ -1,5 +1,7 @@
 package dev.secondsun.sfxstudio.core.level
 
+import dev.secondsun.sfxstudio.core.atlas.DescriptorLookup
+import dev.secondsun.sfxstudio.core.atlas.DescriptorTable
 import dev.secondsun.sfxstudio.core.atlas.SnesPalette
 import dev.secondsun.sfxstudio.core.atlas.TextureAtlas
 import dev.secondsun.sfxstudio.core.atlas.TextureDescriptorInfo
@@ -442,7 +444,7 @@ object IsoSoftwareRenderer {
         val archTable = compileAllArchetypes(lat, m1, m2, kBot, kTop, flatTraps, sin, cos)
 
         val atlasBin = atlas.generateBinary()
-        val descriptors = atlas.resolvedDescriptors()
+        val descriptorTable = DescriptorTable.fromAtlas(atlas).getOrNull()
         val paletteArgb =
             IntArray(16) { slot ->
                 if (slot == 0) 0 else palette[slot].argb
@@ -494,9 +496,30 @@ object IsoSoftwareRenderer {
                 val baseAnchorY = (originZQ5 + col * sxYQ5 + row * szYQ5 + 16) shr 5
                 val cellAnchorY = baseAnchorY - cell.baseHeight * STEP_1H_PIXELS
 
-                val topDesc = resolveDescSafe(cell.topTex, descriptors)
-                val skirtDesc = resolveDescSafe(cell.skirtTex, descriptors) ?: topDesc
-                val panelDesc = resolveDescSafe(cell.panelTex, descriptors)
+                val topDesc =
+                    descriptorTable?.let { table ->
+                        when (val res = table.lookup(cell.topTex)) {
+                            DescriptorLookup.Absent -> table.entries.firstOrNull()
+                            is DescriptorLookup.Found -> res.descriptor
+                            is DescriptorLookup.Unknown -> null
+                        }
+                    }
+                val skirtDesc =
+                    descriptorTable?.let { table ->
+                        when (val res = table.lookup(cell.skirtTex)) {
+                            DescriptorLookup.Absent -> topDesc
+                            is DescriptorLookup.Found -> res.descriptor
+                            is DescriptorLookup.Unknown -> null
+                        }
+                    }
+                val panelDesc =
+                    descriptorTable?.let { table ->
+                        when (val res = table.lookup(cell.panelTex)) {
+                            DescriptorLookup.Absent -> null
+                            is DescriptorLookup.Found -> res.descriptor
+                            is DescriptorLookup.Unknown -> null
+                        }
+                    }
 
                 // Render-time skirt drops against camera-facing neighbors
                 val neighborNsRow = if (cos >= 0) row + 1 else row - 1
@@ -691,20 +714,6 @@ object IsoSoftwareRenderer {
             3 -> panels.west
             else -> false
         }
-
-    private fun resolveDescSafe(
-        symbol: String?,
-        descriptors: List<TextureDescriptorInfo>,
-    ): TextureDescriptorInfo? {
-        if (descriptors.isEmpty()) return null
-        if (symbol.isNullOrBlank()) return descriptors.firstOrNull()
-        return try {
-            val idx = LevelBinarySerializer.resolveTextureIndex(symbol, descriptors)
-            descriptors.getOrNull(idx)
-        } catch (_: Exception) {
-            null
-        }
-    }
 
     private fun compileAllEdgePanels(
         lat: Array<IntPoint>,

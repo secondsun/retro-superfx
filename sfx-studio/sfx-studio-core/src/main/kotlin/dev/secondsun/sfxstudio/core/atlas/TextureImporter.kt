@@ -7,7 +7,7 @@ import javax.imageio.ImageIO
 /**
  * Result of attempting to import a bitmap file.
  */
-sealed class ImportResult {
+internal sealed class ImportResult {
     data class Success(
         val texture: SourceTexture,
         val updatedPalette: SnesPalette,
@@ -26,7 +26,7 @@ sealed class ImportResult {
     ) : ImportResult()
 }
 
-object TextureImporter {
+internal object TextureImporter {
     fun importFromFile(
         file: File,
         currentPalette: SnesPalette,
@@ -147,5 +147,22 @@ object TextureImporter {
             y = 0,
             indexedPixels = pixels,
         )
+    }
+
+    fun extractOpaquePixelColors(image: BufferedImage): List<SnesColor> {
+        val colors = ArrayList<SnesColor>(image.width * image.height)
+        for (y in 0 until image.height) {
+            for (x in 0 until image.width) {
+                val argb = image.getRGB(x, y)
+                val alpha = (argb shr 24) and 0xFF
+                if (alpha >= 128) {
+                    val r = (argb shr 16) and 0xFF
+                    val g = (argb shr 8) and 0xFF
+                    val b = argb and 0xFF
+                    colors.add(SnesColor.fromRgb888(r, g, b))
+                }
+            }
+        }
+        return colors
     }
 }

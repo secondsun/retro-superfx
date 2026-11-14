@@ -1,8 +1,8 @@
 package dev.secondsun.sfxstudio.core.level
 
-import dev.secondsun.sfxstudio.core.atlas.AtlasTableGenerator
+import dev.secondsun.sfxstudio.core.atlas.AtlasDocument
 import dev.secondsun.sfxstudio.core.atlas.DescriptorAlias
-import dev.secondsun.sfxstudio.core.atlas.ProjectService
+import dev.secondsun.sfxstudio.core.atlas.DescriptorTable
 import dev.secondsun.sfxstudio.core.atlas.SnesColor
 import dev.secondsun.sfxstudio.core.atlas.SnesPalette
 import dev.secondsun.sfxstudio.core.atlas.SourceTexture
@@ -19,11 +19,11 @@ import java.io.File
 import javax.imageio.ImageIO
 
 class LevelCoreTest {
-    private fun buildSampleAtlas(
+    private fun buildSampleAtlasDoc(
         width: Int = 64,
         height: Int = 64,
         descriptorOrder: List<String>? = null,
-    ): Pair<TextureAtlas, SnesPalette> {
+    ): AtlasDocument {
         val grass = SourceTexture("grass", 32, 32, 0, 0, ByteArray(32 * 32) { 1 })
         val stone = SourceTexture("stone", 32, 32, 32, 0, ByteArray(32 * 32) { 2 })
         val water = SourceTexture("water", 32, 32, 0, 32, ByteArray(32 * 32) { idx -> if (idx % 2 == 0) 0 else 3 })
@@ -45,44 +45,38 @@ class LevelCoreTest {
                 .withSlot(1, SnesColor.fromRgb888(40, 180, 60))
                 .withSlot(2, SnesColor.fromRgb888(140, 140, 150))
                 .withSlot(3, SnesColor.fromRgb888(40, 110, 220))
-        return atlas to palette
+        return AtlasDocument(name = "ATLAS", atlas = atlas, palette = palette)
     }
 
     @Test
-    fun testAtlasTableGeneratorBinaryAndRoundTrip(
+    fun testDescriptorTableBinaryAndRoundTrip(
         @TempDir tempDir: File,
     ) {
-        val (atlas, palette) = buildSampleAtlas(width = 128, height = 64)
-        val tabBytes = AtlasTableGenerator.generate(atlas)
-        val parsed = AtlasTableGenerator.parse(tabBytes)
+        val atlasDoc = buildSampleAtlasDoc(width = 128, height = 64)
+        val tabBytes = atlasDoc.descriptorTable().getOrThrow().toTabBinary()
+        val parsed = DescriptorTable.parseTabBinary(tabBytes)
 
-        assertEquals(AtlasTableGenerator.MAGIC, parsed.magic)
+        assertEquals(DescriptorTable.TAB_MAGIC, parsed.magic)
         assertEquals(6, parsed.entryCount)
         assertEquals(128, parsed.atlasWidth)
         assertEquals(7, parsed.strideShift)
         assertEquals(8 + 6 * 8, tabBytes.size)
 
-        // Entry 0: grass at (0, 0), 32x32 in 128-wide atlas (strideShift=7)
         val grassEntry = parsed.entries[0]
         assertEquals(0, grassEntry.atlasOffset)
         assertEquals(31, grassEntry.uMask)
         assertEquals(31 shl 7, grassEntry.vMaskShifted)
         assertEquals((31 shl 7) or 0x7F, grassEntry.vOffsetMask)
 
-        // Entry 1: stone at (32, 0) -> offset = 32
         assertEquals(32, parsed.entries[1].atlasOffset)
-
-        // Entry 2: water at (0, 32) -> offset = 32 * 128 = 4096
         assertEquals(4096, parsed.entries[2].atlasOffset)
 
-        // Entry 4: parapet slice (32x16 inside stone at 32,0) -> uMask=31, vMask=15
         val parapetEntry = parsed.entries.find { it.uMask == 31 && it.vMaskShifted == (15 shl 7) }
         assertNotNull(parapetEntry)
         assertEquals(32, parapetEntry!!.atlasOffset)
 
-        // Verify saveProject writes .tab alongside .bin/.pal/.i/_atlas.png
         val projFile = File(tempDir, "TEST_ATLAS.sfxproj")
-        ProjectService.saveProject(projFile, "TEST_ATLAS", atlas, palette, 16)
+        atlasDoc.copy(name = "TEST_ATLAS").saveAndExport(projFile)
         val savedTab = File(tempDir, "TEST_ATLAS.tab")
         assertTrue(savedTab.exists())
         assertArrayEquals(tabBytes, savedTab.readBytes())
@@ -92,9 +86,9 @@ class LevelCoreTest {
     fun testLevelDocumentRoundTripAnd16x16Grid(
         @TempDir tempDir: File,
     ) {
-        val (atlas, palette) = buildSampleAtlas()
+        val atlasDoc = buildSampleAtlasDoc()
         val projFile = File(tempDir, "ATLAS.sfxproj")
-        ProjectService.saveProject(projFile, "ATLAS", atlas, palette, 16)
+        atlasDoc.saveAndExport(projFile)
 
         var grid =
             MapGrid.filled(
@@ -126,27 +120,25 @@ class LevelCoreTest {
             )
 
         val levelFile = File(tempDir, "fortress_16.sfxlevel")
-        val exported = LevelDocumentService.saveLevel(levelFile, doc)
-        assertTrue(exported.levelFile.exists())
+        val exported = LevelDocumentService.saveAndExport(levelFile, doc, atlasDoc)
+        assertNotNull(exported.levelFile)
+        assertTrue(exported.levelFile!!.exists())
         assertTrue(exported.mapBinFile.exists())
         assertTrue(exported.headerFile.exists())
         assertNotNull(exported.previewPngFile)
         assertTrue(exported.previewPngFile!!.exists())
 
-        // Verify binary .map size = 8 + 16 * 16 * 8 = 2056 bytes
         val mapBytes = exported.mapBinFile.readBytes()
         assertEquals(2056, mapBytes.size)
         assertEquals(16, mapBytes[0].toInt() and 0xFF)
         assertEquals(16, mapBytes[1].toInt() and 0xFF)
 
-        // Verify constants-only .i header contains no .segment directive
         val headerText = exported.headerFile.readText()
         assertTrue(headerText.contains("FORTRESS_16_COLS = 16"))
         assertTrue(headerText.contains("FORTRESS_16_ROWS = 16"))
         assertTrue(headerText.contains("FORTRESS_16_MAP_BYTE_SIZE = 2056"))
         assertFalse(headerText.contains(".segment"))
 
-        // Reload JSON and deserialize binary .map
         val reloaded = LevelDocumentService.loadLevel(levelFile)
         assertEquals(16, reloaded.grid.cols)
         assertEquals(16, reloaded.grid.rows)
@@ -155,16 +147,14 @@ class LevelCoreTest {
         assertEquals(CellRotation.ROT_90, reloaded.grid.cellAt(4, 5).rotation)
         assertEquals(EdgePanels(north = true, west = true), reloaded.grid.cellAt(4, 5).panels)
 
-        val deserializedGrid = LevelBinarySerializer.deserialize(mapBytes, atlas)
+        val deserializedGrid = LevelBinarySerializer.deserialize(mapBytes, atlasDoc.atlas)
         assertEquals(reloaded.grid.cellAt(4, 5), deserializedGrid.cellAt(4, 5))
 
-        // Verify symbolic texture resilience: reordering descriptorOrder updates exported numeric IDs automatically
-        val (reorderedAtlas, _) =
-            buildSampleAtlas(
+        val reorderedDoc =
+            buildSampleAtlasDoc(
                 descriptorOrder = listOf("stone", "water", "water_deep", "parapet", "foliage", "grass"),
             )
-        val reorderedBytes = LevelBinarySerializer.serialize(reloaded.grid, reorderedAtlas)
-        // Cell (0,0) topTex is "grass" -> now index 5 in reorderedAtlas (offset 8 + 2 = 10)
+        val reorderedBytes = LevelBinarySerializer.serialize(reloaded.grid, reorderedDoc.atlas)
         assertEquals(5, reorderedBytes[10].toInt() and 0xFF)
     }
 
@@ -174,19 +164,17 @@ class LevelCoreTest {
         val showcaseCa65 = File(repoRoot, "snes-sfx-demo/X-GSU/IsoEngine/Data/showcase_map.i")
         val showcaseAtlasProj = File(repoRoot, "snes-sfx-demo/X-GSU/IsoEngine/Data/TEXTURES.sfxproj")
         if (showcaseCa65.exists() && showcaseAtlasProj.exists()) {
-            val (atlas, palette) = ProjectService.loadProject(showcaseAtlasProj)
-            val doc = Ca65MapImporter.importFile(showcaseCa65, "TEXTURES.sfxproj", atlas, "showcase_map")
+            val atlasDoc = AtlasDocument.load(showcaseAtlasProj)
+            val doc = Ca65MapImporter.importFile(showcaseCa65, "TEXTURES.sfxproj", atlasDoc.atlas, "showcase_map")
             assertEquals(8, doc.grid.cols)
             assertEquals(8, doc.grid.rows)
 
-            // Validate showcase_map: zero errors and zero false-positive warnings!
-            val validation = LevelValidator.validate(doc, atlas)
+            val validation = LevelValidator.validate(doc, atlasDoc)
             assertTrue(validation.valid, "Expected showcase_map valid, got errors: ${validation.errors}")
             assertTrue(validation.warnings.isEmpty(), "Expected zero warnings on showcase_map, got: ${validation.warnings}")
 
-            // Render showcase_map across all 4 yaw quadrants
             for (yaw in listOf(15, 45, 75, 105)) {
-                val rendered = IsoSoftwareRenderer.render(doc.grid, atlas, palette, yawIndex = yaw)
+                val rendered = IsoSoftwareRenderer.render(doc.grid, atlasDoc.atlas, atlasDoc.palette, yawIndex = yaw)
                 val nonBgCount = rendered.cellPickBuffer.count { it >= 0 }
                 assertTrue(nonBgCount > 1000, "Expected >1000 rendered diorama pixels at yaw $yaw, got $nonBgCount")
             }
@@ -195,18 +183,18 @@ class LevelCoreTest {
         val starshipCa65 = File(repoRoot, "snes-sfx-demo/X-GSU/StarshipMap/Data/starship_map.i")
         val starshipAtlasProj = File(repoRoot, "snes-sfx-demo/X-GSU/StarshipMap/Data/TEXTURES.sfxproj")
         if (starshipCa65.exists() && starshipAtlasProj.exists()) {
-            val (atlas, _) = ProjectService.loadProject(starshipAtlasProj)
-            val doc = Ca65MapImporter.importFile(starshipCa65, "TEXTURES.sfxproj", atlas, "starship_map")
+            val atlasDoc = AtlasDocument.load(starshipAtlasProj)
+            val doc = Ca65MapImporter.importFile(starshipCa65, "TEXTURES.sfxproj", atlasDoc.atlas, "starship_map")
             assertEquals(12, doc.grid.cols)
             assertEquals(8, doc.grid.rows)
-            val validation = LevelValidator.validate(doc, atlas)
+            val validation = LevelValidator.validate(doc, atlasDoc)
             assertTrue(validation.valid, "Expected starship_map valid, got errors: ${validation.errors}")
         }
     }
 
     @Test
     fun testLevelValidatorCatchesErrorsAndWarnings() {
-        val (atlas, _) = buildSampleAtlas()
+        val atlasDoc = buildSampleAtlasDoc()
         var grid =
             MapGrid.filled(
                 cols = 4,
@@ -214,7 +202,6 @@ class LevelCoreTest {
                 defaultCell = MapCell(baseHeight = 0, archetype = ShapeArchetype.PRIM_FLAT, topTex = "grass", skirtTex = "stone"),
             )
 
-        // Inject an unflush liquid cell (shallow surface at 0+1=1h surrounded by 0h neighbors & border)
         grid =
             grid.withCell(
                 1,
@@ -227,7 +214,6 @@ class LevelCoreTest {
                 ),
             )
 
-        // Inject a 1h parapet using a 32x32 texture ("stone") instead of 32x16 ("parapet")
         grid =
             grid.withCell(
                 2,
@@ -243,15 +229,14 @@ class LevelCoreTest {
             )
 
         val warnDoc = LevelDocument("warn_test", "ATLAS.sfxproj", grid)
-        val warnRes = LevelValidator.validate(warnDoc, atlas)
+        val warnRes = LevelValidator.validate(warnDoc, atlasDoc)
         assertTrue(warnRes.valid)
         assertTrue(warnRes.warnings.any { it.code == "UNFLUSH_LIQUID_SURFACE" })
         assertTrue(warnRes.warnings.any { it.code == "PANEL_1H_CROPPED_TEXTURE" })
 
-        // Inject hard errors: unknown texture + oversized 256x256 (64 KB > Bank $71 32 KB) atlas
         val badGrid = grid.withCell(0, 0, MapCell(baseHeight = 0, topTex = "nonexistent_tex"))
-        val (oversizedAtlas, _) = buildSampleAtlas(width = 256, height = 256)
-        val errRes = LevelValidator.validate(LevelDocument("err_test", "ATLAS.sfxproj", badGrid), oversizedAtlas)
+        val oversizedAtlasDoc = buildSampleAtlasDoc(width = 256, height = 256)
+        val errRes = LevelValidator.validate(LevelDocument("err_test", "ATLAS.sfxproj", badGrid), oversizedAtlasDoc)
         assertFalse(errRes.valid)
         assertTrue(errRes.errors.any { it.code == "UNKNOWN_TOP_TEXTURE" })
         assertTrue(errRes.errors.any { it.code == "ATLAS_EXCEEDS_BANK_71" })
@@ -261,7 +246,7 @@ class LevelCoreTest {
     fun testPreviewPngExportDimensions(
         @TempDir tempDir: File,
     ) {
-        val (atlas, palette) = buildSampleAtlas()
+        val atlasDoc = buildSampleAtlasDoc()
         val grid =
             MapGrid.filled(
                 cols = 6,
@@ -269,7 +254,7 @@ class LevelCoreTest {
                 defaultCell = MapCell(baseHeight = 2, archetype = ShapeArchetype.PRIM_PILLAR, topTex = "stone", skirtTex = "stone"),
             )
         val pngFile = File(tempDir, "pillar_preview.png")
-        IsoSoftwareRenderer.writePreviewPng(grid, atlas, palette, pngFile, yawIndex = 20)
+        IsoSoftwareRenderer.writePreviewPng(grid, atlasDoc.atlas, atlasDoc.palette, pngFile, yawIndex = 20)
         assertTrue(pngFile.exists())
         val img = ImageIO.read(pngFile)
         assertEquals(256, img.width)

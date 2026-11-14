@@ -27,19 +27,21 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import dev.secondsun.sfxstudio.core.atlas.AtlasIndexGenerator
 import dev.secondsun.sfxstudio.desktop.atlas.AtlasEditorState
-import java.awt.Toolkit
-import java.awt.datatransfer.StringSelection
 
 @Composable
 fun IndexPreviewTab(
     state: AtlasEditorState,
     modifier: Modifier = Modifier,
 ) {
+    val previewResult =
+        remember(state.document) {
+            state.document.renderIndexPreview(state.projectName)
+        }
     val indexContent =
-        remember(state.atlas, state.projectName) {
-            AtlasIndexGenerator.generate(state.atlas, state.projectName)
+        previewResult.getOrElse { err ->
+            ";; Cannot generate ca65 Atlas Index (.i) until descriptor errors are resolved:\n" +
+                ";; ${err.message}"
         }
 
     Column(
@@ -63,6 +65,7 @@ fun IndexPreviewTab(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
                     onClick = { state.promptExportIndexFile() },
+                    enabled = previewResult.isSuccess,
                     colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFF059669)),
                     modifier = Modifier.height(32.dp),
                     contentPadding = PaddingValues(horizontal = 8.dp),
@@ -71,11 +74,8 @@ fun IndexPreviewTab(
                 }
 
                 Button(
-                    onClick = {
-                        val selection = StringSelection(indexContent)
-                        Toolkit.getDefaultToolkit().systemClipboard.setContents(selection, selection)
-                        state.statusMessage = "Copied ca65 .i index to clipboard"
-                    },
+                    onClick = { state.copyTextToClipboard(indexContent) },
+                    enabled = previewResult.isSuccess,
                     colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFF3B82F6)),
                     modifier = Modifier.height(32.dp),
                     contentPadding = PaddingValues(horizontal = 8.dp),
@@ -92,13 +92,16 @@ fun IndexPreviewTab(
                 Modifier
                     .fillMaxSize()
                     .background(Color(0xFF1E2026), RoundedCornerShape(4.dp))
-                    .border(1.dp, Color(0xFF33363D), RoundedCornerShape(4.dp))
-                    .padding(12.dp)
+                    .border(
+                        1.dp,
+                        if (previewResult.isSuccess) Color(0xFF33363D) else Color(0xFFEF4444),
+                        RoundedCornerShape(4.dp),
+                    ).padding(12.dp)
                     .verticalScroll(rememberScrollState()),
         ) {
             Text(
                 text = indexContent,
-                color = Color(0xFFE2E8F0),
+                color = if (previewResult.isSuccess) Color(0xFFE2E8F0) else Color(0xFFFCA5A5),
                 fontFamily = FontFamily.Monospace,
                 fontSize = 12.sp,
                 lineHeight = 18.sp,

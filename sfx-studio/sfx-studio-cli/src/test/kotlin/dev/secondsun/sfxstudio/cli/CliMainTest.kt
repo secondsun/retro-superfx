@@ -1,17 +1,20 @@
 package dev.secondsun.sfxstudio.cli
 
-import dev.secondsun.sfxstudio.core.atlas.AtlasTableGenerator
+import dev.secondsun.sfxstudio.core.atlas.AtlasDocument
 import dev.secondsun.sfxstudio.core.atlas.DescriptorAlias
-import dev.secondsun.sfxstudio.core.atlas.ProjectService
+import dev.secondsun.sfxstudio.core.atlas.DescriptorTable
 import dev.secondsun.sfxstudio.core.atlas.SnesColor
 import dev.secondsun.sfxstudio.core.atlas.SnesPalette
 import dev.secondsun.sfxstudio.core.atlas.SourceTexture
 import dev.secondsun.sfxstudio.core.atlas.TextureAtlas
 import dev.secondsun.sfxstudio.core.atlas.VirtualSlice
+import dev.secondsun.sfxstudio.core.level.CellRotation
 import dev.secondsun.sfxstudio.core.level.LevelBinarySerializer
 import dev.secondsun.sfxstudio.core.level.LevelDocumentService
 import dev.secondsun.sfxstudio.core.level.ShapeArchetype
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -24,6 +27,8 @@ class CliMainTest {
     private fun createSampleProject(
         dir: File,
         baseName: String = "TEST_CLI",
+        width: Int = 32,
+        height: Int = 32,
     ): File {
         val projFile = File(dir, "$baseName.sfxproj")
         val pixels = ByteArray(16 * 16) { 1 }
@@ -33,15 +38,20 @@ class CliMainTest {
 
         val atlas =
             TextureAtlas(
-                width = 32,
-                height = 32,
+                width = width,
+                height = height,
                 textures = listOf(tex),
                 slices = listOf(slice),
                 aliases = listOf(alias),
             )
         val palette = SnesPalette().withSlot(1, SnesColor(31, 0, 0), assigned = true)
 
-        ProjectService.saveProject(projFile, baseName, atlas, palette, 16)
+        AtlasDocument(
+            name = baseName,
+            atlas = atlas,
+            palette = palette,
+            gridSnap = 16,
+        ).saveAndExport(projFile)
         return projFile
     }
 
@@ -51,11 +61,9 @@ class CliMainTest {
     ) {
         val projFile = createSampleProject(tempDir, "TEST_LEGACY")
 
-        // Legacy validate
         val valCode = CliMain.execute(arrayOf("validate", projFile.absolutePath))
         assertEquals(0, valCode)
 
-        // Legacy pack
         val packCode = CliMain.execute(arrayOf("pack", projFile.absolutePath))
         assertEquals(0, packCode)
 
@@ -65,7 +73,7 @@ class CliMainTest {
         assertTrue(File(tempDir, "TEST_LEGACY.i").exists())
         assertTrue(File(tempDir, "TEST_LEGACY_atlas.png").exists())
 
-        val parsedTab = AtlasTableGenerator.parse(File(tempDir, "TEST_LEGACY.tab").readBytes())
+        val parsedTab = DescriptorTable.parseTabBinary(File(tempDir, "TEST_LEGACY.tab").readBytes())
         assertEquals(3, parsedTab.entryCount)
         assertEquals(32, parsedTab.atlasWidth)
         assertEquals(5, parsedTab.strideShift)
@@ -84,11 +92,9 @@ class CliMainTest {
     ) {
         val projFile = createSampleProject(tempDir, "TEST_NOUN")
 
-        // atlas validate
         val valCode = CliMain.execute(arrayOf("atlas", "validate", projFile.absolutePath))
         assertEquals(0, valCode)
 
-        // atlas pack
         val packCode = CliMain.execute(arrayOf("atlas", "pack", projFile.absolutePath))
         assertEquals(0, packCode)
 
@@ -100,7 +106,7 @@ class CliMainTest {
     }
 
     @Test
-    fun testPackWithOutputDirAndAutoPack(
+    fun testPackWithOutputDirExportsCompanionsWithoutCopyingSfxproj(
         @TempDir tempDir: File,
     ) {
         val projFile = createSampleProject(tempDir, "TEST_AUTOPACK")
@@ -119,8 +125,12 @@ class CliMainTest {
             )
         assertEquals(0, code)
 
+        assertTrue(projFile.exists())
         assertTrue(outDir.exists())
-        assertTrue(File(outDir, "TEST_AUTOPACK.sfxproj").exists())
+        assertFalse(
+            File(outDir, "TEST_AUTOPACK.sfxproj").exists(),
+            "Decision 2.3: --output-dir must receive only companion binaries, never a duplicate .sfxproj",
+        )
         assertTrue(File(outDir, "TEST_AUTOPACK.bin").exists())
         assertTrue(File(outDir, "TEST_AUTOPACK.pal").exists())
         assertTrue(File(outDir, "TEST_AUTOPACK.tab").exists())
@@ -129,12 +139,12 @@ class CliMainTest {
     }
 
     @Test
-    fun testAtlasImportWithSnapPalette(
+    fun testAtlasImportStrictBoundsDefaultAndAutoGrowFlag(
         @TempDir tempDir: File,
     ) {
-        val projFile = createSampleProject(tempDir, "TEST_IMPORT")
+        // 16x16 atlas already occupied by 16x16 "box"
+        val projFile = createSampleProject(tempDir, "TEST_IMPORT", width = 16, height = 16)
 
-        // Create 16x16 PNG image
         val imgFile = File(tempDir, "imported_tile.png")
         val image = BufferedImage(16, 16, BufferedImage.TYPE_INT_ARGB)
         val g2d = image.createGraphics()
@@ -143,7 +153,8 @@ class CliMainTest {
         g2d.dispose()
         ImageIO.write(image, "PNG", imgFile)
 
-        val code =
+        // Without --auto-grow: CLI defaults to STRICT_BOUNDS and fails cleanly
+        val strictCode =
             CliMain.execute(
                 arrayOf(
                     "atlas",
@@ -153,15 +164,36 @@ class CliMainTest {
                     "--snap-palette",
                 ),
             )
-        assertEquals(0, code)
+        assertEquals(2, strictCode)
+        assertEquals(
+            1,
+            AtlasDocument
+                .load(projFile)
+                .atlas.textures.size,
+        )
 
-        val (loadedAtlas, _, _) = ProjectService.loadProject(projFile)
-        assertEquals(2, loadedAtlas.textures.size)
-        assertTrue(loadedAtlas.textures.any { it.name == "imported_tile" })
+        // With --auto-grow: grows atlas within <=256x256 and imports
+        val growCode =
+            CliMain.execute(
+                arrayOf(
+                    "atlas",
+                    "import",
+                    projFile.absolutePath,
+                    imgFile.absolutePath,
+                    "--snap-palette",
+                    "--auto-grow",
+                ),
+            )
+        assertEquals(0, growCode)
+
+        val loaded = AtlasDocument.load(projFile)
+        assertEquals(2, loaded.atlas.textures.size)
+        assertTrue(loaded.atlas.textures.any { it.name == "imported_tile" })
+        assertTrue(loaded.atlas.width >= 32 || loaded.atlas.height >= 32)
     }
 
     @Test
-    fun testLevelCreateValidatePackAndImportCa65(
+    fun testLevelCreateSetCellsValidatePackAndImportCa65(
         @TempDir tempDir: File,
     ) {
         val projFile = createSampleProject(tempDir, "LEVEL_ATLAS")
@@ -191,6 +223,67 @@ class CliMainTest {
         assertTrue(File(tempDir, "courtyard.i").exists())
         assertTrue(File(tempDir, "courtyard_preview.png").exists())
 
+        // 1. CLI single-patch flags + --resize on level set-cells
+        val setFlagsCode =
+            CliMain.execute(
+                arrayOf(
+                    "level",
+                    "set-cells",
+                    levelFile.absolutePath,
+                    "--rect",
+                    "1,1,2,2",
+                    "--height",
+                    "3",
+                    "--archetype",
+                    "PRIM_STAIRS",
+                    "--rot",
+                    "90",
+                    "--panel-tex",
+                    "box_half",
+                    "--panels",
+                    "N,W",
+                    "--tall-2h",
+                    "--resize",
+                    "8x6",
+                ),
+            )
+        assertEquals(0, setFlagsCode)
+        val afterFlags = LevelDocumentService.loadLevel(levelFile)
+        assertEquals(8, afterFlags.grid.cols)
+        assertEquals(6, afterFlags.grid.rows)
+        val cell11 = afterFlags.grid.cellAt(1, 1)
+        assertEquals(3, cell11.baseHeight)
+        assertEquals(ShapeArchetype.PRIM_STAIRS, cell11.archetype)
+        assertEquals(CellRotation.ROT_90, cell11.rotation)
+        assertEquals("box_half", cell11.panelTex)
+        assertTrue(cell11.panels.north && cell11.panels.west && cell11.panels.tall2h)
+
+        // 2. CLI --cells-json @file batch patch
+        val patchesJsonFile = File(tempDir, "patches.json")
+        patchesJsonFile.writeText(
+            """
+            [
+              {"col": 0, "row": 0, "base_height": 5, "skirt_tex": "NONE"},
+              {"col_start": 4, "col_end": 5, "row_start": 0, "row_end": 1, "base_height": 2}
+            ]
+            """.trimIndent(),
+        )
+        val setJsonCode =
+            CliMain.execute(
+                arrayOf(
+                    "level",
+                    "set-cells",
+                    levelFile.absolutePath,
+                    "--cells-json",
+                    "@${patchesJsonFile.absolutePath}",
+                ),
+            )
+        assertEquals(0, setJsonCode)
+        val afterJson = LevelDocumentService.loadLevel(levelFile)
+        assertEquals(5, afterJson.grid.cellAt(0, 0).baseHeight)
+        assertNull(afterJson.grid.cellAt(0, 0).skirtTex)
+        assertEquals(2, afterJson.grid.cellAt(5, 1).baseHeight)
+
         val valCode = CliMain.execute(arrayOf("level", "validate", levelFile.absolutePath))
         assertEquals(0, valCode)
 
@@ -208,11 +301,12 @@ class CliMainTest {
                 ),
             )
         assertEquals(0, packCode)
+        assertFalse(File(outDir, "courtyard.sfxlevel").exists())
         assertTrue(File(outDir, "courtyard.map").exists())
         assertTrue(File(outDir, "courtyard.i").exists())
         assertTrue(File(outDir, "courtyard_preview.png").exists())
 
-        // Test legacy ca65 import
+        // 3. Legacy ca65 import
         val ca65File = File(tempDir, "legacy_map.i")
         ca65File.writeText(
             """
@@ -255,7 +349,7 @@ class CliMainTest {
         assertEquals(4, importedDoc.grid.rows)
         assertEquals(ShapeArchetype.PRIM_STAIRS, importedDoc.grid.cellAt(1, 0).archetype)
 
-        val (atlas, _, _) = ProjectService.loadProject(projFile)
+        val atlas = AtlasDocument.load(projFile).atlas
         val parsedBin = LevelBinarySerializer.deserialize(File(tempDir, "imported.map").readBytes(), atlas)
         assertEquals(importedDoc.grid, parsedBin)
     }
@@ -285,16 +379,16 @@ class CliMainTest {
         val tex1 = SourceTexture("box1", 16, 16, 0, 0, pixels)
         val tex2 = SourceTexture("box2", 16, 16, 0, 0, pixels) // Collides with box1!
 
-        val atlas =
-            TextureAtlas(
-                width = 32,
-                height = 32,
-                textures = listOf(tex1, tex2),
+        val doc =
+            AtlasDocument(
+                name = "COLLISION",
+                atlas = TextureAtlas(width = 32, height = 32, textures = listOf(tex1, tex2)),
+                palette = SnesPalette().withSlot(1, SnesColor(31, 0, 0), assigned = true),
+                gridSnap = 16,
             )
-        val palette = SnesPalette().withSlot(1, SnesColor(31, 0, 0), assigned = true)
-        ProjectService.saveProject(projFile, "COLLISION", atlas, palette, 16)
+        projFile.writeText(doc.toJson())
 
         val code = CliMain.execute(arrayOf("atlas", "validate", projFile.absolutePath))
-        assertEquals(2, code) // Exception raised and caught
+        assertEquals(2, code)
     }
 }

@@ -1,8 +1,8 @@
 package dev.secondsun.sfxstudio.cli.mcp
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import dev.secondsun.sfxstudio.core.atlas.AtlasDocument
 import dev.secondsun.sfxstudio.core.atlas.DescriptorAlias
-import dev.secondsun.sfxstudio.core.atlas.ProjectService
 import dev.secondsun.sfxstudio.core.atlas.SnesColor
 import dev.secondsun.sfxstudio.core.atlas.SnesPalette
 import dev.secondsun.sfxstudio.core.atlas.SourceTexture
@@ -25,6 +25,7 @@ import java.io.BufferedReader
 import java.io.File
 import java.io.InputStreamReader
 import java.io.PrintWriter
+import java.nio.file.Files
 import javax.imageio.ImageIO
 
 class StudioMcpServerTest {
@@ -39,6 +40,8 @@ class StudioMcpServerTest {
     private fun createSampleProject(
         dir: File,
         baseName: String = "SAMPLE_ATLAS",
+        width: Int = 32,
+        height: Int = 32,
     ): File {
         val projFile = File(dir, "$baseName.sfxproj")
         val pixels = ByteArray(16 * 16) { 1 }
@@ -48,15 +51,20 @@ class StudioMcpServerTest {
 
         val atlas =
             TextureAtlas(
-                width = 32,
-                height = 32,
+                width = width,
+                height = height,
                 textures = listOf(tex),
                 slices = listOf(slice),
                 aliases = listOf(alias),
             )
         val palette = SnesPalette().withSlot(1, SnesColor(31, 0, 0), assigned = true)
 
-        ProjectService.saveProject(projFile, baseName, atlas, palette, 16)
+        AtlasDocument(
+            name = baseName,
+            atlas = atlas,
+            palette = palette,
+            gridSnap = 16,
+        ).saveAndExport(projFile)
         return projFile
     }
 
@@ -95,14 +103,14 @@ class StudioMcpServerTest {
         val tex1 = SourceTexture("box1", 16, 16, 0, 0, pixels)
         val tex2 = SourceTexture("box2", 16, 16, 0, 0, pixels)
 
-        val atlas =
-            TextureAtlas(
-                width = 32,
-                height = 32,
-                textures = listOf(tex1, tex2),
+        val collidingDoc =
+            AtlasDocument(
+                name = "COLLISION",
+                atlas = TextureAtlas(width = 32, height = 32, textures = listOf(tex1, tex2)),
+                palette = SnesPalette().withSlot(1, SnesColor(31, 0, 0), assigned = true),
+                gridSnap = 16,
             )
-        val palette = SnesPalette().withSlot(1, SnesColor(31, 0, 0), assigned = true)
-        ProjectService.saveProject(projFile, "COLLISION", atlas, palette, 16)
+        projFile.writeText(collidingDoc.toJson())
 
         val s = StudioMcpServer(transport = null, workspaceRoot = tempDir.toPath())
         server = s
@@ -129,28 +137,19 @@ class StudioMcpServerTest {
         @TempDir tempDir: File,
     ) {
         val projFile = File(tempDir, "OOB.sfxproj")
-        val dto =
-            dev.secondsun.sfxstudio.core.atlas.ProjectDto(
+        val oobDoc =
+            AtlasDocument(
                 name = "OOB",
-                atlasWidth = 32,
-                atlasHeight = 32,
+                atlas =
+                    TextureAtlas(
+                        width = 32,
+                        height = 32,
+                        textures = listOf(SourceTexture("oob_box", 16, 16, 24, 24, ByteArray(256) { 1 })),
+                    ),
+                palette = SnesPalette().withSlot(1, SnesColor(31, 0, 0), assigned = true),
                 gridSnap = 16,
-                palette =
-                    listOf(
-                        dev.secondsun.sfxstudio.core.atlas
-                            .ProjectColorDto(1, 31, 0, 0, true),
-                    ),
-                textures =
-                    listOf(
-                        dev.secondsun.sfxstudio.core.atlas
-                            .ProjectTextureDto("oob_box", 16, 16, 24, 24, "01".repeat(256)),
-                    ),
             )
-        projFile.writeText(
-            com.google.gson
-                .Gson()
-                .toJson(dto),
-        )
+        projFile.writeText(oobDoc.toJson())
 
         val s = StudioMcpServer(transport = null, workspaceRoot = tempDir.toPath())
         server = s
@@ -173,7 +172,7 @@ class StudioMcpServerTest {
     }
 
     @Test
-    fun testPackOnTempProjectExportsFiles(
+    fun testPackWithOutputDirExportsCompanionsOnly(
         @TempDir tempDir: File,
     ) {
         val projFile = createSampleProject(tempDir, "TEST_PACK")
@@ -186,6 +185,7 @@ class StudioMcpServerTest {
                 mapOf(
                     "project_path" to projFile.name,
                     "action" to "pack",
+                    "output_dir" to "dist",
                 ),
             )
 
@@ -196,11 +196,13 @@ class StudioMcpServerTest {
         assertTrue(json.get("valid").asBoolean())
         assertEquals(3, json.get("descriptorCount").asInt())
 
-        assertTrue(File(tempDir, "TEST_PACK.bin").exists())
-        assertTrue(File(tempDir, "TEST_PACK.pal").exists())
-        assertTrue(File(tempDir, "TEST_PACK.tab").exists())
-        assertTrue(File(tempDir, "TEST_PACK.i").exists())
-        assertTrue(File(tempDir, "TEST_PACK_atlas.png").exists())
+        val distDir = File(tempDir, "dist")
+        assertFalse(File(distDir, "TEST_PACK.sfxproj").exists())
+        assertTrue(File(distDir, "TEST_PACK.bin").exists())
+        assertTrue(File(distDir, "TEST_PACK.pal").exists())
+        assertTrue(File(distDir, "TEST_PACK.tab").exists())
+        assertTrue(File(distDir, "TEST_PACK.i").exists())
+        assertTrue(File(distDir, "TEST_PACK_atlas.png").exists())
     }
 
     @Test
@@ -211,7 +213,6 @@ class StudioMcpServerTest {
         val s = StudioMcpServer(transport = null, workspaceRoot = tempDir.toPath())
         server = s
 
-        // Uses camelCase projectPath instead of project_path
         val result =
             s.executeTool(
                 "sfx_pack_textures",
@@ -229,10 +230,10 @@ class StudioMcpServerTest {
     }
 
     @Test
-    fun testImportWithSnapPalette(
+    fun testImportStrictBoundsDefaultVsAutoGrow(
         @TempDir tempDir: File,
     ) {
-        val projFile = createSampleProject(tempDir, "TEST_IMPORT_MCP")
+        val projFile = createSampleProject(tempDir, "TEST_IMPORT_MCP", width = 16, height = 16)
 
         val imgFile = File(tempDir, "imported.png")
         val img = BufferedImage(16, 16, BufferedImage.TYPE_INT_ARGB)
@@ -245,7 +246,8 @@ class StudioMcpServerTest {
         val s = StudioMcpServer(transport = null, workspaceRoot = tempDir.toPath())
         server = s
 
-        val result =
+        // Default auto_grow = false -> STRICT_BOUNDS structured FAIL
+        val strictRes =
             s.executeTool(
                 "sfx_pack_textures",
                 mapOf(
@@ -255,13 +257,72 @@ class StudioMcpServerTest {
                     "snap_palette" to true,
                 ),
             )
+        assertFalse(strictRes.isError)
+        val strictJson = objectMapper.readTree((strictRes.content[0] as TextContent).text)
+        assertEquals("FAIL", strictJson.get("status").asText())
+        assertFalse(strictJson.get("valid").asBoolean())
 
-        assertFalse(result.isError)
-        val text = (result.content[0] as TextContent).text
-        val json = objectMapper.readTree(text)
-        assertEquals("SUCCESS", json.get("status").asText())
-        assertTrue(json.get("valid").asBoolean())
-        assertEquals(2, json.get("textureCount").asInt())
+        // Opt-in auto_grow = true -> grows atlas and imports cleanly
+        val growRes =
+            s.executeTool(
+                "sfx_pack_textures",
+                mapOf(
+                    "project_path" to projFile.name,
+                    "action" to "import",
+                    "image_paths" to listOf(imgFile.name),
+                    "snap_palette" to true,
+                    "auto_grow" to true,
+                ),
+            )
+        assertFalse(growRes.isError)
+        val growJson = objectMapper.readTree((growRes.content[0] as TextContent).text)
+        assertEquals("SUCCESS", growJson.get("status").asText())
+        assertTrue(growJson.get("valid").asBoolean())
+        assertEquals(2, growJson.get("textureCount").asInt())
+    }
+
+    @Test
+    fun testMistypedJsonPrimitivesRejectedStrictly(
+        @TempDir tempDir: File,
+    ) {
+        val projFile = createSampleProject(tempDir, "STRICT_DTO")
+        val s = StudioMcpServer(transport = null, workspaceRoot = tempDir.toPath())
+        server = s
+
+        val stringForInt =
+            s.executeTool(
+                "sfx_manage_level",
+                mapOf(
+                    "action" to "create",
+                    "level_path" to "bad_cols.sfxlevel",
+                    "atlas_path" to projFile.name,
+                    "cols" to "not_an_int",
+                ),
+            )
+        assertTrue(stringForInt.isError, "String passed for Int field must fail rather than silently defaulting")
+
+        val floatForInt =
+            s.executeTool(
+                "sfx_manage_level",
+                mapOf(
+                    "action" to "create",
+                    "level_path" to "bad_float.sfxlevel",
+                    "atlas_path" to projFile.name,
+                    "cols" to 8.5,
+                ),
+            )
+        assertTrue(floatForInt.isError, "Float passed for Int field must fail rather than truncating")
+
+        val stringForBool =
+            s.executeTool(
+                "sfx_pack_textures",
+                mapOf(
+                    "project_path" to projFile.name,
+                    "action" to "pack",
+                    "auto_pack" to "yes",
+                ),
+            )
+        assertTrue(stringForBool.isError, "String passed for Boolean field must fail rather than coercing")
     }
 
     @Test
@@ -272,7 +333,6 @@ class StudioMcpServerTest {
         val s = StudioMcpServer(transport = null, workspaceRoot = tempDir.toPath())
         server = s
 
-        // 1. Create 10x8 level
         val createRes =
             s.executeTool(
                 "sfx_manage_level",
@@ -298,7 +358,6 @@ class StudioMcpServerTest {
         assertTrue(File(tempDir, "levels/garden.i").exists())
         assertTrue(File(tempDir, "levels/garden_preview.png").exists())
 
-        // 2. Patch region + individual cell
         val setRes =
             s.executeTool(
                 "sfx_manage_level",
@@ -346,7 +405,6 @@ class StudioMcpServerTest {
                 .panels.south,
         )
 
-        // 3. Reject unknown texture name cleanly with structured FAIL
         val badRes =
             s.executeTool(
                 "sfx_manage_level",
@@ -369,7 +427,6 @@ class StudioMcpServerTest {
         assertFalse(badJson.get("valid").asBoolean())
         assertTrue(badJson.get("errors").size() >= 1)
 
-        // 4. Validate and pack
         val valRes =
             s.executeTool(
                 "sfx_manage_level",
@@ -385,7 +442,7 @@ class StudioMcpServerTest {
     }
 
     @Test
-    fun testWorkspaceSecurityBoundaryRejection(
+    fun testWorkspaceSecurityBoundaryAndSymlinkEscapeRejection(
         @TempDir tempDir: File,
     ) {
         val workspaceDir = File(tempDir, "workspace")
@@ -394,6 +451,7 @@ class StudioMcpServerTest {
         outsideDir.mkdirs()
 
         createSampleProject(outsideDir, "OUTSIDE")
+        Files.createSymbolicLink(workspaceDir.toPath().resolve("symlink_out"), outsideDir.toPath())
 
         val s = StudioMcpServer(transport = null, workspaceRoot = workspaceDir.toPath())
         server = s
@@ -406,10 +464,19 @@ class StudioMcpServerTest {
                     "action" to "validate",
                 ),
             )
-
         assertTrue(result.isError)
-        val text = (result.content[0] as TextContent).text
-        assertTrue(text.contains("Access denied"))
+        assertTrue((result.content[0] as TextContent).text.contains("Access denied"))
+
+        val symlinkEscape =
+            s.executeTool(
+                "sfx_pack_textures",
+                mapOf(
+                    "project_path" to "symlink_out/OUTSIDE.sfxproj",
+                    "action" to "validate",
+                ),
+            )
+        assertTrue(symlinkEscape.isError)
+        assertTrue((symlinkEscape.content[0] as TextContent).text.contains("Access denied"))
 
         val levelEscape =
             s.executeTool(
@@ -441,7 +508,6 @@ class StudioMcpServerTest {
         val reader = BufferedReader(InputStreamReader(proc.inputStream))
 
         try {
-            // 1. Initialize request
             writer.println(
                 """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test-client","version":"1.0"}}}""",
             )
@@ -452,10 +518,8 @@ class StudioMcpServerTest {
             assertEquals("2.0", initJson.get("jsonrpc")?.asText())
             assertEquals(1, initJson.get("id")?.asInt())
 
-            // 2. Initialized notification
             writer.println("""{"jsonrpc":"2.0","method":"notifications/initialized"}""")
 
-            // 3. Tools list request
             writer.println("""{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}""")
             val listRespLine = reader.readLine()
             assertNotNull(listRespLine, "Expected tools/list response line")
@@ -467,7 +531,6 @@ class StudioMcpServerTest {
             assertTrue(hasPackTextures, "Expected sfx_pack_textures in tools/list")
             assertTrue(hasManageLevel, "Expected sfx_manage_level in tools/list")
 
-            // 4. Tools call request: validate TEXTURES.sfxproj
             writer.println(
                 """{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"sfx_pack_textures","arguments":{"project_path":"snes-sfx-demo/X-GSU/IsoEngine/Data/TEXTURES.sfxproj","action":"validate"}}}""",
             )

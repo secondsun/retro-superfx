@@ -1,23 +1,23 @@
 package dev.secondsun.sfxstudio.cli.mcp
 
+import com.fasterxml.jackson.annotation.JsonAlias
 import com.fasterxml.jackson.annotation.JsonInclude
+import com.fasterxml.jackson.annotation.JsonProperty
+import com.fasterxml.jackson.annotation.JsonSetter
 import com.fasterxml.jackson.databind.DeserializationFeature
+import com.fasterxml.jackson.databind.JsonNode
+import com.fasterxml.jackson.databind.MapperFeature
 import com.fasterxml.jackson.databind.ObjectMapper
-import dev.secondsun.sfxstudio.core.atlas.ImportResult
-import dev.secondsun.sfxstudio.core.atlas.MedianCutQuantizer
-import dev.secondsun.sfxstudio.core.atlas.ProjectService
-import dev.secondsun.sfxstudio.core.atlas.SnesColor
-import dev.secondsun.sfxstudio.core.atlas.TextureImporter
-import dev.secondsun.sfxstudio.core.level.Ca65MapImporter
+import com.fasterxml.jackson.databind.json.JsonMapper
+import dev.secondsun.sfxstudio.core.atlas.ConflictResolution
+import dev.secondsun.sfxstudio.core.atlas.PlacementPolicy
+import dev.secondsun.sfxstudio.core.level.CellPatch
 import dev.secondsun.sfxstudio.core.level.CellRotation
-import dev.secondsun.sfxstudio.core.level.EdgePanels
 import dev.secondsun.sfxstudio.core.level.LevelDiagnostic
-import dev.secondsun.sfxstudio.core.level.LevelDocument
-import dev.secondsun.sfxstudio.core.level.LevelDocumentService
-import dev.secondsun.sfxstudio.core.level.LevelValidator
-import dev.secondsun.sfxstudio.core.level.MapCell
-import dev.secondsun.sfxstudio.core.level.MapGrid
-import dev.secondsun.sfxstudio.core.level.ShapeArchetype
+import dev.secondsun.sfxstudio.core.ops.AtlasOperationResult
+import dev.secondsun.sfxstudio.core.ops.LevelOperationResult
+import dev.secondsun.sfxstudio.core.ops.PathPolicy
+import dev.secondsun.sfxstudio.core.ops.StudioOperations
 import io.modelcontextprotocol.server.McpServer
 import io.modelcontextprotocol.server.McpSyncServer
 import io.modelcontextprotocol.server.transport.StdioServerTransport
@@ -26,14 +26,13 @@ import io.modelcontextprotocol.spec.McpSchema.ServerCapabilities
 import io.modelcontextprotocol.spec.McpSchema.TextContent
 import io.modelcontextprotocol.spec.McpSchema.Tool
 import io.modelcontextprotocol.spec.ServerMcpTransport
-import java.io.File
 import java.nio.file.Path
 import java.util.concurrent.CountDownLatch
 import java.util.logging.Level
 import java.util.logging.Logger
 
 /**
- * Structured response for sfx_pack_textures MCP tool invocations.
+ * Structured response for `sfx_pack_textures` MCP tool invocations.
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 data class PackTexturesResponse(
@@ -52,7 +51,7 @@ data class PackTexturesResponse(
 )
 
 /**
- * Structured response for sfx_manage_level MCP tool invocations.
+ * Structured response for `sfx_manage_level` MCP tool invocations.
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 data class ManageLevelResponse(
@@ -69,18 +68,233 @@ data class ManageLevelResponse(
     val message: String,
 )
 
+internal class PackTexturesRequest {
+    @field:JsonProperty("project_path")
+    @field:JsonAlias("projectPath")
+    var projectPath: String? = null
+
+    @field:JsonProperty("action")
+    var action: String? = null
+
+    @field:JsonProperty("auto_pack")
+    @field:JsonAlias("autoPack")
+    var autoPack: Boolean = false
+
+    @field:JsonProperty("auto_grow")
+    @field:JsonAlias("autoGrow")
+    var autoGrow: Boolean = false
+
+    @field:JsonProperty("output_dir")
+    @field:JsonAlias("outputDir")
+    var outputDir: String? = null
+
+    @field:JsonProperty("image_paths")
+    @field:JsonAlias("imagePaths")
+    var imagePaths: List<String>? = null
+
+    @field:JsonProperty("auto_quantize")
+    @field:JsonAlias("autoQuantize")
+    var autoQuantize: Boolean = false
+
+    @field:JsonProperty("snap_palette")
+    @field:JsonAlias("snapPalette")
+    var snapPalette: Boolean = false
+}
+
+internal class CellPatchDto {
+    @field:JsonProperty("col")
+    var col: Int? = null
+
+    @field:JsonProperty("row")
+    var row: Int? = null
+
+    @field:JsonProperty("col_start")
+    @field:JsonAlias("colStart")
+    var colStart: Int? = null
+
+    @field:JsonProperty("col_end")
+    @field:JsonAlias("colEnd")
+    var colEnd: Int? = null
+
+    @field:JsonProperty("row_start")
+    @field:JsonAlias("rowStart")
+    var rowStart: Int? = null
+
+    @field:JsonProperty("row_end")
+    @field:JsonAlias("rowEnd")
+    var rowEnd: Int? = null
+
+    @field:JsonProperty("base_height")
+    @field:JsonAlias("baseHeight")
+    var baseHeight: Int? = null
+
+    var archetype: String? = null
+        private set
+
+    var rotation: Int? = null
+        private set
+
+    var topTex: String? = null
+        private set
+    var updateTopTex: Boolean = false
+        private set
+
+    var skirtTex: String? = null
+        private set
+    var updateSkirtTex: Boolean = false
+        private set
+
+    var panelTex: String? = null
+        private set
+    var updatePanelTex: Boolean = false
+        private set
+
+    @field:JsonProperty("panels")
+    var panels: List<String>? = null
+
+    @field:JsonProperty("tall_2h")
+    @field:JsonAlias("tall2h")
+    var tall2h: Boolean? = null
+
+    @JsonSetter("archetype")
+    fun assignArchetype(node: JsonNode?) {
+        if (node == null || node.isNull) {
+            archetype = null
+        } else if (node.isTextual) {
+            archetype = node.textValue()
+        } else if (node.isIntegralNumber) {
+            archetype = node.intValue().toString()
+        } else {
+            throw IllegalArgumentException("Expected string or integer for 'archetype', got ${node.nodeType}")
+        }
+    }
+
+    @JsonSetter("rotation")
+    fun assignRotation(node: JsonNode?) {
+        if (node == null || node.isNull) {
+            rotation = null
+        } else if (node.isIntegralNumber) {
+            rotation = node.intValue()
+        } else if (node.isTextual) {
+            rotation = CellRotation.fromSymbol(node.textValue()).degrees
+        } else {
+            throw IllegalArgumentException("Expected integer or ROT_* symbol for 'rotation', got ${node.nodeType}")
+        }
+    }
+
+    @JsonSetter("top_tex")
+    @JsonAlias("topTex")
+    fun assignTopTex(value: String?) {
+        topTex = value
+        updateTopTex = true
+    }
+
+    @JsonSetter("skirt_tex")
+    @JsonAlias("skirtTex")
+    fun assignSkirtTex(value: String?) {
+        skirtTex = value
+        updateSkirtTex = true
+    }
+
+    @JsonSetter("panel_tex")
+    @JsonAlias("panelTex")
+    fun assignPanelTex(value: String?) {
+        panelTex = value
+        updatePanelTex = true
+    }
+
+    fun toDomain(): CellPatch =
+        CellPatch(
+            col = col,
+            row = row,
+            colStart = colStart,
+            colEnd = colEnd,
+            rowStart = rowStart,
+            rowEnd = rowEnd,
+            baseHeight = baseHeight,
+            archetype = archetype,
+            rotation = rotation,
+            topTex = topTex,
+            updateTopTex = updateTopTex,
+            skirtTex = skirtTex,
+            updateSkirtTex = updateSkirtTex,
+            panelTex = panelTex,
+            updatePanelTex = updatePanelTex,
+            panels = panels,
+            tall2h = tall2h,
+        )
+}
+
+internal class ManageLevelRequest {
+    @field:JsonProperty("level_path")
+    @field:JsonAlias("levelPath")
+    var levelPath: String? = null
+
+    @field:JsonProperty("action")
+    var action: String? = null
+
+    @field:JsonProperty("atlas_path")
+    @field:JsonAlias("atlasPath")
+    var atlasPath: String? = null
+
+    @field:JsonProperty("ca65_path")
+    @field:JsonAlias("ca65Path")
+    var ca65Path: String? = null
+
+    @field:JsonProperty("cols")
+    var cols: Int? = null
+
+    @field:JsonProperty("rows")
+    var rows: Int? = null
+
+    @field:JsonProperty("base_height")
+    @field:JsonAlias("baseHeight")
+    var baseHeight: Int? = null
+
+    @field:JsonProperty("default_top_tex")
+    @field:JsonAlias("defaultTopTex")
+    var defaultTopTex: String? = null
+
+    @field:JsonProperty("default_skirt_tex")
+    @field:JsonAlias("defaultSkirtTex")
+    var defaultSkirtTex: String? = null
+
+    @field:JsonProperty("cells")
+    var cells: List<CellPatchDto>? = null
+
+    @field:JsonProperty("resize_cols")
+    @field:JsonAlias("resizeCols")
+    var resizeCols: Int? = null
+
+    @field:JsonProperty("resize_rows")
+    @field:JsonAlias("resizeRows")
+    var resizeRows: Int? = null
+
+    @field:JsonProperty("auto_pack")
+    @field:JsonAlias("autoPack")
+    var autoPack: Boolean? = null
+
+    @field:JsonProperty("output_dir")
+    @field:JsonAlias("outputDir")
+    var outputDir: String? = null
+
+    @field:JsonProperty("yaw")
+    var yaw: Int? = null
+}
+
 /**
- * Model Context Protocol (MCP) server for SuperFX Studio, exposing texture atlas packing,
- * image import, isometric level authoring, and validation tools over stdio or custom transports.
+ * Thin Model Context Protocol (MCP) adapter delegating all domain validation, packing, bitmap
+ * import, and level editing operations to [StudioOperations] with a sandboxed [PathPolicy].
  */
 class StudioMcpServer(
     transport: ServerMcpTransport? = null,
     val workspaceRoot: Path? = null,
 ) : AutoCloseable {
-    private val objectMapper: ObjectMapper =
-        ObjectMapper()
-            .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
-            .setSerializationInclusion(JsonInclude.Include.NON_NULL)
+    private val objectMapper: ObjectMapper = createStrictMapper()
+    private val operations: StudioOperations =
+        StudioOperations(
+            pathPolicy = workspaceRoot?.let { PathPolicy.sandboxed(it) } ?: PathPolicy.UNRESTRICTED,
+        )
 
     private val syncServer: McpSyncServer?
     private val stopLatch = CountDownLatch(1)
@@ -104,7 +318,6 @@ class StudioMcpServer(
                 )
 
             val capabilities = ServerCapabilities.builder().tools(true).build()
-
             this.syncServer =
                 McpServer
                     .sync(transport)
@@ -119,59 +332,10 @@ class StudioMcpServer(
     }
 
     /**
-     * Resolves a path against workspaceRoot (if relative) and ensures it resides within the workspace boundary.
-     * Throws [SecurityException] if outside workspace boundary.
+     * Resolves [rawPath] against [workspaceRoot] and enforces sandbox boundaries (including symlink checks).
      */
-    fun resolveAndValidatePath(rawPath: String): Path {
-        val raw = Path.of(rawPath)
-        val resolved =
-            if (raw.isAbsolute) {
-                raw.normalize()
-            } else {
-                (workspaceRoot ?: Path.of("").toAbsolutePath()).resolve(raw).normalize()
-            }
+    fun resolveAndValidatePath(rawPath: String): Path = operations.pathPolicy.resolve(rawPath)
 
-        if (workspaceRoot != null) {
-            val canonicalRoot = workspaceRoot.toAbsolutePath().normalize()
-            val canonicalTarget = resolved.toAbsolutePath().normalize()
-            if (!canonicalTarget.startsWith(canonicalRoot)) {
-                throw SecurityException(
-                    "Access denied: path '$rawPath' resolved to '$canonicalTarget' which is outside workspace root '$canonicalRoot'",
-                )
-            }
-        }
-        return resolved
-    }
-
-    private fun formatPath(file: File): String {
-        val path = file.toPath().toAbsolutePath().normalize()
-        return if (workspaceRoot != null && path.startsWith(workspaceRoot.toAbsolutePath().normalize())) {
-            workspaceRoot
-                .toAbsolutePath()
-                .normalize()
-                .relativize(path)
-                .toString()
-        } else {
-            path.toString()
-        }
-    }
-
-    private fun computeRelativeAtlasPath(
-        levelFile: File,
-        atlasFile: File,
-    ): String {
-        val levelDir = (levelFile.absoluteFile.parentFile ?: File(".").absoluteFile).toPath().normalize()
-        val targetAtlas = atlasFile.absoluteFile.toPath().normalize()
-        return try {
-            levelDir.relativize(targetAtlas).toString().replace('\\', '/')
-        } catch (_: IllegalArgumentException) {
-            atlasFile.path
-        }
-    }
-
-    /**
-     * Executes an MCP tool by name with arguments and returns CallToolResult.
-     */
     fun executeTool(
         name: String,
         args: Map<String, Any?>,
@@ -190,1085 +354,191 @@ class StudioMcpServer(
             CallToolResult(listOf(TextContent("Error executing tool '$name': ${t.message}")), true)
         }
 
-    private fun handleManageLevel(args: Map<String, Any?>): CallToolResult {
-        val rawLevelPath = (args["level_path"] ?: args["levelPath"]) as? String
-        if (rawLevelPath.isNullOrBlank()) {
-            return CallToolResult(
-                listOf(TextContent("Missing required argument 'level_path' or 'levelPath'")),
-                true,
-            )
-        }
+    private fun handlePackTextures(args: Map<String, Any?>): CallToolResult {
+        val req = parseRequest(args, PackTexturesRequest::class.java)
+        val rawProjectPath =
+            req.projectPath?.takeIf { it.isNotBlank() }
+                ?: return CallToolResult(listOf(TextContent("Missing required argument 'project_path' or 'projectPath'")), true)
 
-        val levelFile = resolveAndValidatePath(rawLevelPath).toFile()
-        val action = ((args["action"] as? String) ?: "pack").lowercase()
-
-        return when (action) {
-            "create" -> handleLevelCreate(rawLevelPath, levelFile, args)
-            "set_cells" -> handleLevelSetCells(rawLevelPath, levelFile, args)
-            "pack" -> handleLevelPack(rawLevelPath, levelFile, args)
-            "validate" -> handleLevelValidate(rawLevelPath, levelFile)
-            "import_ca65" -> handleLevelImportCa65(rawLevelPath, levelFile, args)
-            else ->
-                CallToolResult(
-                    listOf(
-                        TextContent(
-                            "Unknown action: '$action'. Supported actions: create, set_cells, pack, validate, import_ca65",
-                        ),
-                    ),
-                    true,
-                )
-        }
-    }
-
-    private fun handleLevelCreate(
-        rawLevelPath: String,
-        levelFile: File,
-        args: Map<String, Any?>,
-    ): CallToolResult {
-        val rawAtlasPath = (args["atlas_path"] ?: args["atlasPath"]) as? String
-        if (rawAtlasPath.isNullOrBlank()) {
-            return CallToolResult(
-                listOf(TextContent("Missing required argument 'atlas_path' or 'atlasPath' for 'create' action")),
-                true,
-            )
-        }
-
-        val atlasFile = resolveAndValidatePath(rawAtlasPath).toFile()
-        if (!atlasFile.exists()) {
-            val resp =
-                ManageLevelResponse(
-                    status = "FAIL",
-                    valid = false,
-                    action = "create",
-                    levelPath = rawLevelPath,
-                    message = "Atlas file '${atlasFile.path}' does not exist.",
-                )
-            return CallToolResult(listOf(TextContent(objectMapper.writeValueAsString(resp))), false)
-        }
-
-        val cols = (args["cols"] as? Number)?.toInt() ?: 8
-        val rows = (args["rows"] as? Number)?.toInt() ?: 8
-        val baseHeight = ((args["base_height"] ?: args["baseHeight"]) as? Number)?.toInt() ?: 0
-        val yaw = (args["yaw"] as? Number)?.toInt() ?: 15
-
-        val (atlas, palette, _) = ProjectService.loadProject(atlasFile)
-        val descriptors = atlas.resolvedDescriptors()
-        val defaultTex = descriptors.firstOrNull()?.name
-        val topTex = ((args["default_top_tex"] ?: args["defaultTopTex"]) as? String) ?: defaultTex
-        val skirtTex = ((args["default_skirt_tex"] ?: args["defaultSkirtTex"]) as? String) ?: topTex
-        val relAtlasPath = computeRelativeAtlasPath(levelFile, atlasFile)
-
-        val doc =
-            LevelDocument(
-                name = levelFile.nameWithoutExtension,
-                atlasPath = relAtlasPath,
-                grid =
-                    MapGrid.filled(
-                        cols = cols,
-                        rows = rows,
-                        defaultCell = MapCell(baseHeight = baseHeight, topTex = topTex, skirtTex = skirtTex),
-                    ),
-            )
-
-        val validation = LevelValidator.validate(levelFile, doc, overrideAtlas = atlas)
-        if (!validation.valid) {
-            val resp =
-                ManageLevelResponse(
-                    status = "FAIL",
-                    valid = false,
-                    action = "create",
-                    levelPath = rawLevelPath,
-                    cols = cols,
-                    rows = rows,
-                    errors = validation.errors,
-                    warnings = validation.warnings.takeIf { it.isNotEmpty() },
-                    message = "Level creation failed validation (${validation.errors.size} error(s)).",
-                )
-            return CallToolResult(listOf(TextContent(objectMapper.writeValueAsString(resp))), false)
-        }
-
-        val exported =
-            LevelDocumentService.saveLevel(
-                levelFile = levelFile,
-                document = doc,
-                atlas = atlas,
-                palette = palette,
-                previewYaw = yaw,
-            )
-
-        val exportedFiles =
-            buildList {
-                add(exported.levelFile)
-                add(exported.mapBinFile)
-                add(exported.headerFile)
-                exported.previewPngFile?.let { add(it) }
-            }.map { formatPath(it) }
-
-        val resp =
-            ManageLevelResponse(
-                status = "SUCCESS",
-                valid = true,
-                action = "create",
-                levelPath = rawLevelPath,
-                cols = cols,
-                rows = rows,
-                mapByteSize = doc.grid.byteSize,
-                warnings = validation.warnings.takeIf { it.isNotEmpty() },
-                exportedFiles = exportedFiles,
-                message = "Created level '${doc.name}' (${cols}x$rows).",
-            )
-        return CallToolResult(listOf(TextContent(objectMapper.writeValueAsString(resp))), false)
-    }
-
-    private fun handleLevelSetCells(
-        rawLevelPath: String,
-        levelFile: File,
-        args: Map<String, Any?>,
-    ): CallToolResult {
-        if (!levelFile.exists()) {
-            val resp =
-                ManageLevelResponse(
-                    status = "FAIL",
-                    valid = false,
-                    action = "set_cells",
-                    levelPath = rawLevelPath,
-                    message = "Level file '${levelFile.path}' does not exist.",
-                )
-            return CallToolResult(listOf(TextContent(objectMapper.writeValueAsString(resp))), false)
-        }
-
-        val rawCells = args["cells"] as? List<*>
-        val resizeCols = ((args["resize_cols"] ?: args["resizeCols"]) as? Number)?.toInt()
-        val resizeRows = ((args["resize_rows"] ?: args["resizeRows"]) as? Number)?.toInt()
-        if (rawCells.isNullOrEmpty() && resizeCols == null && resizeRows == null) {
-            return CallToolResult(
-                listOf(TextContent("Missing non-empty 'cells' list (or resize dimensions) for 'set_cells' action")),
-                true,
-            )
-        }
-
-        val loadedDoc = LevelDocumentService.loadLevel(levelFile)
-        val resolvedAtlasFile =
-            resolveAndValidatePath(
-                LevelDocumentService.resolveAtlasFile(levelFile, loadedDoc.atlasPath).path,
-            ).toFile()
-
-        var grid = loadedDoc.grid
-        if (resizeCols != null || resizeRows != null) {
-            val defaultFill = grid.cells.firstOrNull() ?: MapCell()
-            grid = grid.resized(resizeCols ?: grid.cols, resizeRows ?: grid.rows, defaultFill)
-        }
-
-        var updatedCellCount = 0
-        for (rawPatch in rawCells.orEmpty()) {
-            val patch =
-                rawPatch as? Map<*, *>
-                    ?: throw IllegalArgumentException("Each entry in 'cells' must be an object")
-            val colSingle = (patch["col"] as? Number)?.toInt()
-            val rowSingle = (patch["row"] as? Number)?.toInt()
-            val colStart = ((patch["col_start"] ?: patch["colStart"]) as? Number)?.toInt() ?: colSingle
-            val colEnd = ((patch["col_end"] ?: patch["colEnd"]) as? Number)?.toInt() ?: colSingle
-            val rowStart = ((patch["row_start"] ?: patch["rowStart"]) as? Number)?.toInt() ?: rowSingle
-            val rowEnd = ((patch["row_end"] ?: patch["rowEnd"]) as? Number)?.toInt() ?: rowSingle
-
-            if (colStart == null || colEnd == null || rowStart == null || rowEnd == null) {
-                throw IllegalArgumentException(
-                    "Cell patch must specify (col, row) or (col_start..col_end, row_start..row_end)",
-                )
-            }
-
-            val updates = mutableMapOf<Pair<Int, Int>, MapCell>()
-            for (r in rowStart..rowEnd) {
-                for (c in colStart..colEnd) {
-                    val prev = grid.cellAt(c, r)
-                    updates[c to r] = applyCellPatch(prev, patch)
-                    updatedCellCount++
-                }
-            }
-            grid = grid.withCells(updates)
-        }
-
-        val updatedDoc = loadedDoc.copy(grid = grid)
-        val autoPack = ((args["auto_pack"] ?: args["autoPack"]) as? Boolean) ?: true
-        val yaw = (args["yaw"] as? Number)?.toInt() ?: 15
-
-        if (!resolvedAtlasFile.exists()) {
-            val resp =
-                ManageLevelResponse(
-                    status = "FAIL",
-                    valid = false,
-                    action = "set_cells",
-                    levelPath = rawLevelPath,
-                    cols = grid.cols,
-                    rows = grid.rows,
-                    message = "Atlas file '${resolvedAtlasFile.path}' does not exist.",
-                )
-            return CallToolResult(listOf(TextContent(objectMapper.writeValueAsString(resp))), false)
-        }
-
-        val (atlas, palette, _) = ProjectService.loadProject(resolvedAtlasFile)
-        val validation = LevelValidator.validate(levelFile, updatedDoc, overrideAtlas = atlas)
-        if (!validation.valid) {
-            val resp =
-                ManageLevelResponse(
-                    status = "FAIL",
-                    valid = false,
-                    action = "set_cells",
-                    levelPath = rawLevelPath,
-                    cols = grid.cols,
-                    rows = grid.rows,
-                    errors = validation.errors,
-                    warnings = validation.warnings.takeIf { it.isNotEmpty() },
-                    message = "Cell update failed validation (${validation.errors.size} error(s)).",
-                )
-            return CallToolResult(listOf(TextContent(objectMapper.writeValueAsString(resp))), false)
-        }
-
-        val exportedFiles =
-            if (autoPack) {
-                val exported =
-                    LevelDocumentService.saveLevel(
-                        levelFile = levelFile,
-                        document = updatedDoc,
-                        atlas = atlas,
-                        palette = palette,
-                        previewYaw = yaw,
+        val action = (req.action ?: "pack").lowercase()
+        val opResult =
+            when (action) {
+                "validate" -> operations.validateAtlas(rawProjectPath)
+                "pack" ->
+                    operations.packAtlas(
+                        projectPath = rawProjectPath,
+                        outputDir = req.outputDir,
+                        autoPack = req.autoPack,
                     )
-                buildList {
-                    add(exported.levelFile)
-                    add(exported.mapBinFile)
-                    add(exported.headerFile)
-                    exported.previewPngFile?.let { add(it) }
-                }.map { formatPath(it) }
-            } else {
-                levelFile.parentFile?.mkdirs()
-                levelFile.writeText(LevelDocumentService.toJson(updatedDoc))
-                listOf(formatPath(levelFile))
+                "import" -> {
+                    val resolution =
+                        when {
+                            req.snapPalette -> ConflictResolution.SNAP_TO_PALETTE
+                            req.autoQuantize -> ConflictResolution.GLOBAL_QUANTIZE
+                            else -> ConflictResolution.FAIL
+                        }
+                    val placement =
+                        if (req.autoGrow) PlacementPolicy.AUTO_GROW_MAX_256 else PlacementPolicy.STRICT_BOUNDS
+                    operations.importAtlasImages(
+                        projectPath = rawProjectPath,
+                        imagePaths = req.imagePaths.orEmpty(),
+                        conflictResolution = resolution,
+                        placementPolicy = placement,
+                    )
+                }
+                else ->
+                    return CallToolResult(
+                        listOf(TextContent("Unknown action: '$action'. Supported actions: pack, import, validate")),
+                        true,
+                    )
             }
 
-        val resp =
-            ManageLevelResponse(
-                status = "SUCCESS",
-                valid = true,
-                action = "set_cells",
-                levelPath = rawLevelPath,
-                cols = grid.cols,
-                rows = grid.rows,
-                mapByteSize = grid.byteSize,
-                warnings = validation.warnings.takeIf { it.isNotEmpty() },
-                exportedFiles = exportedFiles,
-                message = "Updated $updatedCellCount cell(s) in '${updatedDoc.name}'.",
-            )
-        return CallToolResult(listOf(TextContent(objectMapper.writeValueAsString(resp))), false)
-    }
-
-    private fun applyCellPatch(
-        prev: MapCell,
-        patch: Map<*, *>,
-    ): MapCell {
-        val baseHeight =
-            ((patch["base_height"] ?: patch["baseHeight"]) as? Number)?.toInt() ?: prev.baseHeight
-
-        val archetype =
-            when (val rawArch = patch["archetype"]) {
-                null -> prev.archetype
-                is Number -> ShapeArchetype.fromId(rawArch.toInt())
-                else -> ShapeArchetype.fromSymbol(rawArch.toString())
-            }
-
-        val rotation =
-            when (val rawRot = patch["rotation"]) {
-                null -> prev.rotation
-                is Number -> CellRotation.fromDegreesOrIndex(rawRot.toInt())
-                else -> CellRotation.fromSymbol(rawRot.toString())
-            }
-
-        val hasTopKey = patch.containsKey("top_tex") || patch.containsKey("topTex")
-        val topTex =
-            if (hasTopKey) {
-                ((patch["top_tex"] ?: patch["topTex"]) as? String)?.takeIf { it.isNotBlank() }
-            } else {
-                prev.topTex
-            }
-
-        val hasSkirtKey = patch.containsKey("skirt_tex") || patch.containsKey("skirtTex")
-        val skirtTex =
-            if (hasSkirtKey) {
-                ((patch["skirt_tex"] ?: patch["skirtTex"]) as? String)?.takeIf { it.isNotBlank() }
-            } else {
-                prev.skirtTex
-            }
-
-        val hasPanelTexKey = patch.containsKey("panel_tex") || patch.containsKey("panelTex")
-        val panelTex =
-            if (hasPanelTexKey) {
-                ((patch["panel_tex"] ?: patch["panelTex"]) as? String)?.takeIf { it.isNotBlank() }
-            } else {
-                prev.panelTex
-            }
-
-        val hasTallKey = patch.containsKey("tall_2h") || patch.containsKey("tall2h")
-        val tall2h =
-            if (hasTallKey) {
-                ((patch["tall_2h"] ?: patch["tall2h"]) as? Boolean) ?: false
-            } else {
-                prev.panels.tall2h
-            }
-
-        val panels =
-            if (patch.containsKey("panels")) {
-                val rawList = (patch["panels"] as? List<*>)?.map { it.toString() }.orEmpty()
-                EdgePanels.fromEdgeNames(rawList, tall2h)
-            } else if (hasTallKey) {
-                prev.panels.copy(tall2h = prev.panels.hasAny && tall2h)
-            } else {
-                prev.panels
-            }
-
-        return MapCell(
-            baseHeight = baseHeight,
-            archetype = archetype,
-            rotation = rotation,
-            topTex = topTex,
-            skirtTex = skirtTex,
-            panelTex = panelTex,
-            panels = panels,
+        return CallToolResult(
+            listOf(TextContent(objectMapper.writeValueAsString(opResult.toMcpResponse(action, rawProjectPath)))),
+            false,
         )
     }
 
-    private fun handleLevelPack(
-        rawLevelPath: String,
-        levelFile: File,
-        args: Map<String, Any?>,
-    ): CallToolResult {
-        if (!levelFile.exists()) {
-            val resp =
-                ManageLevelResponse(
-                    status = "FAIL",
-                    valid = false,
-                    action = "pack",
-                    levelPath = rawLevelPath,
-                    message = "Level file '${levelFile.path}' does not exist.",
-                )
-            return CallToolResult(listOf(TextContent(objectMapper.writeValueAsString(resp))), false)
-        }
+    private fun handleManageLevel(args: Map<String, Any?>): CallToolResult {
+        val req = parseRequest(args, ManageLevelRequest::class.java)
+        val rawLevelPath =
+            req.levelPath?.takeIf { it.isNotBlank() }
+                ?: return CallToolResult(listOf(TextContent("Missing required argument 'level_path' or 'levelPath'")), true)
 
-        val rawOutputDir = (args["output_dir"] ?: args["outputDir"]) as? String
-        val outputDir = rawOutputDir?.let { resolveAndValidatePath(it).toFile() }
-        val yaw = (args["yaw"] as? Number)?.toInt() ?: 15
-
-        val doc = LevelDocumentService.loadLevel(levelFile)
-        val resolvedAtlasFile =
-            resolveAndValidatePath(
-                LevelDocumentService.resolveAtlasFile(levelFile, doc.atlasPath).path,
-            ).toFile()
-        if (!resolvedAtlasFile.exists()) {
-            val resp =
-                ManageLevelResponse(
-                    status = "FAIL",
-                    valid = false,
-                    action = "pack",
-                    levelPath = rawLevelPath,
-                    cols = doc.grid.cols,
-                    rows = doc.grid.rows,
-                    message = "Atlas file '${resolvedAtlasFile.path}' does not exist.",
-                )
-            return CallToolResult(listOf(TextContent(objectMapper.writeValueAsString(resp))), false)
-        }
-
-        val (atlas, palette, _) = ProjectService.loadProject(resolvedAtlasFile)
-        val validation = LevelValidator.validate(levelFile, doc, overrideAtlas = atlas)
-        if (!validation.valid) {
-            val resp =
-                ManageLevelResponse(
-                    status = "FAIL",
-                    valid = false,
-                    action = "pack",
-                    levelPath = rawLevelPath,
-                    cols = doc.grid.cols,
-                    rows = doc.grid.rows,
-                    errors = validation.errors,
-                    warnings = validation.warnings.takeIf { it.isNotEmpty() },
-                    message = "Level pack failed validation (${validation.errors.size} error(s)).",
-                )
-            return CallToolResult(listOf(TextContent(objectMapper.writeValueAsString(resp))), false)
-        }
-
-        val exported =
-            LevelDocumentService.saveLevel(
-                levelFile = levelFile,
-                document = doc,
-                atlas = atlas,
-                palette = palette,
-                outputDir = outputDir,
-                previewYaw = yaw,
-            )
-        val exportedFiles =
-            buildList {
-                add(exported.levelFile)
-                add(exported.mapBinFile)
-                add(exported.headerFile)
-                exported.previewPngFile?.let { add(it) }
-            }.map { formatPath(it) }
-
-        val resp =
-            ManageLevelResponse(
-                status = "SUCCESS",
-                valid = true,
-                action = "pack",
-                levelPath = rawLevelPath,
-                cols = doc.grid.cols,
-                rows = doc.grid.rows,
-                mapByteSize = doc.grid.byteSize,
-                warnings = validation.warnings.takeIf { it.isNotEmpty() },
-                exportedFiles = exportedFiles,
-                message = "Successfully packed level '${doc.name}' (${doc.grid.cols}x${doc.grid.rows}).",
-            )
-        return CallToolResult(listOf(TextContent(objectMapper.writeValueAsString(resp))), false)
-    }
-
-    private fun handleLevelValidate(
-        rawLevelPath: String,
-        levelFile: File,
-    ): CallToolResult {
-        if (!levelFile.exists()) {
-            val resp =
-                ManageLevelResponse(
-                    status = "FAIL",
-                    valid = false,
-                    action = "validate",
-                    levelPath = rawLevelPath,
-                    message = "Level file '${levelFile.path}' does not exist.",
-                )
-            return CallToolResult(listOf(TextContent(objectMapper.writeValueAsString(resp))), false)
-        }
-
-        val doc =
-            try {
-                LevelDocumentService.loadLevel(levelFile)
-            } catch (e: Exception) {
-                val resp =
-                    ManageLevelResponse(
-                        status = "FAIL",
-                        valid = false,
-                        action = "validate",
-                        levelPath = rawLevelPath,
-                        message = "Failed to parse level '${levelFile.path}': ${e.message}",
-                    )
-                return CallToolResult(listOf(TextContent(objectMapper.writeValueAsString(resp))), false)
-            }
-
-        resolveAndValidatePath(LevelDocumentService.resolveAtlasFile(levelFile, doc.atlasPath).path)
-
-        val validation = LevelValidator.validate(levelFile, doc)
-        val resp =
-            ManageLevelResponse(
-                status = if (validation.valid) "SUCCESS" else "FAIL",
-                valid = validation.valid,
-                action = "validate",
-                levelPath = rawLevelPath,
-                cols = doc.grid.cols,
-                rows = doc.grid.rows,
-                mapByteSize = doc.grid.byteSize,
-                errors = validation.errors.takeIf { it.isNotEmpty() },
-                warnings = validation.warnings.takeIf { it.isNotEmpty() },
-                message =
-                    if (validation.valid) {
-                        "Validation passed (${validation.warnings.size} warning(s))."
-                    } else {
-                        "Validation failed with ${validation.errors.size} error(s)."
-                    },
-            )
-        return CallToolResult(listOf(TextContent(objectMapper.writeValueAsString(resp))), false)
-    }
-
-    private fun handleLevelImportCa65(
-        rawLevelPath: String,
-        levelFile: File,
-        args: Map<String, Any?>,
-    ): CallToolResult {
-        val rawCa65Path = (args["ca65_path"] ?: args["ca65Path"]) as? String
-        val rawAtlasPath = (args["atlas_path"] ?: args["atlasPath"]) as? String
-        if (rawCa65Path.isNullOrBlank() || rawAtlasPath.isNullOrBlank()) {
-            return CallToolResult(
-                listOf(TextContent("Missing required 'ca65_path' or 'atlas_path' for 'import_ca65' action")),
-                true,
-            )
-        }
-
-        val ca65File = resolveAndValidatePath(rawCa65Path).toFile()
-        val atlasFile = resolveAndValidatePath(rawAtlasPath).toFile()
-        if (!ca65File.exists()) {
-            val resp =
-                ManageLevelResponse(
-                    status = "FAIL",
-                    valid = false,
-                    action = "import_ca65",
-                    levelPath = rawLevelPath,
-                    message = "CA65 map file '${ca65File.path}' does not exist.",
-                )
-            return CallToolResult(listOf(TextContent(objectMapper.writeValueAsString(resp))), false)
-        }
-        if (!atlasFile.exists()) {
-            val resp =
-                ManageLevelResponse(
-                    status = "FAIL",
-                    valid = false,
-                    action = "import_ca65",
-                    levelPath = rawLevelPath,
-                    message = "Atlas file '${atlasFile.path}' does not exist.",
-                )
-            return CallToolResult(listOf(TextContent(objectMapper.writeValueAsString(resp))), false)
-        }
-
-        val yaw = (args["yaw"] as? Number)?.toInt() ?: 15
-        val (atlas, palette, _) = ProjectService.loadProject(atlasFile)
-        val relAtlasPath = computeRelativeAtlasPath(levelFile, atlasFile)
-        val doc =
-            Ca65MapImporter.importFile(
-                ca65File = ca65File,
-                atlasPath = relAtlasPath,
-                atlas = atlas,
-                levelName = levelFile.nameWithoutExtension,
-            )
-
-        val validation = LevelValidator.validate(levelFile, doc, overrideAtlas = atlas)
-        if (!validation.valid) {
-            val resp =
-                ManageLevelResponse(
-                    status = "FAIL",
-                    valid = false,
-                    action = "import_ca65",
-                    levelPath = rawLevelPath,
-                    cols = doc.grid.cols,
-                    rows = doc.grid.rows,
-                    errors = validation.errors,
-                    warnings = validation.warnings.takeIf { it.isNotEmpty() },
-                    message = "Imported ca65 map failed validation (${validation.errors.size} error(s)).",
-                )
-            return CallToolResult(listOf(TextContent(objectMapper.writeValueAsString(resp))), false)
-        }
-
-        val exported =
-            LevelDocumentService.saveLevel(
-                levelFile = levelFile,
-                document = doc,
-                atlas = atlas,
-                palette = palette,
-                previewYaw = yaw,
-            )
-        val exportedFiles =
-            buildList {
-                add(exported.levelFile)
-                add(exported.mapBinFile)
-                add(exported.headerFile)
-                exported.previewPngFile?.let { add(it) }
-            }.map { formatPath(it) }
-
-        val resp =
-            ManageLevelResponse(
-                status = "SUCCESS",
-                valid = true,
-                action = "import_ca65",
-                levelPath = rawLevelPath,
-                cols = doc.grid.cols,
-                rows = doc.grid.rows,
-                mapByteSize = doc.grid.byteSize,
-                warnings = validation.warnings.takeIf { it.isNotEmpty() },
-                exportedFiles = exportedFiles,
-                message = "Imported '${ca65File.name}' into '${doc.name}' (${doc.grid.cols}x${doc.grid.rows}).",
-            )
-        return CallToolResult(listOf(TextContent(objectMapper.writeValueAsString(resp))), false)
-    }
-
-    private fun handlePackTextures(args: Map<String, Any?>): CallToolResult {
-        val rawProjectPath = (args["project_path"] ?: args["projectPath"]) as? String
-        if (rawProjectPath.isNullOrBlank()) {
-            return CallToolResult(
-                listOf(TextContent("Missing required argument 'project_path' or 'projectPath'")),
-                true,
-            )
-        }
-
-        val projectPath = resolveAndValidatePath(rawProjectPath)
-        val projectFile = projectPath.toFile()
-        val action = ((args["action"] as? String) ?: "pack").lowercase()
-
-        return when (action) {
-            "validate" -> handleValidate(rawProjectPath, projectFile)
-            "pack" -> handlePack(rawProjectPath, projectFile, args)
-            "import" -> handleImport(rawProjectPath, projectFile, args)
-            else -> {
-                CallToolResult(
-                    listOf(TextContent("Unknown action: '$action'. Supported actions: pack, import, validate")),
-                    true,
-                )
-            }
-        }
-    }
-
-    private fun handleValidate(
-        rawProjectPath: String,
-        projectFile: File,
-    ): CallToolResult {
-        if (!projectFile.exists()) {
-            val resp =
-                PackTexturesResponse(
-                    status = "FAIL",
-                    valid = false,
-                    action = "validate",
-                    projectPath = rawProjectPath,
-                    message = "Project file '${projectFile.path}' does not exist.",
-                )
-            return CallToolResult(listOf(TextContent(objectMapper.writeValueAsString(resp))), false)
-        }
-
-        val (atlas, _, _) =
-            try {
-                ProjectService.loadProject(projectFile)
-            } catch (e: Exception) {
-                val resp =
-                    PackTexturesResponse(
-                        status = "FAIL",
-                        valid = false,
-                        action = "validate",
-                        projectPath = rawProjectPath,
-                        message = "Failed to load project '${projectFile.path}': ${e.message}",
-                    )
-                return CallToolResult(listOf(TextContent(objectMapper.writeValueAsString(resp))), false)
-            }
-
-        // 1. Validate textures within bounds
-        for (tex in atlas.textures) {
-            if (!tex.isWithinBounds(atlas.width, atlas.height)) {
-                val resp =
-                    PackTexturesResponse(
-                        status = "FAIL",
-                        valid = false,
-                        action = "validate",
-                        projectPath = rawProjectPath,
-                        atlasWidth = atlas.width,
-                        atlasHeight = atlas.height,
-                        textureCount = atlas.textures.size,
-                        sliceCount = atlas.slices.size,
-                        aliasCount = atlas.aliases.size,
-                        message =
-                            "Texture '${tex.name}' exceeds atlas bounds: " +
-                                "(${tex.x}, ${tex.y}) + (${tex.width}x${tex.height}) > (${atlas.width}x${atlas.height})",
-                    )
-                return CallToolResult(listOf(TextContent(objectMapper.writeValueAsString(resp))), false)
-            }
-        }
-
-        // 2. Validate collisions
-        for (i in atlas.textures.indices) {
-            for (j in i + 1 until atlas.textures.size) {
-                if (atlas.textures[i].intersects(atlas.textures[j])) {
-                    val resp =
-                        PackTexturesResponse(
-                            status = "FAIL",
-                            valid = false,
-                            action = "validate",
-                            projectPath = rawProjectPath,
-                            atlasWidth = atlas.width,
-                            atlasHeight = atlas.height,
-                            textureCount = atlas.textures.size,
-                            sliceCount = atlas.slices.size,
-                            aliasCount = atlas.aliases.size,
-                            message = "Collision detected between '${atlas.textures[i].name}' and '${atlas.textures[j].name}'",
-                        )
-                    return CallToolResult(listOf(TextContent(objectMapper.writeValueAsString(resp))), false)
-                }
-            }
-        }
-
-        // 3. Validate descriptors (slices and aliases)
-        val descriptors =
-            try {
-                atlas.resolvedDescriptors()
-            } catch (e: Exception) {
-                val resp =
-                    PackTexturesResponse(
-                        status = "FAIL",
-                        valid = false,
-                        action = "validate",
-                        projectPath = rawProjectPath,
-                        atlasWidth = atlas.width,
-                        atlasHeight = atlas.height,
-                        textureCount = atlas.textures.size,
-                        sliceCount = atlas.slices.size,
-                        aliasCount = atlas.aliases.size,
-                        message = "Descriptor resolution failed: ${e.message}",
-                    )
-                return CallToolResult(listOf(TextContent(objectMapper.writeValueAsString(resp))), false)
-            }
-
-        val resp =
-            PackTexturesResponse(
-                status = "SUCCESS",
-                valid = true,
-                action = "validate",
-                projectPath = rawProjectPath,
-                atlasWidth = atlas.width,
-                atlasHeight = atlas.height,
-                textureCount = atlas.textures.size,
-                sliceCount = atlas.slices.size,
-                aliasCount = atlas.aliases.size,
-                descriptorCount = descriptors.size,
-                message = "Validation passed: ${descriptors.size} descriptors valid.",
-            )
-        return CallToolResult(listOf(TextContent(objectMapper.writeValueAsString(resp))), false)
-    }
-
-    private fun handlePack(
-        rawProjectPath: String,
-        projectFile: File,
-        args: Map<String, Any?>,
-    ): CallToolResult {
-        if (!projectFile.exists()) {
-            val resp =
-                PackTexturesResponse(
-                    status = "FAIL",
-                    valid = false,
-                    action = "pack",
-                    projectPath = rawProjectPath,
-                    message = "Project file '${projectFile.path}' does not exist.",
-                )
-            return CallToolResult(listOf(TextContent(objectMapper.writeValueAsString(resp))), false)
-        }
-
-        val autoPack = ((args["auto_pack"] ?: args["autoPack"]) as? Boolean) ?: false
-        val rawOutputDir = (args["output_dir"] ?: args["outputDir"]) as? String
-        val outputDir = rawOutputDir?.let { resolveAndValidatePath(it).toFile() }
-
-        val (loadedAtlas, palette, gridSnap) = ProjectService.loadProject(projectFile)
-        var atlas = loadedAtlas
-
-        if (autoPack) {
-            val packed = atlas.autoPack(gridSnap)
-            if (packed == null) {
-                val resp =
-                    PackTexturesResponse(
-                        status = "FAIL",
-                        valid = false,
-                        action = "pack",
-                        projectPath = rawProjectPath,
-                        message = "Could not auto-pack textures into ${atlas.width}x${atlas.height} atlas with grid $gridSnap",
-                    )
-                return CallToolResult(listOf(TextContent(objectMapper.writeValueAsString(resp))), false)
-            }
-            atlas = packed
-        }
-
-        // Validate bounds
-        for (tex in atlas.textures) {
-            if (!tex.isWithinBounds(atlas.width, atlas.height)) {
-                val resp =
-                    PackTexturesResponse(
-                        status = "FAIL",
-                        valid = false,
-                        action = "pack",
-                        projectPath = rawProjectPath,
-                        message =
-                            "Texture '${tex.name}' exceeds atlas bounds: " +
-                                "(${tex.x}, ${tex.y}) + (${tex.width}x${tex.height}) > (${atlas.width}x${atlas.height})",
-                    )
-                return CallToolResult(listOf(TextContent(objectMapper.writeValueAsString(resp))), false)
-            }
-        }
-
-        // Validate collisions
-        for (i in atlas.textures.indices) {
-            for (j in i + 1 until atlas.textures.size) {
-                if (atlas.textures[i].intersects(atlas.textures[j])) {
-                    val resp =
-                        PackTexturesResponse(
-                            status = "FAIL",
-                            valid = false,
-                            action = "pack",
-                            projectPath = rawProjectPath,
-                            message = "Collision detected between '${atlas.textures[i].name}' and '${atlas.textures[j].name}'",
-                        )
-                    return CallToolResult(listOf(TextContent(objectMapper.writeValueAsString(resp))), false)
-                }
-            }
-        }
-
-        val descriptors = atlas.resolvedDescriptors()
-        val targetFile = if (outputDir != null) File(outputDir, projectFile.name) else projectFile
-        val projectName = projectFile.nameWithoutExtension
-
-        ProjectService.saveProject(targetFile, projectName, atlas, palette, gridSnap)
-
-        val parentDir = targetFile.parentFile ?: File(".")
-        val exportedFiles =
-            listOf(
-                targetFile,
-                File(parentDir, "$projectName.bin"),
-                File(parentDir, "$projectName.pal"),
-                File(parentDir, "$projectName.tab"),
-                File(parentDir, "$projectName.i"),
-                File(parentDir, "${projectName}_atlas.png"),
-            ).map { formatPath(it) }
-
-        val resp =
-            PackTexturesResponse(
-                status = "SUCCESS",
-                valid = true,
-                action = "pack",
-                projectPath = rawProjectPath,
-                atlasWidth = atlas.width,
-                atlasHeight = atlas.height,
-                textureCount = atlas.textures.size,
-                sliceCount = atlas.slices.size,
-                aliasCount = atlas.aliases.size,
-                descriptorCount = descriptors.size,
-                exportedFiles = exportedFiles,
-                message = "Successfully packed '$projectName' (${descriptors.size} descriptors).",
-            )
-        return CallToolResult(listOf(TextContent(objectMapper.writeValueAsString(resp))), false)
-    }
-
-    private fun handleImport(
-        rawProjectPath: String,
-        projectFile: File,
-        args: Map<String, Any?>,
-    ): CallToolResult {
-        if (!projectFile.exists()) {
-            val resp =
-                PackTexturesResponse(
-                    status = "FAIL",
-                    valid = false,
-                    action = "import",
-                    projectPath = rawProjectPath,
-                    message = "Project file '${projectFile.path}' does not exist.",
-                )
-            return CallToolResult(listOf(TextContent(objectMapper.writeValueAsString(resp))), false)
-        }
-
-        val autoQuantize = ((args["auto_quantize"] ?: args["autoQuantize"]) as? Boolean) ?: false
-        val snapPalette = ((args["snap_palette"] ?: args["snapPalette"]) as? Boolean) ?: false
-        val rawImagePaths = (args["image_paths"] ?: args["imagePaths"]) as? List<*>
-
-        if (rawImagePaths.isNullOrEmpty()) {
-            val resp =
-                PackTexturesResponse(
-                    status = "FAIL",
-                    valid = false,
-                    action = "import",
-                    projectPath = rawProjectPath,
-                    message = "No image paths specified for import.",
-                )
-            return CallToolResult(listOf(TextContent(objectMapper.writeValueAsString(resp))), false)
-        }
-
-        val imageFiles =
-            rawImagePaths.map { item ->
-                val imgPathStr = item.toString()
-                val resolvedImgPath = resolveAndValidatePath(imgPathStr)
-                val file = resolvedImgPath.toFile()
-                if (!file.exists()) {
-                    throw IllegalArgumentException("Image file '${file.path}' not found")
-                }
-                file
-            }
-
-        val (loadedAtlas, loadedPalette, gridSnap) = ProjectService.loadProject(projectFile)
-        var atlas = loadedAtlas
-        var palette = loadedPalette
-
-        for (imgFile in imageFiles) {
-            when (val result = TextureImporter.importFromFile(imgFile, palette)) {
-                is ImportResult.Success -> {
-                    val pos =
-                        atlas.findPlacement(result.texture, gridSnap)
+        val action = (req.action ?: "pack").lowercase()
+        val opResult =
+            when (action) {
+                "create" -> {
+                    val rawAtlas =
+                        req.atlasPath?.takeIf { it.isNotBlank() }
                             ?: return CallToolResult(
-                                listOf(
-                                    TextContent(
-                                        objectMapper.writeValueAsString(
-                                            PackTexturesResponse(
-                                                status = "FAIL",
-                                                valid = false,
-                                                action = "import",
-                                                projectPath = rawProjectPath,
-                                                message =
-                                                    "Could not find free placement for '${result.texture.name}' " +
-                                                        "in ${atlas.width}x${atlas.height} atlas",
-                                            ),
-                                        ),
-                                    ),
-                                ),
-                                false,
+                                listOf(TextContent("Missing required argument 'atlas_path' or 'atlasPath' for 'create' action")),
+                                true,
                             )
-                    atlas = atlas.withTexture(result.texture.copy(x = pos.first, y = pos.second))
-                    palette = result.updatedPalette
+                    operations.createLevel(
+                        levelPath = rawLevelPath,
+                        atlasPath = rawAtlas,
+                        cols = req.cols ?: 8,
+                        rows = req.rows ?: 8,
+                        defaultTopTex = req.defaultTopTex,
+                        defaultSkirtTex = req.defaultSkirtTex,
+                        baseHeight = req.baseHeight ?: 0,
+                        yaw = req.yaw ?: 15,
+                    )
                 }
-                is ImportResult.NeedsRemapping -> {
-                    if (snapPalette) {
-                        val mapping = mutableMapOf<SnesColor, Int>()
-                        for (color in result.uniqueColors) {
-                            val existing = palette.findExactIndex(color)
-                            mapping[color] = existing ?: palette.findNearestAssignedIndex(color)
-                        }
-                        val tex =
-                            TextureImporter.createTextureFromImage(
-                                image = result.rawImage,
-                                name = result.suggestedName,
-                                colorMapping = mapping,
-                                fallbackPalette = palette,
-                            )
-                        val pos =
-                            atlas.findPlacement(tex, gridSnap)
-                                ?: return CallToolResult(
-                                    listOf(
-                                        TextContent(
-                                            objectMapper.writeValueAsString(
-                                                PackTexturesResponse(
-                                                    status = "FAIL",
-                                                    valid = false,
-                                                    action = "import",
-                                                    projectPath = rawProjectPath,
-                                                    message = "Could not find free placement for '${tex.name}' in atlas",
-                                                ),
-                                            ),
-                                        ),
-                                    ),
-                                    false,
-                                )
-                        atlas = atlas.withTexture(tex.copy(x = pos.first, y = pos.second))
-                    } else if (autoQuantize) {
-                        val allColors = mutableListOf<SnesColor>()
-                        for (tex in atlas.textures) {
-                            for (v in 0 until tex.height) {
-                                for (u in 0 until tex.width) {
-                                    val slot = tex.getPixel(u, v)
-                                    if (slot != 0) allColors.add(palette[slot])
-                                }
-                            }
-                        }
-                        allColors.addAll(result.uniqueColors)
-                        val newPalette = MedianCutQuantizer.quantize(allColors)
-
-                        val remappedTextures =
-                            atlas.textures.map { tex ->
-                                val remapMap = mutableMapOf<Int, Int>()
-                                for (slot in 1..15) {
-                                    remapMap[slot] = newPalette.findNearestAssignedIndex(palette[slot])
-                                }
-                                tex.remapPixels(remapMap)
-                            }
-
-                        val incomingMapping = mutableMapOf<SnesColor, Int>()
-                        for (color in result.uniqueColors) {
-                            incomingMapping[color] = newPalette.findNearestAssignedIndex(color)
-                        }
-                        val newTex =
-                            TextureImporter.createTextureFromImage(
-                                image = result.rawImage,
-                                name = result.suggestedName,
-                                colorMapping = incomingMapping,
-                                fallbackPalette = newPalette,
-                            )
-
-                        palette = newPalette
-                        val tempAtlas = atlas.copy(textures = remappedTextures)
-                        val pos =
-                            tempAtlas.findPlacement(newTex, gridSnap)
-                                ?: return CallToolResult(
-                                    listOf(
-                                        TextContent(
-                                            objectMapper.writeValueAsString(
-                                                PackTexturesResponse(
-                                                    status = "FAIL",
-                                                    valid = false,
-                                                    action = "import",
-                                                    projectPath = rawProjectPath,
-                                                    message = "Could not find free placement for '${newTex.name}' in quantized atlas",
-                                                ),
-                                            ),
-                                        ),
-                                    ),
-                                    false,
-                                )
-                        atlas = tempAtlas.withTexture(newTex.copy(x = pos.first, y = pos.second))
-                    } else {
+                "set_cells" -> {
+                    val patches = req.cells?.map { it.toDomain() }.orEmpty()
+                    if (patches.isEmpty() && req.resizeCols == null && req.resizeRows == null) {
                         return CallToolResult(
-                            listOf(
-                                TextContent(
-                                    objectMapper.writeValueAsString(
-                                        PackTexturesResponse(
-                                            status = "FAIL",
-                                            valid = false,
-                                            action = "import",
-                                            projectPath = rawProjectPath,
-                                            message =
-                                                "Image '${imgFile.name}' has unmapped colors: " +
-                                                    "${result.unmappedColors}. Pass snap_palette or auto_quantize.",
-                                        ),
-                                    ),
-                                ),
-                            ),
-                            false,
+                            listOf(TextContent("Missing non-empty 'cells' list (or resize dimensions) for 'set_cells' action")),
+                            true,
                         )
                     }
+                    operations.setLevelCells(
+                        levelPath = rawLevelPath,
+                        patches = patches,
+                        resizeCols = req.resizeCols,
+                        resizeRows = req.resizeRows,
+                        autoPack = req.autoPack ?: true,
+                        yaw = req.yaw ?: 15,
+                    )
                 }
-                is ImportResult.Error -> {
+                "pack" ->
+                    operations.packLevel(
+                        levelPath = rawLevelPath,
+                        outputDir = req.outputDir,
+                        yaw = req.yaw ?: 15,
+                    )
+                "validate" -> operations.validateLevel(rawLevelPath)
+                "import_ca65" -> {
+                    val rawCa65 = req.ca65Path?.takeIf { it.isNotBlank() }
+                    val rawAtlas = req.atlasPath?.takeIf { it.isNotBlank() }
+                    if (rawCa65 == null || rawAtlas == null) {
+                        return CallToolResult(
+                            listOf(TextContent("Missing required 'ca65_path' or 'atlas_path' for 'import_ca65' action")),
+                            true,
+                        )
+                    }
+                    operations.importCa65Level(
+                        ca65Path = rawCa65,
+                        atlasPath = rawAtlas,
+                        levelPath = rawLevelPath,
+                        yaw = req.yaw ?: 15,
+                    )
+                }
+                else ->
                     return CallToolResult(
                         listOf(
                             TextContent(
-                                objectMapper.writeValueAsString(
-                                    PackTexturesResponse(
-                                        status = "FAIL",
-                                        valid = false,
-                                        action = "import",
-                                        projectPath = rawProjectPath,
-                                        message = "Failed to import '${imgFile.name}': ${result.message}",
-                                    ),
-                                ),
+                                "Unknown action: '$action'. Supported actions: create, set_cells, pack, validate, import_ca65",
                             ),
                         ),
-                        false,
+                        true,
                     )
-                }
             }
-        }
 
-        val projectName = projectFile.nameWithoutExtension
-        ProjectService.saveProject(projectFile, projectName, atlas, palette, gridSnap)
-        val descriptors = atlas.resolvedDescriptors()
-
-        val parentDir = projectFile.parentFile ?: File(".")
-        val exportedFiles =
-            listOf(
-                projectFile,
-                File(parentDir, "$projectName.bin"),
-                File(parentDir, "$projectName.pal"),
-                File(parentDir, "$projectName.tab"),
-                File(parentDir, "$projectName.i"),
-                File(parentDir, "${projectName}_atlas.png"),
-            ).map { formatPath(it) }
-
-        val resp =
-            PackTexturesResponse(
-                status = "SUCCESS",
-                valid = true,
-                action = "import",
-                projectPath = rawProjectPath,
-                atlasWidth = atlas.width,
-                atlasHeight = atlas.height,
-                textureCount = atlas.textures.size,
-                sliceCount = atlas.slices.size,
-                aliasCount = atlas.aliases.size,
-                descriptorCount = descriptors.size,
-                exportedFiles = exportedFiles,
-                message = "Successfully imported ${imageFiles.size} images into '$projectName' (${descriptors.size} descriptors).",
-            )
-        return CallToolResult(listOf(TextContent(objectMapper.writeValueAsString(resp))), false)
+        return CallToolResult(
+            listOf(TextContent(objectMapper.writeValueAsString(opResult.toMcpResponse(action, rawLevelPath)))),
+            false,
+        )
     }
 
-    /**
-     * Waits until the server is closed.
-     */
+    private fun <T> parseRequest(
+        args: Map<String, Any?>,
+        clazz: Class<T>,
+    ): T {
+        val jsonBytes = objectMapper.writeValueAsBytes(args)
+        return objectMapper.readValue(jsonBytes, clazz)
+    }
+
+    private fun AtlasOperationResult.toMcpResponse(
+        action: String,
+        rawProjectPath: String,
+    ): PackTexturesResponse {
+        val atlas = document?.atlas
+        return PackTexturesResponse(
+            status = if (valid) "SUCCESS" else "FAIL",
+            valid = valid,
+            action = action,
+            projectPath = rawProjectPath,
+            atlasWidth = atlas?.width,
+            atlasHeight = atlas?.height,
+            textureCount = atlas?.textures?.size,
+            sliceCount = atlas?.slices?.size,
+            aliasCount = atlas?.aliases?.size,
+            descriptorCount = if (valid) descriptorCount else null,
+            exportedFiles = exportedFiles.takeIf { it.isNotEmpty() },
+            message = message,
+        )
+    }
+
+    private fun LevelOperationResult.toMcpResponse(
+        action: String,
+        rawLevelPath: String,
+    ): ManageLevelResponse {
+        val grid = document?.grid
+        // Distinguish validation errors from missing-file errors (preserving null errors on missing file)
+        val fileNotFoundCodes = setOf("LEVEL_FILE_NOT_FOUND", "ATLAS_FILE_NOT_FOUND", "CA65_FILE_NOT_FOUND", "INVALID_LEVEL_FILE")
+        val reportedErrors =
+            validation.errors
+                .takeIf { list ->
+                    list.isNotEmpty() && (action == "validate" || list.none { it.code in fileNotFoundCodes })
+                }
+        return ManageLevelResponse(
+            status = if (valid) "SUCCESS" else "FAIL",
+            valid = valid,
+            action = action,
+            levelPath = rawLevelPath,
+            cols = grid?.cols,
+            rows = grid?.rows,
+            mapByteSize = if (valid || action == "validate") grid?.byteSize else null,
+            errors = reportedErrors,
+            warnings = validation.warnings.takeIf { it.isNotEmpty() },
+            exportedFiles = exportedFiles.takeIf { it.isNotEmpty() },
+            message = message,
+        )
+    }
+
     fun await() {
         stopLatch.await()
     }
@@ -1284,6 +554,15 @@ class StudioMcpServer(
 
     companion object {
         private val LOG = Logger.getLogger(StudioMcpServer::class.java.name)
+
+        internal fun createStrictMapper(): ObjectMapper =
+            JsonMapper
+                .builder()
+                .disable(MapperFeature.ALLOW_COERCION_OF_SCALARS)
+                .disable(DeserializationFeature.ACCEPT_FLOAT_AS_INT)
+                .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+                .serializationInclusion(JsonInclude.Include.NON_NULL)
+                .build()
 
         private const val SFX_PACK_TEXTURES_SCHEMA = """{
   "type": "object",
@@ -1309,9 +588,17 @@ class StudioMcpServer(
       "type": "boolean",
       "description": "Alias for auto_pack"
     },
+    "auto_grow": {
+      "type": "boolean",
+      "description": "Whether 'import' may grow atlas dimensions up to 256x256 when full (default false)"
+    },
+    "autoGrow": {
+      "type": "boolean",
+      "description": "Alias for auto_grow"
+    },
     "output_dir": {
       "type": "string",
-      "description": "Optional alternate directory for exported files"
+      "description": "Optional alternate directory for exported companion files (.bin, .pal, .tab, .i, _atlas.png)"
     },
     "outputDir": {
       "type": "string",
@@ -1386,6 +673,10 @@ class StudioMcpServer(
       "type": "integer",
       "description": "Grid row count (4..16, default 8) for 'create'"
     },
+    "base_height": {
+      "type": "integer",
+      "description": "Default cell base height (0..31, default 0) for 'create'"
+    },
     "default_top_tex": {
       "type": "string",
       "description": "Default symbolic top texture name for 'create'"
@@ -1393,6 +684,14 @@ class StudioMcpServer(
     "default_skirt_tex": {
       "type": "string",
       "description": "Default symbolic skirt texture name for 'create'"
+    },
+    "resize_cols": {
+      "type": "integer",
+      "description": "Optional resized column count (4..16) applied before 'set_cells'"
+    },
+    "resize_rows": {
+      "type": "integer",
+      "description": "Optional resized row count (4..16) applied before 'set_cells'"
     },
     "cells": {
       "type": "array",

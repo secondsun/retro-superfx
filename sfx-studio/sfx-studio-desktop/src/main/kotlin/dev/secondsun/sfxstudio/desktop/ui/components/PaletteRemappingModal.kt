@@ -42,7 +42,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import dev.secondsun.sfxstudio.core.atlas.SnesColor
-import dev.secondsun.sfxstudio.core.atlas.TextureImporter
 import dev.secondsun.sfxstudio.desktop.atlas.AtlasEditorState
 import dev.secondsun.sfxstudio.desktop.ui.TextureComposeRenderer
 
@@ -50,15 +49,18 @@ import dev.secondsun.sfxstudio.desktop.ui.TextureComposeRenderer
 fun PaletteRemappingModal(state: AtlasEditorState) {
     val pending = state.pendingImport ?: return
 
-    // Manual slot mapping per incoming color
+    // Manual slot mapping per incoming color initialized from PendingTextureImport
     val manualMapping =
-        remember {
+        remember(pending) {
             mutableStateMapOf<SnesColor, Int>().apply {
-                for (color in pending.uniqueColors) {
-                    val existing = pending.currentPalette.findExactIndex(color)
-                    this[color] = existing ?: pending.currentPalette.findNearestAssignedIndex(color)
-                }
+                putAll(pending.initialMapping)
             }
+        }
+
+    val currentMappingSnapshot = manualMapping.toMap()
+    val incomingPreview =
+        remember(pending, currentMappingSnapshot, state.palette) {
+            pending.previewTexture(currentMappingSnapshot, state.palette)
         }
 
     Dialog(onDismissRequest = { state.pendingImport = null }) {
@@ -77,10 +79,10 @@ fun PaletteRemappingModal(state: AtlasEditorState) {
                 Text(
                     text =
                         if (pending.unmappedColors.isNotEmpty()) {
-                            "Importing '${pending.suggestedName}' requires ${pending.unmappedColors.size} " +
-                                "more colors than available in the 16-color palette."
+                            "Importing '${pending.suggestedName}' (${pending.width}x${pending.height}) requires " +
+                                "${pending.unmappedColors.size} more colors than available in the 16-color palette."
                         } else {
-                            "Review color palette mapping across all textures."
+                            "Review color palette mapping for '${pending.suggestedName}'."
                         },
                     color = Color(0xFFFBBF24),
                     fontSize = 12.sp,
@@ -88,9 +90,8 @@ fun PaletteRemappingModal(state: AtlasEditorState) {
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                // Gallery of all current textures
                 Text(
-                    text = "All Imported Textures Preview:",
+                    text = "Incoming & Existing Textures Preview:",
                     style = MaterialTheme.typography.subtitle2,
                     color = Color.White,
                 )
@@ -104,6 +105,20 @@ fun PaletteRemappingModal(state: AtlasEditorState) {
                             .padding(8.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
+                    item {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            val bitmap = TextureComposeRenderer.renderToImageBitmap(incomingPreview, state.palette)
+                            Image(
+                                bitmap = bitmap,
+                                contentDescription = incomingPreview.name,
+                                modifier =
+                                    Modifier
+                                        .size(56.dp)
+                                        .border(1.5.dp, Color(0xFF38BDF8), RoundedCornerShape(2.dp)),
+                            )
+                            Text("${incomingPreview.name} (new)", color = Color(0xFF38BDF8), fontSize = 10.sp)
+                        }
+                    }
                     items(state.atlas.textures) { tex ->
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             val bitmap = TextureComposeRenderer.renderToImageBitmap(tex, state.palette)
@@ -129,14 +144,14 @@ fun PaletteRemappingModal(state: AtlasEditorState) {
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Button(
-                        onClick = { state.autoSnapImport(pending) },
+                        onClick = { state.commitSnapImport() },
                         colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFF2563EB)),
                     ) {
                         Text("Auto-Snap to Existing Palette", color = Color.White, fontSize = 12.sp)
                     }
 
                     Button(
-                        onClick = { state.globalQuantizeImport(pending) },
+                        onClick = { state.commitGlobalQuantizeImport() },
                         colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFF7C3AED)),
                     ) {
                         Text("Global 15-Color Auto-Quantize", color = Color.White, fontSize = 12.sp)
@@ -145,7 +160,6 @@ fun PaletteRemappingModal(state: AtlasEditorState) {
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                // Manual Color Mapping Table
                 Text(
                     text = "Manual Incoming Color Mapping:",
                     style = MaterialTheme.typography.subtitle2,
@@ -174,7 +188,6 @@ fun PaletteRemappingModal(state: AtlasEditorState) {
                                     .padding(horizontal = 8.dp, vertical = 4.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            // Source color swatch
                             Box(
                                 modifier =
                                     Modifier
@@ -197,7 +210,6 @@ fun PaletteRemappingModal(state: AtlasEditorState) {
 
                             Spacer(modifier = Modifier.width(8.dp))
 
-                            // Target Slot Dropdown
                             var dropdownExpanded by remember { mutableStateOf(false) }
                             Box {
                                 Button(
@@ -255,7 +267,6 @@ fun PaletteRemappingModal(state: AtlasEditorState) {
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                // Footer
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End,
@@ -268,26 +279,7 @@ fun PaletteRemappingModal(state: AtlasEditorState) {
                     Spacer(modifier = Modifier.width(8.dp))
 
                     Button(
-                        onClick = {
-                            if (pending.suggestedName != "ALL") {
-                                val tex =
-                                    TextureImporter.createTextureFromImage(
-                                        image = pending.rawImage,
-                                        name = pending.suggestedName,
-                                        colorMapping = manualMapping,
-                                        fallbackPalette = state.palette,
-                                    )
-                                // Place texture
-                                val p = state.atlas.findPlacement(tex, state.gridSnap)
-                                if (p != null) {
-                                    state.atlas = state.atlas.withTexture(tex.copy(x = p.first, y = p.second))
-                                    state.selectedTextureIndex = state.atlas.textures.size - 1
-                                } else {
-                                    state.atlas = state.atlas.withTexture(tex)
-                                }
-                            }
-                            state.pendingImport = null
-                        },
+                        onClick = { state.commitManualImport(manualMapping.toMap()) },
                         colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFF10B981)),
                     ) {
                         Text("Apply Mapping", color = Color.White)

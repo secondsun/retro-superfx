@@ -3,9 +3,15 @@ package dev.secondsun.sfxstudio.core.atlas
 /**
  * Generates ca65 compatible assembly include (.i) files describing the Texture Atlas.
  */
-object AtlasIndexGenerator {
+internal object AtlasIndexGenerator {
     fun generate(
         atlas: TextureAtlas,
+        projectName: String = "TEXTURES",
+    ): String = generate(atlas, DescriptorTable.buildFromAtlasOrThrow(atlas).entries, projectName)
+
+    fun generate(
+        atlas: TextureAtlas,
+        descriptors: List<TextureDescriptorInfo>,
         projectName: String = "TEXTURES",
     ): String {
         val sanitizedProject = SourceTexture.sanitizeToIdentifier(projectName).uppercase()
@@ -50,7 +56,6 @@ object AtlasIndexGenerator {
         sb.appendLine(".endif")
         sb.appendLine("ATLAS_FRAC_MASK    = (1 << ATLAS_STRIDE_SHIFT) - 1")
 
-        val descriptors = atlas.resolvedDescriptors()
         sb.appendLine("TEXTURE_TABLE_ENTRY_COUNT = ${descriptors.size}")
         sb.appendLine("TEXTURE_TABLE_SIZE_BYTES  = ${descriptors.size * 8}")
         sb.appendLine()

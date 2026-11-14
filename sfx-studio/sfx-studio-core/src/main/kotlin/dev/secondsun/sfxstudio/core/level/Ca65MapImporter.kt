@@ -1,6 +1,7 @@
 package dev.secondsun.sfxstudio.core.level
 
-import dev.secondsun.sfxstudio.core.atlas.SourceTexture
+import dev.secondsun.sfxstudio.core.atlas.DescriptorLookup
+import dev.secondsun.sfxstudio.core.atlas.DescriptorTable
 import dev.secondsun.sfxstudio.core.atlas.TextureAtlas
 import java.io.File
 
@@ -32,7 +33,7 @@ object Ca65MapImporter {
         atlas: TextureAtlas? = null,
         levelName: String = "imported_level",
     ): LevelDocument {
-        val descriptors = atlas?.resolvedDescriptors()
+        val table = atlas?.let { DescriptorTable.fromAtlas(it).getOrThrow() }
         var cols: Int? = null
         var rows: Int? = null
         val cells = mutableListOf<MapCell>()
@@ -58,10 +59,10 @@ object Ca65MapImporter {
                 }
                 val baseHeight = parseIntLiteral(args[0])
                 val (archetype, rotation) = parseArchetypeAndRotation(args[1])
-                val topTex = resolveImportedTexture(args[2], descriptors?.map { it.name })
-                val skirtTex = resolveImportedTexture(args[3], descriptors?.map { it.name })
+                val topTex = resolveImportedTexture(args[2], table, zeroIsAbsent = false)
+                val skirtTex = resolveImportedTexture(args[3], table, zeroIsAbsent = false)
                 val panels = parseEdgePanels(args[5])
-                val rawPanelTex = resolveImportedTexture(args[4], descriptors?.map { it.name }, allowZeroNull = true)
+                val rawPanelTex = resolveImportedTexture(args[4], table, zeroIsAbsent = true)
                 val panelTex =
                     if (rawPanelTex == null && !panels.hasAny && archetype != ShapeArchetype.PRIM_FOLIAGE_CROSS) {
                         null
@@ -218,10 +219,19 @@ object Ca65MapImporter {
 
     private fun resolveImportedTexture(
         expr: String,
-        descriptorNames: List<String>?,
-        allowZeroNull: Boolean = false,
+        table: DescriptorTable?,
+        zeroIsAbsent: Boolean = false,
     ): String? {
         val clean = unwrapParens(expr).trim()
+        if (table != null) {
+            return when (val lookup = table.lookup(clean, allowNumericIndex = true, zeroIsAbsent = zeroIsAbsent)) {
+                DescriptorLookup.Absent -> null
+                is DescriptorLookup.Found -> lookup.descriptor.name
+                is DescriptorLookup.Unknown ->
+                    throw IllegalArgumentException("Unknown texture symbol '${lookup.rawSymbol}' in ca65 map")
+            }
+        }
+
         if (clean.isEmpty() || clean.equals("TEX_NONE", ignoreCase = true) || clean.equals("NONE", ignoreCase = true)) {
             return null
         }
@@ -233,30 +243,9 @@ object Ca65MapImporter {
                 else -> clean.toIntOrNull()
             }
         if (numericId != null) {
-            if (numericId == 0 && allowZeroNull) return null
-            if (descriptorNames != null) {
-                return descriptorNames.getOrNull(numericId)
-                    ?: throw IllegalArgumentException("Texture index $numericId out of range (0..${descriptorNames.size - 1})")
-            }
             return if (numericId == 0) null else numericId.toString()
         }
 
-        val stripped =
-            clean
-                .removePrefix("TEXTURE_ID_")
-                .removePrefix("texture_id_")
-                .removePrefix("TEX_")
-                .removePrefix("tex_")
-
-        if (descriptorNames != null) {
-            val targetSanitized = SourceTexture.sanitizeToIdentifier(stripped).uppercase()
-            val match =
-                descriptorNames.find {
-                    SourceTexture.sanitizeToIdentifier(it).uppercase() == targetSanitized
-                } ?: throw IllegalArgumentException("Unknown texture symbol '$clean' in ca65 map")
-            return match
-        }
-
-        return stripped.lowercase()
+        return DescriptorTable.stripTexturePrefix(clean).lowercase()
     }
 }

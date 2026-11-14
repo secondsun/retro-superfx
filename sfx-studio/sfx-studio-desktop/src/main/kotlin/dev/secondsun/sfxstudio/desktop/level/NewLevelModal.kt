@@ -29,11 +29,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import dev.secondsun.sfxstudio.core.atlas.SFX_ATLAS_EXTENSION
+import dev.secondsun.sfxstudio.core.atlas.SFX_PROJ_EXTENSION
 import dev.secondsun.sfxstudio.core.level.MapGrid
 import dev.secondsun.sfxstudio.desktop.atlas.AtlasEditorState
 import dev.secondsun.sfxstudio.desktop.shell.StudioState
-import java.awt.FileDialog
-import java.awt.Frame
 import java.io.File
 
 @Composable
@@ -116,13 +116,12 @@ fun NewLevelModal(studio: StudioState) {
                     )
                     Button(
                         onClick = {
-                            val dialog = FileDialog(null as Frame?, "Select Texture Atlas", FileDialog.LOAD)
-                            dialog.setFilenameFilter { _, name ->
-                                name.endsWith(".sfxproj", ignoreCase = true) ||
-                                    name.endsWith(".sfxatlas", ignoreCase = true)
-                            }
-                            dialog.isVisible = true
-                            val picked = dialog.file?.let { File(dialog.directory, it) }
+                            val picked =
+                                studio.platform.chooseOpenFile(
+                                    title = "Select Texture Atlas",
+                                    initialDir = studio.lastImportDirectory ?: studio.lastExportDirectory,
+                                    allowedExtensions = setOf(SFX_PROJ_EXTENSION, SFX_ATLAS_EXTENSION),
+                                )
                             if (picked != null) {
                                 atlasPath = picked.absolutePath
                             }

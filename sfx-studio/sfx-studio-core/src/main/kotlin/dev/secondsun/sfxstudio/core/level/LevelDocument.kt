@@ -2,11 +2,11 @@ package dev.secondsun.sfxstudio.core.level
 
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
-import dev.secondsun.sfxstudio.core.atlas.ProjectService
-import dev.secondsun.sfxstudio.core.atlas.SnesPalette
+import dev.secondsun.sfxstudio.core.atlas.AtlasDocument
+import dev.secondsun.sfxstudio.core.atlas.DescriptorLookup
+import dev.secondsun.sfxstudio.core.atlas.DescriptorTable
 import dev.secondsun.sfxstudio.core.atlas.SourceTexture
 import dev.secondsun.sfxstudio.core.atlas.TextureAtlas
-import dev.secondsun.sfxstudio.core.atlas.TextureDescriptorInfo
 import java.io.File
 import java.io.InputStream
 import java.io.Reader
@@ -334,31 +334,31 @@ data class LevelDocument(
     val gameplayLayers: Map<String, Any?>? = null,
 )
 
-data class LevelCellDto(
-    val col: Int? = null,
-    val row: Int? = null,
-    val baseHeight: Int = 0,
-    val archetype: String = ShapeArchetype.PRIM_FLAT.name,
-    val rotation: Int = 0,
-    val topTex: String? = null,
-    val skirtTex: String? = null,
-    val panelTex: String? = null,
-    val panels: List<String>? = null,
-    val tall2h: Boolean = false,
-    val panelFlags: Int? = null,
+internal data class LevelCellDto(
+    var col: Int? = null,
+    var row: Int? = null,
+    var baseHeight: Int = 0,
+    var archetype: String? = ShapeArchetype.PRIM_FLAT.name,
+    var rotation: Int = 0,
+    var topTex: String? = null,
+    var skirtTex: String? = null,
+    var panelTex: String? = null,
+    var panels: List<String>? = null,
+    var tall2h: Boolean = false,
+    var panelFlags: Int? = null,
 )
 
-data class LevelDocumentDto(
-    val name: String,
-    val cols: Int,
-    val rows: Int,
-    val atlasPath: String,
-    val cells: List<LevelCellDto>,
-    val gameplayLayers: Map<String, Any?>? = null,
+internal data class LevelDocumentDto(
+    var name: String? = null,
+    var cols: Int = 0,
+    var rows: Int = 0,
+    var atlasPath: String? = null,
+    var cells: List<LevelCellDto>? = null,
+    var gameplayLayers: Map<String, Any?>? = null,
 )
 
 data class ExportedLevelAssets(
-    val levelFile: File,
+    val levelFile: File?,
     val mapBinFile: File,
     val headerFile: File,
     val previewPngFile: File?,
@@ -369,38 +369,12 @@ data class ExportedLevelAssets(
  * (`8-byte map_header + cols * rows * 8-byte map_cell`).
  */
 object LevelBinarySerializer {
-    fun resolveTextureIndex(
-        symbol: String?,
-        descriptors: List<TextureDescriptorInfo>,
-    ): Int {
-        if (symbol.isNullOrBlank() ||
-            symbol == "0" ||
-            symbol.equals("NONE", ignoreCase = true) ||
-            symbol.equals("TEX_NONE", ignoreCase = true)
-        ) {
-            return 0
-        }
-        val clean = symbol.trim()
-        val exactIdx = descriptors.indexOfFirst { it.name.equals(clean, ignoreCase = true) }
-        if (exactIdx >= 0) return exactIdx
-
-        val sanitized = SourceTexture.sanitizeToIdentifier(clean).removePrefix("TEXTURE_ID_").uppercase()
-        val sanitizedIdx =
-            descriptors.indexOfFirst {
-                SourceTexture.sanitizeToIdentifier(it.name).uppercase() == sanitized
-            }
-        if (sanitizedIdx >= 0) return sanitizedIdx
-
-        throw IllegalArgumentException(
-            "Unknown texture symbol '$symbol' (available descriptors: ${descriptors.joinToString { it.name }})",
-        )
-    }
-
     fun serialize(
         grid: MapGrid,
         atlas: TextureAtlas,
     ): ByteArray {
-        val descriptors = atlas.resolvedDescriptors()
+        val table = DescriptorTable.fromAtlas(atlas).getOrThrow()
+        val availableNames = lazy { table.entries.joinToString { it.name } }
         val buf = ByteBuffer.allocate(grid.byteSize).order(ByteOrder.LITTLE_ENDIAN)
 
         // 8-byte map_header: cols (u8), rows (u8), origin_x (i16 = 0), origin_z (i16 = 0), reserved (u16 = 0)
@@ -411,9 +385,34 @@ object LevelBinarySerializer {
         buf.putShort(0)
 
         for (cell in grid.cells) {
-            val topId = resolveTextureIndex(cell.topTex, descriptors)
-            val skirtId = resolveTextureIndex(cell.skirtTex, descriptors)
-            val panelId = resolveTextureIndex(cell.panelTex, descriptors)
+            val topId =
+                when (val res = table.lookup(cell.topTex)) {
+                    DescriptorLookup.Absent -> 0
+                    is DescriptorLookup.Found -> res.index
+                    is DescriptorLookup.Unknown ->
+                        throw IllegalArgumentException(
+                            "Unknown top texture symbol '${res.rawSymbol}' (available descriptors: ${availableNames.value})",
+                        )
+                }
+            val skirtId =
+                when (val res = table.lookup(cell.skirtTex)) {
+                    DescriptorLookup.Absent -> topId
+                    is DescriptorLookup.Found -> res.index
+                    is DescriptorLookup.Unknown ->
+                        throw IllegalArgumentException(
+                            "Unknown skirt texture symbol '${res.rawSymbol}' (available descriptors: ${availableNames.value})",
+                        )
+                }
+            val panelId =
+                when (val res = table.lookup(cell.panelTex)) {
+                    DescriptorLookup.Absent -> 0
+                    is DescriptorLookup.Found -> res.index
+                    is DescriptorLookup.Unknown ->
+                        throw IllegalArgumentException(
+                            "Unknown panel texture symbol '${res.rawSymbol}' (available descriptors: ${availableNames.value})",
+                        )
+                }
+
             buf.put((cell.baseHeight and 0xFF).toByte())
             buf.put((cell.encodedArchetypeByte and 0xFF).toByte())
             buf.put((topId and 0xFF).toByte())
@@ -440,7 +439,7 @@ object LevelBinarySerializer {
         require(bytes.size == expected) {
             "Binary .map size mismatch for ${cols}x$rows: expected $expected bytes, got ${bytes.size}"
         }
-        val descriptors = atlas.resolvedDescriptors()
+        val descriptors = DescriptorTable.fromAtlas(atlas).getOrThrow().entries
 
         val cells =
             List(cols * rows) { idx ->
@@ -523,7 +522,7 @@ object LevelDocumentService {
         return File(baseDir, atlasPath).normalize()
     }
 
-    fun toDto(document: LevelDocument): LevelDocumentDto {
+    internal fun toDto(document: LevelDocument): LevelDocumentDto {
         val cellDtos =
             List(document.grid.cols * document.grid.rows) { idx ->
                 val col = idx % document.grid.cols
@@ -571,22 +570,23 @@ object LevelDocumentService {
         }
 
         val cellsArray = Array(dto.cols * dto.rows) { MapCell() }
-        for ((idx, cellDto) in dto.cells.withIndex()) {
+        for ((idx, cellDto) in dto.cells.orEmpty().withIndex()) {
             val col = cellDto.col ?: (idx % dto.cols)
             val row = cellDto.row ?: (idx / dto.cols)
             require(col in 0 until dto.cols && row in 0 until dto.rows) {
                 "Cell coordinate ($col, $row) out of bounds (${dto.cols}x${dto.rows})"
             }
+            val rawFlags = cellDto.panelFlags
             val panels =
-                if (cellDto.panelFlags != null) {
-                    EdgePanels.fromFlagsByte(cellDto.panelFlags)
+                if (rawFlags != null) {
+                    EdgePanels.fromFlagsByte(rawFlags)
                 } else {
                     EdgePanels.fromEdgeNames(cellDto.panels, cellDto.tall2h)
                 }
             cellsArray[row * dto.cols + col] =
                 MapCell(
                     baseHeight = cellDto.baseHeight,
-                    archetype = ShapeArchetype.fromSymbol(cellDto.archetype),
+                    archetype = ShapeArchetype.fromSymbol(cellDto.archetype ?: ShapeArchetype.PRIM_FLAT.name),
                     rotation = CellRotation.fromDegreesOrIndex(cellDto.rotation),
                     topTex = cellDto.topTex?.takeIf { it.isNotBlank() },
                     skirtTex = cellDto.skirtTex?.takeIf { it.isNotBlank() },
@@ -596,67 +596,103 @@ object LevelDocumentService {
         }
 
         return LevelDocument(
-            name = dto.name,
-            atlasPath = dto.atlasPath,
+            name = dto.name ?: "untitled_level",
+            atlasPath = dto.atlasPath.orEmpty(),
             grid = MapGrid(cols = dto.cols, rows = dto.rows, cells = cellsArray.toList()),
             gameplayLayers = dto.gameplayLayers,
         )
     }
 
-    fun saveLevel(
+    fun saveAuthoringJson(
         levelFile: File,
         document: LevelDocument,
-        atlas: TextureAtlas? = null,
-        palette: SnesPalette? = null,
+    ) {
+        levelFile.parentFile?.mkdirs()
+        levelFile.writeText(toJson(document))
+    }
+
+    /**
+     * Exports companion runtime assets (`.map`, `.i`, `_preview.png`) into [outputDir] using the
+     * explicitly supplied [atlasDoc], without mutating or touching any `.sfxlevel` file on disk.
+     */
+    fun exportCompanionAssets(
+        document: LevelDocument,
+        atlasDoc: AtlasDocument,
+        outputDir: File,
+        baseName: String = document.name,
+        previewYaw: Int = 15,
+        sourceLevelFile: File? = null,
+    ): ExportedLevelAssets {
+        val mapBytes = LevelBinarySerializer.serialize(document.grid, atlasDoc.atlas)
+        val headerText = LevelHeaderGenerator.generate(baseName, document.grid)
+
+        outputDir.mkdirs()
+        val headerFile = File(outputDir, "$baseName.i")
+        headerFile.writeText(headerText)
+
+        val mapBinFile = File(outputDir, "$baseName.map")
+        mapBinFile.writeBytes(mapBytes)
+
+        val png = File(outputDir, "${baseName}_preview.png")
+        IsoSoftwareRenderer.writePreviewPng(
+            grid = document.grid,
+            atlas = atlasDoc.atlas,
+            palette = atlasDoc.palette,
+            destinationFile = png,
+            yawIndex = previewYaw,
+        )
+
+        return ExportedLevelAssets(
+            levelFile = sourceLevelFile,
+            mapBinFile = mapBinFile,
+            headerFile = headerFile,
+            previewPngFile = png,
+        )
+    }
+
+    /**
+     * Saves `.sfxlevel` JSON to [levelFile] in place and exports companion runtime assets
+     * (`.map`, `.i`, `_preview.png`) to `outputDir ?: levelFile.parentFile` using the explicitly
+     * supplied [atlasDoc] (zero implicit disk atlas lookups).
+     */
+    fun saveAndExport(
+        levelFile: File,
+        document: LevelDocument,
+        atlasDoc: AtlasDocument,
         outputDir: File? = null,
         previewYaw: Int = 15,
     ): ExportedLevelAssets {
-        levelFile.parentFile?.mkdirs()
-        levelFile.writeText(toJson(document))
+        val mapBytes = LevelBinarySerializer.serialize(document.grid, atlasDoc.atlas)
+        val baseName = levelFile.nameWithoutExtension
+        val headerText = LevelHeaderGenerator.generate(baseName, document.grid)
+        val json = toJson(document)
 
-        val (resolvedAtlas, resolvedPalette) =
-            if (atlas != null && palette != null) {
-                atlas to palette
-            } else {
-                val atlasFile = resolveAtlasFile(levelFile, document.atlasPath)
-                if (atlasFile.exists()) {
-                    val (loadedAtlas, loadedPal, _) = ProjectService.loadProject(atlasFile)
-                    (atlas ?: loadedAtlas) to (palette ?: loadedPal)
-                } else {
-                    atlas to palette
-                }
-            }
+        levelFile.parentFile?.mkdirs()
+        levelFile.writeText(json)
 
         val destDir = outputDir ?: levelFile.parentFile ?: File(".")
         destDir.mkdirs()
-        val baseName = levelFile.nameWithoutExtension
 
         val headerFile = File(destDir, "$baseName.i")
-        headerFile.writeText(LevelHeaderGenerator.generate(baseName, document.grid))
+        headerFile.writeText(headerText)
 
         val mapBinFile = File(destDir, "$baseName.map")
-        var previewPngFile: File? = null
+        mapBinFile.writeBytes(mapBytes)
 
-        if (resolvedAtlas != null) {
-            mapBinFile.writeBytes(LevelBinarySerializer.serialize(document.grid, resolvedAtlas))
-            if (resolvedPalette != null) {
-                val png = File(destDir, "${baseName}_preview.png")
-                IsoSoftwareRenderer.writePreviewPng(
-                    grid = document.grid,
-                    atlas = resolvedAtlas,
-                    palette = resolvedPalette,
-                    destinationFile = png,
-                    yawIndex = previewYaw,
-                )
-                previewPngFile = png
-            }
-        }
+        val png = File(destDir, "${baseName}_preview.png")
+        IsoSoftwareRenderer.writePreviewPng(
+            grid = document.grid,
+            atlas = atlasDoc.atlas,
+            palette = atlasDoc.palette,
+            destinationFile = png,
+            yawIndex = previewYaw,
+        )
 
         return ExportedLevelAssets(
             levelFile = levelFile,
             mapBinFile = mapBinFile,
             headerFile = headerFile,
-            previewPngFile = previewPngFile,
+            previewPngFile = png,
         )
     }
 }

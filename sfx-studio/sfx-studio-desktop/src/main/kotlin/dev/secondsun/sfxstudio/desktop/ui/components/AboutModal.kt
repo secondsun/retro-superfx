@@ -25,7 +25,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
-import dev.secondsun.sfxstudio.desktop.atlas.AtlasEditorState
 import dev.secondsun.sfxstudio.desktop.shell.StudioState
 
 @Composable
@@ -72,7 +71,7 @@ fun AboutModal(studioState: StudioState) {
                             "SuperFX Studio provides an extensible multi-document workspace for SuperFX game development. " +
                                 "It converts, layouts, and packs power-of-two source bitmap graphics into an unpacked " +
                                 "1-byte-per-texel Texture Atlas (.bin), a 32-byte SNES BGR555 palette (.pal with $0001 black), " +
-                                "and ca65 assembly include file (.i) with texture_descriptor tables for SuperFX polygon rasterization.",
+                                "relocatable Texture Table (.tab), ca65 assembly include (.i), and isometric Level Maps (.map).",
                         color = Color.LightGray,
                         fontSize = 12.sp,
                     )
@@ -134,34 +133,6 @@ fun AboutModal(studioState: StudioState) {
                         colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFF3B82F6)),
                     ) {
                         Text("Close", color = Color.White)
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun AboutModal(state: AtlasEditorState) {
-    if (state.studio != null) {
-        AboutModal(state.studio)
-    } else {
-        if (!state.showAboutModal) return
-        Dialog(onDismissRequest = { state.showAboutModal = false }) {
-            Surface(
-                modifier = Modifier.width(520.dp).height(440.dp),
-                shape = RoundedCornerShape(8.dp),
-                color = Color(0xFF22242B),
-            ) {
-                Column(modifier = Modifier.fillMaxSize().padding(20.dp)) {
-                    Text(
-                        text = "SuperFX Studio",
-                        style = MaterialTheme.typography.h5,
-                        color = Color.White,
-                    )
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Button(onClick = { state.showAboutModal = false }) {
-                        Text("Close")
                     }
                 }
             }

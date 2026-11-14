@@ -1,10 +1,10 @@
 package dev.secondsun.sfxstudio.core.level
 
-import dev.secondsun.sfxstudio.core.atlas.ProjectService
-import dev.secondsun.sfxstudio.core.atlas.SourceTexture
+import dev.secondsun.sfxstudio.core.atlas.AtlasDocument
+import dev.secondsun.sfxstudio.core.atlas.DescriptorLookup
+import dev.secondsun.sfxstudio.core.atlas.DescriptorTable
 import dev.secondsun.sfxstudio.core.atlas.TextureAtlas
 import dev.secondsun.sfxstudio.core.atlas.TextureDescriptorInfo
-import java.io.File
 
 enum class DiagnosticSeverity {
     ERROR,
@@ -29,69 +29,21 @@ data class LevelValidationResult(
 }
 
 /**
- * Validates [LevelDocument] invariants against its shared [TextureAtlas] and IsoEngine / Bank `$71` rules.
+ * Pure in-process validator checking [LevelDocument] invariants against an explicitly supplied
+ * [TextureAtlas] / [AtlasDocument] and IsoEngine / Bank `$71` rules.
+ *
+ * Disk and workspace security resolution of `document.atlasPath` belongs exclusively to
+ * `StudioOperations` / `StudioState`.
  */
 object LevelValidator {
     const val BANK_71_MAX_ATLAS_BYTES = 32_768
     const val MAX_BASE_HEIGHT = 31
 
     fun validate(
-        levelFile: File,
         document: LevelDocument,
-        overrideAtlas: TextureAtlas? = null,
+        atlasDocument: AtlasDocument,
         maxAtlasBytes: Int = BANK_71_MAX_ATLAS_BYTES,
-    ): LevelValidationResult {
-        val atlas =
-            overrideAtlas ?: run {
-                if (document.atlasPath.isBlank()) {
-                    return LevelValidationResult(
-                        valid = false,
-                        errors =
-                            listOf(
-                                LevelDiagnostic(
-                                    severity = DiagnosticSeverity.ERROR,
-                                    code = "MISSING_ATLAS_PATH",
-                                    message = "Level Document '${document.name}' has an empty atlasPath.",
-                                ),
-                            ),
-                        warnings = emptyList(),
-                    )
-                }
-                val atlasFile = LevelDocumentService.resolveAtlasFile(levelFile, document.atlasPath)
-                if (!atlasFile.exists()) {
-                    return LevelValidationResult(
-                        valid = false,
-                        errors =
-                            listOf(
-                                LevelDiagnostic(
-                                    severity = DiagnosticSeverity.ERROR,
-                                    code = "ATLAS_FILE_NOT_FOUND",
-                                    message = "Atlas file '${document.atlasPath}' resolved to '${atlasFile.path}' which does not exist.",
-                                ),
-                            ),
-                        warnings = emptyList(),
-                    )
-                }
-                try {
-                    ProjectService.loadProject(atlasFile).first
-                } catch (e: Exception) {
-                    return LevelValidationResult(
-                        valid = false,
-                        errors =
-                            listOf(
-                                LevelDiagnostic(
-                                    severity = DiagnosticSeverity.ERROR,
-                                    code = "INVALID_ATLAS_FILE",
-                                    message = "Failed to load atlas '${atlasFile.path}': ${e.message}",
-                                ),
-                            ),
-                        warnings = emptyList(),
-                    )
-                }
-            }
-
-        return validate(document = document, atlas = atlas, maxAtlasBytes = maxAtlasBytes)
-    }
+    ): LevelValidationResult = validate(document = document, atlas = atlasDocument.atlas, maxAtlasBytes = maxAtlasBytes)
 
     fun validate(
         document: LevelDocument,
@@ -113,10 +65,8 @@ object LevelValidator {
             )
         }
 
-        val descriptors =
-            try {
-                atlas.resolvedDescriptors()
-            } catch (e: Exception) {
+        val table =
+            DescriptorTable.fromAtlas(atlas).getOrElse { e ->
                 errors.add(
                     LevelDiagnostic(
                         severity = DiagnosticSeverity.ERROR,
@@ -144,56 +94,80 @@ object LevelValidator {
                     )
                 }
 
-                // Validate symbolic texture references
-                if (findDescriptor(cell.topTex, descriptors) == null && !isNullOrZeroSymbol(cell.topTex)) {
-                    errors.add(
-                        LevelDiagnostic(
-                            severity = DiagnosticSeverity.ERROR,
-                            code = "UNKNOWN_TOP_TEXTURE",
-                            message = "Cell ($col, $row) references unknown topTex '${cell.topTex}'.",
-                            col = col,
-                            row = row,
-                        ),
-                    )
+                // 1. Top texture: Absent -> WARNING (MISSING_TOP_TEXTURE), Unknown -> ERROR
+                when (val topLookup = table.lookup(cell.topTex)) {
+                    DescriptorLookup.Absent -> {
+                        warnings.add(
+                            LevelDiagnostic(
+                                severity = DiagnosticSeverity.WARNING,
+                                code = "MISSING_TOP_TEXTURE",
+                                message = "Cell ($col, $row) has no assigned topTex; defaulting to descriptor slot 0.",
+                                col = col,
+                                row = row,
+                            ),
+                        )
+                    }
+                    is DescriptorLookup.Unknown -> {
+                        errors.add(
+                            LevelDiagnostic(
+                                severity = DiagnosticSeverity.ERROR,
+                                code = "UNKNOWN_TOP_TEXTURE",
+                                message = "Cell ($col, $row) references unknown topTex '${topLookup.rawSymbol}'.",
+                                col = col,
+                                row = row,
+                            ),
+                        )
+                    }
+                    is DescriptorLookup.Found -> {}
                 }
 
-                if (findDescriptor(cell.skirtTex, descriptors) == null && !isNullOrZeroSymbol(cell.skirtTex)) {
-                    errors.add(
-                        LevelDiagnostic(
-                            severity = DiagnosticSeverity.ERROR,
-                            code = "UNKNOWN_SKIRT_TEXTURE",
-                            message = "Cell ($col, $row) references unknown skirtTex '${cell.skirtTex}'.",
-                            col = col,
-                            row = row,
-                        ),
-                    )
+                // 2. Skirt texture: Absent inherits topTex cleanly; Unknown -> ERROR
+                when (val skirtLookup = table.lookup(cell.skirtTex)) {
+                    DescriptorLookup.Absent, is DescriptorLookup.Found -> {}
+                    is DescriptorLookup.Unknown -> {
+                        errors.add(
+                            LevelDiagnostic(
+                                severity = DiagnosticSeverity.ERROR,
+                                code = "UNKNOWN_SKIRT_TEXTURE",
+                                message = "Cell ($col, $row) references unknown skirtTex '${skirtLookup.rawSymbol}'.",
+                                col = col,
+                                row = row,
+                            ),
+                        )
+                    }
                 }
 
-                val panelDesc = findDescriptor(cell.panelTex, descriptors)
-                if (panelDesc == null && !isNullOrZeroSymbol(cell.panelTex)) {
-                    errors.add(
-                        LevelDiagnostic(
-                            severity = DiagnosticSeverity.ERROR,
-                            code = "UNKNOWN_PANEL_TEXTURE",
-                            message = "Cell ($col, $row) references unknown panelTex '${cell.panelTex}'.",
-                            col = col,
-                            row = row,
-                        ),
-                    )
-                }
-
-                // Missing panelTex when panels or foliage cross are active
-                if ((cell.panels.hasAny || cell.archetype == ShapeArchetype.PRIM_FOLIAGE_CROSS) && isNullOrZeroSymbol(cell.panelTex)) {
-                    warnings.add(
-                        LevelDiagnostic(
-                            severity = DiagnosticSeverity.WARNING,
-                            code = "MISSING_PANEL_TEXTURE",
-                            message = "Cell ($col, $row) uses Edge Panels or Foliage Cross without an assigned panelTex.",
-                            col = col,
-                            row = row,
-                        ),
-                    )
-                }
+                // 3. Panel texture: Absent warns only when Edge Panels or Foliage Cross are active; Unknown -> ERROR
+                val panelDesc: TextureDescriptorInfo? =
+                    when (val panelLookup = table.lookup(cell.panelTex)) {
+                        DescriptorLookup.Absent -> {
+                            if (cell.panels.hasAny || cell.archetype == ShapeArchetype.PRIM_FOLIAGE_CROSS) {
+                                warnings.add(
+                                    LevelDiagnostic(
+                                        severity = DiagnosticSeverity.WARNING,
+                                        code = "MISSING_PANEL_TEXTURE",
+                                        message = "Cell ($col, $row) uses Edge Panels or Foliage Cross without an assigned panelTex.",
+                                        col = col,
+                                        row = row,
+                                    ),
+                                )
+                            }
+                            null
+                        }
+                        is DescriptorLookup.Unknown -> {
+                            errors.add(
+                                LevelDiagnostic(
+                                    severity = DiagnosticSeverity.ERROR,
+                                    code = "UNKNOWN_PANEL_TEXTURE",
+                                    message = "Cell ($col, $row) references unknown panelTex '${panelLookup.rawSymbol}'.",
+                                    col = col,
+                                    row = row,
+                                ),
+                            )
+                            null
+                        }
+                        is DescriptorLookup.Found -> panelLookup.descriptor
+                    }
 
                 // Non-square aspect hints for 1h parapets and 16x32 foliage fins
                 if (panelDesc != null) {
@@ -287,21 +261,4 @@ object LevelValidator {
             -> cell.baseHeight
             else -> cell.baseHeight + cell.archetype.heightSpan1h
         }
-
-    private fun isNullOrZeroSymbol(symbol: String?): Boolean =
-        symbol.isNullOrBlank() ||
-            symbol == "0" ||
-            symbol.equals("NONE", ignoreCase = true) ||
-            symbol.equals("TEX_NONE", ignoreCase = true)
-
-    private fun findDescriptor(
-        symbol: String?,
-        descriptors: List<TextureDescriptorInfo>,
-    ): TextureDescriptorInfo? {
-        if (isNullOrZeroSymbol(symbol)) return null
-        val clean = symbol!!.trim()
-        descriptors.find { it.name.equals(clean, ignoreCase = true) }?.let { return it }
-        val sanitized = SourceTexture.sanitizeToIdentifier(clean).removePrefix("TEXTURE_ID_").uppercase()
-        return descriptors.find { SourceTexture.sanitizeToIdentifier(it.name).uppercase() == sanitized }
-    }
 }

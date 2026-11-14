@@ -96,78 +96,14 @@ data class TextureAtlas(
         get() = width * height
 
     /**
+     * Builds a validated [DescriptorTable] from this atlas without throwing on invalid intermediate state.
+     */
+    fun descriptorTable(): Result<DescriptorTable> = DescriptorTable.fromAtlas(this)
+
+    /**
      * Resolves all descriptors (base textures, virtual slices, and aliases) in deterministic order.
      */
-    fun resolvedDescriptors(): List<TextureDescriptorInfo> {
-        val map = mutableMapOf<String, TextureDescriptorInfo>()
-
-        // 1. Base textures
-        for (tex in textures) {
-            val romOffset = tex.y * width + tex.x
-            map[tex.name] =
-                TextureDescriptorInfo(
-                    name = tex.name,
-                    x = tex.x,
-                    y = tex.y,
-                    width = tex.width,
-                    height = tex.height,
-                    romOffset = romOffset,
-                    uMask = tex.uMask,
-                    vMask = tex.vMask,
-                    widthShift = tex.widthShift,
-                    comment = "${tex.name} (${tex.width}x${tex.height})",
-                )
-        }
-
-        // 2. Virtual slices
-        for (slice in slices) {
-            val parent =
-                textures.find { it.name == slice.sourceTexture }
-                    ?: error("Virtual slice '${slice.name}' references non-existent source texture '${slice.sourceTexture}'")
-            val sliceX = parent.x + slice.x
-            val sliceY = parent.y + slice.y
-            require(slice.x >= 0 && slice.y >= 0 && slice.x + slice.width <= parent.width && slice.y + slice.height <= parent.height) {
-                "Virtual slice '${slice.name}' is out of bounds of parent texture '${parent.name}'"
-            }
-            val romOffset = sliceY * width + sliceX
-            map[slice.name] =
-                TextureDescriptorInfo(
-                    name = slice.name,
-                    x = sliceX,
-                    y = sliceY,
-                    width = slice.width,
-                    height = slice.height,
-                    romOffset = romOffset,
-                    uMask = slice.uMask,
-                    vMask = slice.vMask,
-                    widthShift = slice.widthShift,
-                    comment = "${slice.name} (${slice.width}x${slice.height})",
-                )
-        }
-
-        // 3. Aliases
-        for (alias in aliases) {
-            val target =
-                map[alias.target]
-                    ?: error("Descriptor alias '${alias.name}' references unknown target '${alias.target}'")
-            map[alias.name] =
-                target.copy(
-                    name = alias.name,
-                    comment = "${alias.name} (${target.width}x${target.height})",
-                )
-        }
-
-        // Determine ordering
-        return if (descriptorOrder != null && descriptorOrder.isNotEmpty()) {
-            descriptorOrder.map { name ->
-                map[name] ?: error("Descriptor '$name' in descriptorOrder is not defined in textures, slices, or aliases")
-            }
-        } else {
-            textures.map { map[it.name]!! } +
-                aliases.map { map[it.name]!! } +
-                slices.map { map[it.name]!! }
-        }
-    }
+    fun resolvedDescriptors(): List<TextureDescriptorInfo> = DescriptorTable.buildFromAtlasOrThrow(this).entries
 
     /**
      * Checks if placing a texture at (x, y) is within bounds and doesn't collide with other textures.

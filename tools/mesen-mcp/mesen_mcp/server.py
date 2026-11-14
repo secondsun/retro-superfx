@@ -1,6 +1,4 @@
 import argparse
-import json
-import sys
 from typing import Any, Dict, Optional, Union
 
 try:
@@ -8,14 +6,16 @@ try:
 except ImportError:
     from mcp.server.fastmcp import FastMCP
 
+from mesen_mcp.session import MesenRunner
 
-def create_server() -> FastMCP:
+
+def create_server(runner: Optional[MesenRunner] = None) -> FastMCP:
     """Create and configure the Mesen MCP server instance."""
     app = FastMCP(
         name="mesen-mcp",
         instructions=(
             "MCP Server for SuperFX testing, symbol/address resolution, and headless Mesen emulation. "
-            "Invoke these tools via the `call_mcp_tool` tool with `ServerName: \"retro-superfx_mesen\"` "
+            'Invoke these tools via the `call_mcp_tool` tool with `ServerName: "retro-superfx_mesen"` '
             "and `ToolName` set to `run_sfx_test`, `capture_sfx_render`, `sfx_resolve_address`, "
             "`assert_sfx_math`, or `profile_sfx_execution` instead of using CLI scripts or grep."
         ),
@@ -37,7 +37,11 @@ def create_server() -> FastMCP:
         """
         from mesen_mcp.runner import run_sfx_test as execute_run_sfx_test
 
-        return execute_run_sfx_test(test_name=test_name, timeout_seconds=timeout_seconds)
+        return execute_run_sfx_test(
+            test_name=test_name,
+            timeout_seconds=timeout_seconds,
+            runner=runner,
+        )
 
     @app.tool()
     def assert_sfx_math(
@@ -67,6 +71,7 @@ def create_server() -> FastMCP:
             expected_outputs=expected_outputs,
             epsilon=epsilon,
             timeout_seconds=timeout_seconds,
+            runner=runner,
         )
 
     @app.tool()
@@ -105,6 +110,7 @@ def create_server() -> FastMCP:
             output_png_path=output_png_path,
             settle_frames=settle_frames,
             timeout_seconds=timeout_seconds,
+            runner=runner,
         )
 
     @app.tool()
@@ -154,6 +160,7 @@ def create_server() -> FastMCP:
             inputs=inputs,
             top_n=top_n,
             timeout_seconds=timeout_seconds,
+            runner=runner,
         )
 
     @app.tool()

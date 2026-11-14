@@ -4,43 +4,44 @@
 
 ---
 
-## 1. Project Mission & Reactor Architecture
+## 1. Project Mission & Deepened Reactor Architecture
 
 The project is structured as a 3-module Maven reactor on Java 26 and Kotlin 2.4 under root package `dev.secondsun.sfxstudio`:
 
 ```
-                                [sfx-studio-core]
-                    (Headless domain models, shelf packing,
-                     palette quantization, ca65 generator)
-                                       │
-                      ┌────────────────┴────────────────┐
-                      ▼                                 ▼
-              [sfx-studio-cli]               [sfx-studio-desktop]
-         (Headless CLI & stdio JSON-RPC    (Compose Multiplatform GUI,
-               MCP Server)                  tabbed multi-document canvas)
+                                 [sfx-studio-core]
+             (AtlasDocument, DescriptorTable, PendingTextureImport,
+              CellPatch, LevelValidator, IsoSoftwareRenderer,
+              StudioOperations + PathPolicy)
+                                        │
+                       ┌────────────────┴────────────────┐
+                       ▼                                 ▼
+               [sfx-studio-cli]               [sfx-studio-desktop]
+          (Thin CliMain & strict-DTO       (Compose Multiplatform GUI,
+           StudioMcpServer adapters)        StudioState + StudioPlatform)
 ```
 
 ### Module Breakdown
 1. **`sfx-studio-core`**:
-   - Pure domain models, algorithms, and file serializers.
-   - Texture Atlas shelf-packing, Median-Cut 15-color palette quantization, SNES BGR555 conversion, relocatable Texture Table (`.tab`) generation, ca65 assembly Atlas Index (`.i`) generation, isometric Level Document (`.sfxlevel` / `.map`) serialization, `Ca65MapImporter`, `LevelValidator`, and `IsoSoftwareRenderer`.
-   - **Strict Headless Invariant**: Zero Compose Multiplatform, Skiko, or MCP dependencies. Must compile and execute headlessly in any JVM environment without graphical subsystems.
+   - **Deepened Domain Modules**:
+     - `AtlasDocument`: Immutable value module owning `.sfxproj`/`.sfxatlas` persistence, pre-write atomic validation (`saveAndExport` / `exportOnly`), standalone 15-color Median-Cut `quantizePalette()`, cascading `renameTexture`, dependent-checked `removeTexture`, `PendingTextureImport`, and `PlacementPolicy` (`STRICT_BOUNDS` vs `AUTO_GROW_MAX_256`). Low-level DTOs, `MedianCutQuantizer`, `TextureImporter`, `AtlasIndexGenerator`, and `AtlasTableGenerator` are `internal`.
+     - `DescriptorTable` (`DescriptorLookup = Absent | Found | Unknown`): Single canonical symbolic/numeric Texture Descriptor resolver (`<= 256` entries), stripping `TEXTURE_ID_` and `TEX_` prefixes case-insensitively and extracting sub-rectangle pixels in `O(w*h)`.
+     - Pure in-process `LevelValidator`, `LevelBinarySerializer`, `IsoSoftwareRenderer`, `Ca65MapImporter`, and shared `CellPatch` (`MapGrid.applyPatches`) — zero implicit disk `atlasPath` reads inside core validators/renderers.
+     - `StudioOperations(pathPolicy: PathPolicy)`: Stdio-quiet orchestration facade with `PathPolicy.UNRESTRICTED` (CLI) and `PathPolicy.sandboxed(workspaceRoot)` (MCP — enforces normalized prefix + `toRealPath()` on existing ancestors to block `../`, `doc.atlasPath`, and symlink escapes).
+   - **Strict Headless Invariant**: Zero Compose Multiplatform, Skiko, or MCP dependencies. Never writes to `System.out`.
 2. **`sfx-studio-cli`**:
-   - Headless CLI interface (`atlas` and `level` command groups) and stdio JSON-RPC MCP server (`StudioMcpServer`).
-   - Implements `sfx_pack_textures` and `sfx_manage_level` tools for automated agent workflows.
-   - Depends only on `sfx-studio-core`. Zero UI/Compose dependencies.
+   - Thin adapters over `StudioOperations`: `CliMain` (`atlas` and `level` command groups, including `level set-cells` and `atlas import --auto-grow`) and `StudioMcpServer` (`sfx_pack_textures` and `sfx_manage_level` backed by strict Jackson `@JsonAlias` DTOs that reject mistyped JSON scalars).
 3. **`sfx-studio-desktop`**:
-   - Interactive Compose Multiplatform Desktop UI.
-   - Tabbed multi-document canvas supporting both Atlas Editors and visual Isometric Level Editors (rotatable 3D software viewport, 2D top-down grid, multi-cell selection, brush/eyedropper tools, and live Bank `$71` diagnostics), pixel editor, palette conflict resolver modal, hex dump preview, and high-DPI scaling.
+   - Interactive Compose Multiplatform Desktop UI centered on `StudioState`, `EditorSession` (`defaultExtension`, `documentTypeLabel`), and injected `StudioPlatform` (`AwtStudioPlatform` in production, `FakeStudioPlatform` in headless unit tests).
+   - Routes all save flows polymorphically through `StudioState.saveSession` / `saveSessionAs` / `saveAllDirtySessions`, resolves live unsaved atlases across open tabs before disk (`resolveLiveOrDiskAtlas`), and surfaces command/I/O failures through `StudioState.errorMessage` plus non-blocking workspace diagnostics banners.
 
 ---
 
-## 2. Multi-Document Architecture & Extension Seam
+## 2. Multi-Document & Testing Seams
 
-The studio employs a multi-document workspace architecture centered on `StudioState` and `EditorSession`:
-- **Atlas Document** (`.sfxproj`, `.sfxatlas`): Authoring specification for a single Texture Atlas, defining palette, Source Textures, layout coordinates, Virtual Slices, and Descriptor Aliases.
-- **Level Document** (`.sfxlevel`): Authoring specification for an isometric level, binding Map Grid surface geometry (`4x4` to `16x16`) and cell-aligned gameplay layers to a referenced Atlas Document by symbolic texture name.
-- **Multi-Document Seam**: `StudioState` manages multiple open `EditorSession` instances (`AtlasEditorState`, `LevelEditorState`) in tabs. Open Level Documents resolve live texture pixels and palettes directly from an open matching `AtlasEditorState` tab, falling back to disk when the atlas is not open.
+- **Cross-Tab Live Atlas Resolution**: `StudioState.resolveLiveOrDiskAtlas(atlasFile)` checks open `AtlasEditorState` tabs by canonical path **before** touching disk, so unsaved textures, slices, aliases, and palette edits propagate immediately to `newLevelSession`, `importCa65Map`, `LevelValidator`, and `IsoSoftwareRenderer`.
+- **Companion-Only `--output-dir` / `output_dir`**: When an explicit output directory is passed to `atlas pack` or `level pack`, only runtime companion artifacts (`.bin`, `.pal`, `.tab`, `.i`, `_atlas.png` or `.map`, `.i`, `_preview.png`) are written to `outputDir`; authoring `.sfxproj` / `.sfxlevel` files are never duplicated into `outputDir`.
+- **Headless Desktop Testing**: Inject `FakeStudioPlatform` into `StudioState` / `AtlasEditorState` / `LevelEditorState` to test save-as extensions, open/import flows, clipboard, and preferences without AWT modals or touching OS user preferences.
 
 ---
 
@@ -48,25 +49,13 @@ The studio employs a multi-document workspace architecture centered on `StudioSt
 
 Always use the project Maven Wrapper (`./mvnw`):
 
-- **Compile and Run Tests**:
-  ```bash
-  ./mvnw clean test
-  ```
 - **Apply Code Formatting**:
   ```bash
   ./mvnw spotless:apply
   ```
-- **Check Code Formatting**:
+- **Full Verification Gate (Tests, Shaded JAR, Spotless, Javadoc)**:
   ```bash
-  ./mvnw spotless:check
-  ```
-- **Build Full Package (All Modules & JARs)**:
-  ```bash
-  ./mvnw clean test package
-  ```
-- **Generate Javadocs**:
-  ```bash
-  ./mvnw test javadoc:javadoc
+  ./mvnw clean verify javadoc:javadoc
   ```
 
 ### CLI and MCP Execution
@@ -74,23 +63,19 @@ Always use the project Maven Wrapper (`./mvnw`):
   ```bash
   ./scripts/run-mcp.sh
   ```
-- **Validate an Atlas Document**:
+- **Atlas Commands**:
   ```bash
   ./scripts/sfx-studio.sh atlas validate path/to/TEXTURES.sfxproj
+  ./scripts/sfx-studio.sh atlas pack path/to/TEXTURES.sfxproj [--output-dir path/to/dist] [--auto-pack]
+  ./scripts/sfx-studio.sh atlas import path/to/TEXTURES.sfxproj tile1.png --snap-palette [--auto-grow]
   ```
-- **Pack an Atlas Document**:
-  ```bash
-  ./scripts/sfx-studio.sh atlas pack path/to/TEXTURES.sfxproj
-  ```
-- **Import Bitmap Graphics with Palette Snapping**:
-  ```bash
-  ./scripts/sfx-studio.sh atlas import path/to/TEXTURES.sfxproj tile1.png tile2.png --snap-palette
-  ```
-- **Create, Validate, Pack, or Import Isometric Levels**:
+- **Level Commands**:
   ```bash
   ./scripts/sfx-studio.sh level create path/to/courtyard.sfxlevel --atlas path/to/TEXTURES.sfxproj --cols 8 --rows 8
+  ./scripts/sfx-studio.sh level set-cells path/to/courtyard.sfxlevel --rect 1,1,3,3 --height 2 --top-tex stone
+  ./scripts/sfx-studio.sh level set-cells path/to/courtyard.sfxlevel --cells-json @patches.json --resize 10x8
   ./scripts/sfx-studio.sh level validate path/to/courtyard.sfxlevel
-  ./scripts/sfx-studio.sh level pack path/to/courtyard.sfxlevel --yaw 15
+  ./scripts/sfx-studio.sh level pack path/to/courtyard.sfxlevel [--output-dir path/to/dist] --yaw 15
   ./scripts/sfx-studio.sh level import-ca65 path/to/showcase_map.i --atlas path/to/TEXTURES.sfxproj --output path/to/showcase.sfxlevel
   ```
 - **Launch Interactive Desktop UI**:
@@ -103,9 +88,10 @@ Always use the project Maven Wrapper (`./mvnw`):
 ## 4. Hardware & Format Invariants
 
 1. **Unpacked 1-Byte-Per-Texel**: Every texel in `.bin` is an unpacked single byte (`$00`–`$0F`) for zero-bit-unpacking `getc; plot` rasterization.
-2. **Power-of-Two Dimensions**: Atlas width and height must each be powers of two in `[16, 32, 64, 128, 256]`.
+2. **Power-of-Two Dimensions & `<= 256` Descriptors**: Atlas width/height and slice dimensions must each be powers of two in `[16, 32, 64, 128, 256]`. Total descriptors (`textures + slices + aliases`) must not exceed `256` (`u8` `.map` slot limit); atlases exceeding `32 KB` (`256x256`) emit an `ATLAS_EXCEEDS_BANK_71` warning when staged into Bank `$71`.
 3. **BGR555 Palette**: 16 little-endian words (32 bytes). Slot 0 is permanently transparent (`$0000`). Opaque black is clamped to `$0001` (`R=1, G=0, B=0`).
-4. **ca65 Symbol Rules**: Texture names and aliases must match valid ca65 identifiers (`[A-Za-z_][A-Za-z0-9_]*`).
+4. **Canonical `Absent` Texture Resolution**: `null`, `""`, `"NONE"`, `"TEX_NONE"`, and `"TEXTURE_ID_NONE"` resolve to `DescriptorLookup.Absent`. `skirtTex = Absent` inherits `topTex` in both `IsoSoftwareRenderer` and `LevelBinarySerializer`; `panelTex = Absent` renders nothing and serializes `0`.
+5. **ca65 Symbol Rules**: Texture names, slices, and aliases must match valid ca65 identifiers (`[A-Za-z_][A-Za-z0-9_]*`) and be unique case-insensitively across the document.
 
 ---
 

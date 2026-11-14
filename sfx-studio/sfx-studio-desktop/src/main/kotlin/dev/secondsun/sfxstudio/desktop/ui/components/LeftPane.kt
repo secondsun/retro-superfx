@@ -38,10 +38,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import dev.secondsun.sfxstudio.core.atlas.ImportResult
 import dev.secondsun.sfxstudio.desktop.atlas.AtlasEditorState
 import dev.secondsun.sfxstudio.desktop.ui.TextureComposeRenderer
-import java.awt.image.BufferedImage
 
 @Composable
 fun LeftPane(
@@ -129,7 +127,6 @@ private fun SourceTexturesSection(
                                 .padding(6.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        // Thumbnail
                         val bitmap = TextureComposeRenderer.renderToImageBitmap(tex, state.palette)
                         Image(
                             bitmap = bitmap,
@@ -157,7 +154,6 @@ private fun SourceTexturesSection(
                             )
                         }
 
-                        // Edit Button
                         IconButton(
                             onClick = { state.editingTextureIndex = index },
                             modifier = Modifier.size(28.dp),
@@ -170,7 +166,6 @@ private fun SourceTexturesSection(
                             )
                         }
 
-                        // Delete Button
                         IconButton(
                             onClick = { state.deleteTexture(index) },
                             modifier = Modifier.size(28.dp),
@@ -207,20 +202,11 @@ private fun PaletteSection(
             )
 
             Button(
-                onClick = {
-                    // Open global quantize dialog
-                    state.pendingImport =
-                        ImportResult.NeedsRemapping(
-                            rawImage = BufferedImage(16, 16, BufferedImage.TYPE_INT_ARGB),
-                            suggestedName = "ALL",
-                            uniqueColors = emptyList(),
-                            currentPalette = state.palette,
-                            unmappedColors = emptyList(),
-                        )
-                },
+                onClick = { state.quantizePalette() },
+                enabled = state.atlas.textures.isNotEmpty() || state.palette.assignedCount > 0,
                 colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFF4B5563)),
             ) {
-                Text("Remap...", color = Color.White, fontSize = 11.sp)
+                Text("Quantize 15c", color = Color.White, fontSize = 11.sp)
             }
         }
 
@@ -274,7 +260,6 @@ private fun PaletteSection(
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // Detail Editor for Selected Slot
         val curSlot = state.selectedPaletteSlot
         if (curSlot == 0) {
             Box(
@@ -320,7 +305,6 @@ private fun PaletteSection(
                     }
                 }
 
-                // 5-bit Red slider
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         "R: ${color.r}",
@@ -337,7 +321,6 @@ private fun PaletteSection(
                     )
                 }
 
-                // 5-bit Green slider
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         "G: ${color.g}",
@@ -354,7 +337,6 @@ private fun PaletteSection(
                     )
                 }
 
-                // 5-bit Blue slider
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         "B: ${color.b}",

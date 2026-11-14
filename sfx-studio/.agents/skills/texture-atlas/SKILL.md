@@ -17,10 +17,11 @@ This skill guides agents through creating, updating, validating, and packing Sup
 1. **Unpacked 1-Byte-Per-Texel Layout**:
    - Every texel in `.bin` (e.g. `TEXTURES.bin`) is stored as an unpacked single byte holding a 4-bit palette index (`$00`–`$0F`) in row-major order.
    - Enables the SuperFX scanline rasterizer loop to execute `getc; plot` directly with zero runtime bit-unpacking or masking.
-2. **Independent Power-of-Two Dimensions**:
-   - Atlas width and height must each be a power of two in `[16, 32, 64, 128, 256]`.
+2. **Independent Power-of-Two Dimensions & `<= 256` Descriptors**:
+   - Atlas width/height and slice dimensions must each be a power of two in `[16, 32, 64, 128, 256]`.
    - Wrapping is computed with bitmasks: `u_mask = width - 1` and `v_mask = height - 1`.
    - Row stride offset is computed via `V << ATLAS_STRIDE_SHIFT` (where `ATLAS_STRIDE_SHIFT = log2(width)`), avoiding hardware multiplication.
+   - Total resolved descriptors (`textures + slices + aliases`) must not exceed **`256`** (`DescriptorTable.MAX_ENTRIES`, matching `u8` `.map` texture indices). Atlases larger than `32 KB` (`256x256` = `64 KB`) are valid for ROM scenes (`IsoEngine`) but exceed Game Pak RAM Bank `$71`'s `32 KB` `.bin` window.
 3. **SNES 16-Color BGR555 Palette (`.pal`)**:
    - 32 bytes (16 little-endian 16-bit words).
    - **Slot 0 is permanently transparent** (`$0000`).
@@ -28,9 +29,10 @@ This skill guides agents through creating, updating, validating, and packing Sup
 4. **Link-Time Bank 4 & Relocatable Bank `$71` Tables**:
    - In ROM-resident scenes (`IsoEngine`), `TEXTURE_TABLE` resides in `.segment "GSUDATA"` (`.i`) with link-time `.loword(textures_binary + TEXTURE_<NAME>_OFFSET)`.
    - For RAM Bank-`$71` scenes (`gsu_iso`), packing also emits `<NAME>.tab` (`magic = $5453 "ST"`, `entry_count`, `atlas_width`, `stride_shift` + `0`-based 8-byte descriptors matching `$71:0000+` addresses).
-5. **Virtual Slices & Descriptor Aliases**:
-   - **Virtual Slice**: Sub-rectangle of an existing Source Texture (e.g. $32 \times 16$ parapet inside stone, $16 \times 32$ foliage fin inside grass). Shares texel data without allocating extra atlas space.
-   - **Descriptor Alias**: Alternate symbolic name mapping to an existing descriptor (e.g. `water_deep` -> `water`).
+5. **Virtual Slices, Descriptor Aliases, & Safe Referential Integrity**:
+   - **Virtual Slice**: Power-of-two sub-rectangle of an existing Source Texture (e.g. $32 \times 16$ parapet inside stone, $16 \times 32$ foliage fin inside grass). Shares texel data without allocating extra atlas space.
+   - **Descriptor Alias**: Alternate symbolic name mapping to an existing descriptor (e.g. `water_deep` -> `water`). Cyclic aliases and case-insensitive duplicate ca65 identifiers are rejected during validation.
+   - In `AtlasDocument`, renaming a Source Texture cascades across dependent slices, aliases, and `descriptorOrder`; deleting a Source Texture is rejected while slices or aliases reference it unless `cascadeDependents = true`.
 
 ---
 
@@ -54,21 +56,22 @@ Call the **`call_mcp_tool`** tool with:
 ```
 *(Note: When using `sfx-studio` as a standalone plugin outside the umbrella workspace, pass `"ServerName": "sfx-studio_studio"` instead.)*
 
-Parameters inside `Arguments`:
+Parameters inside `Arguments` (strict JSON types — booleans must be `true`/`false`, never strings):
 - `project_path` (or `projectPath`): Workspace-relative path to the Atlas Document (`.sfxproj` or `.sfxatlas`).
-- `action`: `"pack"` (default — exports `<NAME>.bin`, `<NAME>.pal`, `<NAME>.tab`, `<NAME>.i`, and `<NAME>_atlas.png`), `"import"`, or `"validate"`.
-- `auto_pack`: Boolean; when `true`, automatically computes shelf packing for all textures.
-- `output_dir`: Optional alternate destination directory for exported files.
+- `action`: `"pack"` (default — validates atomically before writing `<NAME>.bin`, `<NAME>.pal`, `<NAME>.tab`, `<NAME>.i`, and `<NAME>_atlas.png`), `"import"`, or `"validate"`.
+- `auto_pack`: Boolean; when `true`, automatically computes shelf packing for all textures and updates `.sfxproj` in place.
+- `output_dir`: Optional alternate destination directory for companion files (`.bin`, `.pal`, `.tab`, `.i`, `_atlas.png`) — never copies `.sfxproj` into `output_dir`.
 - `image_paths`: Array of image paths to import (when `action` is `"import"`).
 - `snap_palette`: Boolean; snaps incoming colors to the nearest assigned palette slots.
 - `auto_quantize`: Boolean; executes global Median-Cut 15-color quantization across all textures.
+- `auto_grow`: Boolean (default `false` in CLI/MCP `STRICT_BOUNDS`); when `true`, automatically grows power-of-two atlas dimensions up to `256x256` if current bounds are full.
 
 Returns structured JSON:
-- `status`: `"SUCCESS"` or error status.
+- `status`: `"SUCCESS"` or `"FAIL"`.
 - `valid`: Boolean indicating manifest and packing validity.
 - `atlasWidth`, `atlasHeight`: Computed atlas dimensions.
-- `descriptorCount`: Number of generated descriptors in the Atlas Index.
-- `exportedFiles`: List of written file paths (`.bin`, `.pal`, `.tab`, `.i`, `_atlas.png`).
+- `descriptorCount`: Number of generated descriptors in the `DescriptorTable`.
+- `exportedFiles`: List of written file paths.
 
 ### B. Symbol & Reference Search (`sfx_lookup_symbol`, `sfx_find_references`, `sfx_resolve_address`)
 
@@ -115,11 +118,11 @@ Only if the MCP server cannot be reached via `call_mcp_tool`:
 # Validate Atlas Document:
 ./sfx-studio/scripts/sfx-studio.sh atlas validate snes-sfx-demo/X-GSU/IsoEngine/Data/TEXTURES.sfxproj
 
-# Pack and export companion files:
-./sfx-studio/scripts/sfx-studio.sh atlas pack snes-sfx-demo/X-GSU/IsoEngine/Data/TEXTURES.sfxproj
+# Pack companion files (optionally into --output-dir without copying .sfxproj):
+./sfx-studio/scripts/sfx-studio.sh atlas pack snes-sfx-demo/X-GSU/IsoEngine/Data/TEXTURES.sfxproj [--output-dir <dir>]
 
-# Import external images:
-./sfx-studio/scripts/sfx-studio.sh atlas import <project.sfxproj> tile1.png tile2.png --snap-palette
+# Import external images (pass --auto-grow to expand up to 256x256 when bounds are full):
+./sfx-studio/scripts/sfx-studio.sh atlas import <project.sfxproj> tile1.png tile2.png --snap-palette [--auto-grow]
 ```
 
 ---
@@ -128,15 +131,13 @@ Only if the MCP server cannot be reached via `call_mcp_tool`:
 
 ### Workflow A: Direct Text/ASCII Pixel Art Authoring
 
-Agents can draft or edit textures directly in an Atlas Document (`.sfxproj` / `.sfxatlas`) using the `pixelsAscii` multiline grid format.
-
-In `pixelsAscii`:
+Agents can draft or edit textures directly in an Atlas Document (`.sfxproj` / `.sfxatlas`) using the `pixelsAscii` multiline grid format:
 - `.` represents palette index `0` (transparent).
 - `1` through `9` represent palette indices `1` through `9`.
 - `A` through `F` (or `a` through `f`) represent palette indices `10` through `15`.
 - Whitespace and newlines format the 2D grid and are ignored during parsing.
 
-Example `ProjectTextureDto`:
+Example texture entry in `.sfxproj`:
 ```json
 {
   "name": "brick",
@@ -165,7 +166,7 @@ Example `ProjectTextureDto`:
 }
 ```
 
-After modifying the Atlas Document, call `sfx_pack_textures` with `action: "pack"` to update the binaries and ca65 includes.
+After modifying the Atlas Document, call `sfx_pack_textures` with `action: "pack"` to validate and update the binaries and ca65 includes.
 
 ---
 
@@ -195,13 +196,13 @@ To add a sub-region (like an architectural panel or fin) without duplicating bit
   }
 ]
 ```
-3. To preserve a specific sequential order in `TEXTURE_TABLE`, set `descriptorOrder`:
+3. When `descriptorOrder` is set, it **must list every defined texture, slice, and alias exactly once** (no omissions or duplicates):
 ```json
 "descriptorOrder": [
   "roof", "grass", "water", "sand", "water_deep", "stone", "parapet", "foliage"
 ]
 ```
-4. Run `sfx_pack_textures` to regenerate `TEXTURES.i`.
+4. Run `sfx_pack_textures` to regenerate `TEXTURES.i` and `TEXTURES.tab`.
 
 ---
 
@@ -233,7 +234,6 @@ Per workspace invariants, any modification to an active scene atlas (such as `Is
    make -C snes-sfx-demo/X-GSU/IsoEngine clean all
    ```
 2. **Execute Headless Framebuffer Capture via `call_mcp_tool`**:
-   Invoke the **`call_mcp_tool`** tool (`capture_sfx_render` is a lazy-loaded MCP tool on `retro-superfx_mesen`, not a top-level tool name; never read `tools/mesen-mcp/` Python internals to run it manually):
    ```json
    {
      "ServerName": "retro-superfx_mesen",
@@ -252,13 +252,16 @@ Per workspace invariants, any modification to an active scene atlas (such as `Is
 
 ## 5. Implementation & Generator Pointers
 
-When modifying the texture packer tool itself or its generated ca65 output format (`TEXTURES.i`, `TEXTURE_TABLE`, `texture_descriptor`):
+When modifying `sfx-studio` itself or its generated `.i`/`.tab` formats:
 
+- **Immutable Document & Atomic Export**: `sfx-studio/sfx-studio-core/src/main/kotlin/dev/secondsun/sfxstudio/core/atlas/AtlasDocument.kt`
+- **Canonical Descriptor Table & `.tab` Binary**: `sfx-studio/sfx-studio-core/src/main/kotlin/dev/secondsun/sfxstudio/core/atlas/DescriptorTable.kt`
 - **ca65 Index & `TEXTURE_TABLE` Generator**: `sfx-studio/sfx-studio-core/src/main/kotlin/dev/secondsun/sfxstudio/core/atlas/AtlasIndexGenerator.kt`
-- **Atlas Binary & Shelf-Packing Model**: `sfx-studio/sfx-studio-core/src/main/kotlin/dev/secondsun/sfxstudio/core/atlas/TextureAtlas.kt`
-- **Unit Tests**: `sfx-studio/sfx-studio-core/src/test/kotlin/dev/secondsun/sfxstudio/core/atlas/ModelTest.kt`
-- **MCP Tool Implementation**: `sfx-studio/sfx-studio-cli/src/main/kotlin/dev/secondsun/sfxstudio/cli/mcp/StudioMcpServer.kt`
-- **Rebuild After Editing Kotlin Sources**:
+- **Shared CLI/MCP Facade & Path Sandboxing**: `sfx-studio/sfx-studio-core/src/main/kotlin/dev/secondsun/sfxstudio/core/ops/StudioOperations.kt`
+- **Core Unit Tests**: `sfx-studio/sfx-studio-core/src/test/kotlin/dev/secondsun/sfxstudio/core/atlas/AtlasDocumentTest.kt` and `DescriptorTableResolutionTest.kt`
+- **MCP Tool Adapter**: `sfx-studio/sfx-studio-cli/src/main/kotlin/dev/secondsun/sfxstudio/cli/mcp/StudioMcpServer.kt`
+- **Rebuild & Verify After Editing Kotlin Sources**:
   ```bash
-  ./sfx-studio/mvnw -f sfx-studio/pom.xml test package
+  ./sfx-studio/mvnw -f sfx-studio/pom.xml spotless:apply
+  ./sfx-studio/mvnw -f sfx-studio/pom.xml clean verify javadoc:javadoc
   ```

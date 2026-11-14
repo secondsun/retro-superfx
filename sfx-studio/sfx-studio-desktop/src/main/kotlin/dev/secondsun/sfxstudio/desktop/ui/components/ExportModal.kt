@@ -40,7 +40,6 @@ import androidx.compose.ui.window.Dialog
 import dev.secondsun.sfxstudio.core.atlas.SourceTexture
 import dev.secondsun.sfxstudio.desktop.atlas.AtlasEditorState
 import java.io.File
-import javax.swing.JFileChooser
 
 @Composable
 fun ExportModal(state: AtlasEditorState) {
@@ -88,7 +87,6 @@ fun ExportModal(state: AtlasEditorState) {
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Directory Selection
                 Text("Export Directory:", color = Color.White, fontSize = 12.sp)
                 Spacer(modifier = Modifier.height(4.dp))
                 Row(
@@ -112,16 +110,8 @@ fun ExportModal(state: AtlasEditorState) {
 
                     Button(
                         onClick = {
-                            val chooser =
-                                JFileChooser().apply {
-                                    fileSelectionMode = JFileChooser.DIRECTORIES_ONLY
-                                    dialogTitle = "Select Export Directory"
-                                    val cur = File(exportDir)
-                                    if (cur.isDirectory) currentDirectory = cur
-                                }
-                            val res = chooser.showOpenDialog(null)
-                            if (res == JFileChooser.APPROVE_OPTION && chooser.selectedFile != null) {
-                                exportDir = chooser.selectedFile.absolutePath
+                            state.chooseExportDirectory(exportDir)?.let { chosen ->
+                                exportDir = chosen.absolutePath
                             }
                         },
                         colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFF3B82F6)),
@@ -133,7 +123,6 @@ fun ExportModal(state: AtlasEditorState) {
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                // Base Identifier
                 Text("Base Name:", color = Color.White, fontSize = 12.sp)
                 Spacer(modifier = Modifier.height(4.dp))
                 OutlinedTextField(
@@ -152,7 +141,6 @@ fun ExportModal(state: AtlasEditorState) {
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Files to Export List
                 Text("Files to Generate:", color = Color.White, fontSize = 12.sp)
                 Spacer(modifier = Modifier.height(6.dp))
 
@@ -165,7 +153,6 @@ fun ExportModal(state: AtlasEditorState) {
                             .padding(8.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    // Graphics Binary
                     ExportFileRow(
                         checked = incGraphics,
                         onCheckedChange = { incGraphics = it },
@@ -175,7 +162,6 @@ fun ExportModal(state: AtlasEditorState) {
 
                     Divider(color = Color(0xFF2A2D34))
 
-                    // Palette Binary
                     ExportFileRow(
                         checked = incPalette,
                         onCheckedChange = { incPalette = it },
@@ -185,17 +171,15 @@ fun ExportModal(state: AtlasEditorState) {
 
                     Divider(color = Color(0xFF2A2D34))
 
-                    // Relocatable Texture Table Binary
                     ExportFileRow(
                         checked = incTable,
                         onCheckedChange = { incTable = it },
                         fileName = "$cleanBase.tab",
-                        description = "Relocatable runtime Texture Table for Bank $71 staging",
+                        description = "Relocatable runtime Texture Table for Bank \$71 staging",
                     )
 
                     Divider(color = Color(0xFF2A2D34))
 
-                    // ca65 Index File
                     ExportFileRow(
                         checked = incIndex,
                         onCheckedChange = { incIndex = it },
@@ -205,7 +189,6 @@ fun ExportModal(state: AtlasEditorState) {
 
                     Divider(color = Color(0xFF2A2D34))
 
-                    // Layout PNG
                     ExportFileRow(
                         checked = incPng,
                         onCheckedChange = { incPng = it },
@@ -217,7 +200,6 @@ fun ExportModal(state: AtlasEditorState) {
 
                 Spacer(modifier = Modifier.height(20.dp))
 
-                // Action Buttons
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End,
@@ -253,7 +235,7 @@ fun ExportModal(state: AtlasEditorState) {
                             }
                         },
                         enabled = canExport,
-                        colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFF059669)), // Emerald Green
+                        colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFF059669)),
                     ) {
                         Text("Export Selected", color = Color.White)
                     }

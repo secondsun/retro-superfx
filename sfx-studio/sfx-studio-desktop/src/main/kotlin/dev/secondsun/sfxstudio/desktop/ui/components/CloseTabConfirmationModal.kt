@@ -25,9 +25,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import dev.secondsun.sfxstudio.desktop.shell.StudioState
-import java.awt.FileDialog
-import java.awt.Frame
-import java.io.File
 
 @Composable
 fun CloseTabConfirmationModal(studioState: StudioState) {
@@ -67,7 +64,6 @@ fun CloseTabConfirmationModal(studioState: StudioState) {
                     horizontalArrangement = Arrangement.End,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    // Cancel
                     TextButton(
                         onClick = { studioState.pendingCloseSessionIndex = null },
                     ) {
@@ -76,7 +72,6 @@ fun CloseTabConfirmationModal(studioState: StudioState) {
 
                     Spacer(modifier = Modifier.width(8.dp))
 
-                    // Discard and Close
                     OutlinedButton(
                         onClick = {
                             studioState.closeSession(pendingIdx)
@@ -91,24 +86,9 @@ fun CloseTabConfirmationModal(studioState: StudioState) {
 
                     Spacer(modifier = Modifier.width(8.dp))
 
-                    // Save and Close
                     Button(
                         onClick = {
-                            val saved =
-                                if (session.documentFile != null) {
-                                    session.save()
-                                } else {
-                                    val dialog = FileDialog(null as Frame?, "Save Document", FileDialog.SAVE)
-                                    dialog.file = "${session.displayTitle}.sfxproj"
-                                    dialog.isVisible = true
-                                    val file = dialog.file?.let { File(dialog.directory, it) }
-                                    if (file != null) {
-                                        session.saveAs(file)
-                                    } else {
-                                        false
-                                    }
-                                }
-                            if (saved) {
+                            if (studioState.saveSession(session)) {
                                 studioState.closeSession(pendingIdx)
                             }
                         },

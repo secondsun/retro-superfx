@@ -1,17 +1,14 @@
 package dev.secondsun.sfxstudio.cli
 
+import com.fasterxml.jackson.core.type.TypeReference
+import dev.secondsun.sfxstudio.cli.mcp.CellPatchDto
 import dev.secondsun.sfxstudio.cli.mcp.StudioMcpServer
-import dev.secondsun.sfxstudio.core.atlas.ImportResult
-import dev.secondsun.sfxstudio.core.atlas.MedianCutQuantizer
-import dev.secondsun.sfxstudio.core.atlas.ProjectService
-import dev.secondsun.sfxstudio.core.atlas.SnesColor
-import dev.secondsun.sfxstudio.core.atlas.TextureImporter
-import dev.secondsun.sfxstudio.core.level.Ca65MapImporter
-import dev.secondsun.sfxstudio.core.level.LevelDocument
-import dev.secondsun.sfxstudio.core.level.LevelDocumentService
-import dev.secondsun.sfxstudio.core.level.LevelValidator
-import dev.secondsun.sfxstudio.core.level.MapCell
-import dev.secondsun.sfxstudio.core.level.MapGrid
+import dev.secondsun.sfxstudio.core.atlas.ConflictResolution
+import dev.secondsun.sfxstudio.core.atlas.PlacementPolicy
+import dev.secondsun.sfxstudio.core.level.CellPatch
+import dev.secondsun.sfxstudio.core.level.CellRotation
+import dev.secondsun.sfxstudio.core.ops.PathPolicy
+import dev.secondsun.sfxstudio.core.ops.StudioOperations
 import java.io.File
 import java.nio.file.Path
 import java.util.logging.ConsoleHandler
@@ -19,7 +16,12 @@ import java.util.logging.Level
 import java.util.logging.Logger
 import kotlin.system.exitProcess
 
+/**
+ * Thin command-line adapter delegating all SuperFX Studio atlas and level operations to [StudioOperations].
+ */
 object CliMain {
+    private val operations = StudioOperations(PathPolicy.UNRESTRICTED)
+
     @JvmStatic
     fun main(args: Array<String>) {
         val exitCode = execute(args)
@@ -29,8 +31,8 @@ object CliMain {
     }
 
     /**
-     * Executes the CLI commands without calling [exitProcess], returning the exit status code.
-     * 0 indicates success, 1 indicates invalid syntax or unknown command, 2 indicates runtime error.
+     * Executes CLI commands without calling [exitProcess], returning the exit status code.
+     * `0` indicates success, `1` indicates invalid syntax or unknown command, `2` indicates runtime/validation error.
      */
     @JvmStatic
     fun execute(args: Array<String>): Int {
@@ -76,9 +78,10 @@ object CliMain {
                     }
                     when (subArgs[0]) {
                         "create" -> runLevelCreate(subArgs.drop(1))
+                        "set-cells", "set_cells" -> runLevelSetCells(subArgs.drop(1))
                         "pack" -> runLevelPack(subArgs.drop(1))
                         "validate" -> runLevelValidate(subArgs.drop(1))
-                        "import-ca65" -> runLevelImportCa65(subArgs.drop(1))
+                        "import-ca65", "import_ca65" -> runLevelImportCa65(subArgs.drop(1))
                         else -> {
                             System.err.println("Unknown level subcommand: '${subArgs[0]}'")
                             printUsage()
@@ -86,9 +89,9 @@ object CliMain {
                         }
                     }
                 }
-                "pack" -> runPack(args.drop(1).toList())
-                "import" -> runImport(args.drop(1).toList())
-                "validate" -> runValidate(args.drop(1).toList())
+                "pack" -> runPack(args.drop(1))
+                "import" -> runImport(args.drop(1))
+                "validate" -> runValidate(args.drop(1))
                 else -> {
                     System.err.println("Unknown command: '$first'")
                     printUsage()
@@ -97,7 +100,6 @@ object CliMain {
             }
         } catch (e: Exception) {
             System.err.println("Error executing '$first': ${e.message}")
-            e.printStackTrace(System.err)
             return 2
         }
     }
@@ -128,12 +130,7 @@ object CliMain {
         rootLogger.level = Level.WARNING
 
         val server = StudioMcpServer.createStdio(root)
-        Runtime.getRuntime().addShutdownHook(
-            Thread {
-                server.close()
-            },
-        )
-
+        Runtime.getRuntime().addShutdownHook(Thread { server.close() })
         server.await()
         return 0
     }
@@ -145,19 +142,21 @@ object CliMain {
 
             Usage:
               atlas pack <project.sfxproj|.sfxatlas> [--output-dir <dir>] [--auto-pack]
-                Loads manifest, resolves all virtual slices and aliases, optionally auto-packs,
-                and exports companion binaries (.bin, .pal, .tab), assembly index (.i), layout PNG,
-                and saves the project.
+                Validates manifest, resolves virtual slices and aliases, optionally auto-packs,
+                and exports companion binaries (.bin, .pal, .tab, .i, _atlas.png).
 
-              atlas import <project.sfxproj|.sfxatlas> <images...> [--auto-quantize] [--snap-palette]
-                Imports one or more image files (PNG/BMP) into the project, mapping or
-                quantizing colors to the SNES palette, automatically places them, and saves.
+              atlas import <project.sfxproj|.sfxatlas> <images...> [--auto-quantize] [--snap-palette] [--auto-grow]
+                Imports one or more image files (PNG/BMP) into the project, mapping or quantizing
+                colors to the SNES palette, places them (optionally growing up to 256x256), and saves.
 
               atlas validate <project.sfxproj|.sfxatlas>
-                Validates dimensions, bounds, coordinate collisions, slices, and aliases.
+                Validates dimensions, bounds, coordinate collisions, slices, aliases, and <=256 descriptors.
 
-              level create <level.sfxlevel> --atlas <atlas.sfxproj> [--cols <4..16>] [--rows <4..16>] [--top-tex <name>] [--skirt-tex <name>]
+              level create <level.sfxlevel> --atlas <atlas.sfxproj> [--cols <4..16>] [--rows <4..16>] [--top-tex <name>] [--skirt-tex <name>] [--height <0..31>] [--yaw <0..119>]
                 Creates a new isometric Level Document linked to an atlas and exports .map, .i, and _preview.png.
+
+              level set-cells <level.sfxlevel> [--cells-json <json|@file>] [--cell <c,r> | --rect <c0,r0,c1,r1>] [--height <0..31>] [--archetype <PRIM_*>] [--rot <0|90|180|270>] [--top-tex <name|NONE>] [--skirt-tex <name|NONE>] [--panel-tex <name|NONE>] [--panels <N,E,S,W|NONE>] [--tall-2h [true|false]] [--resize <CxR>] [--no-pack] [--yaw <0..119>]
+                Applies batch JSON and/or flag-driven cell/region edits (and optional grid resize) to a Level Document.
 
               level pack <level.sfxlevel> [--output-dir <dir>] [--yaw <0..119>]
                 Validates a Level Document against its shared atlas and exports .map, .i, and _preview.png.
@@ -179,17 +178,109 @@ object CliMain {
         )
     }
 
-    private fun computeRelativeAtlasPath(
-        levelFile: File,
-        atlasFile: File,
-    ): String {
-        val levelDir = (levelFile.absoluteFile.parentFile ?: File(".").absoluteFile).toPath().normalize()
-        val targetAtlas = atlasFile.absoluteFile.toPath().normalize()
-        return try {
-            levelDir.relativize(targetAtlas).toString().replace('\\', '/')
-        } catch (_: IllegalArgumentException) {
-            atlasFile.path
+    private fun runPack(args: List<String>): Int {
+        if (args.isEmpty()) {
+            System.err.println("Usage: atlas pack <project.sfxproj|.sfxatlas> [--output-dir <dir>] [--auto-pack]")
+            return 1
         }
+
+        val projectPath = args[0]
+        var outputDir: String? = null
+        var autoPack = false
+
+        var i = 1
+        while (i < args.size) {
+            when (args[i]) {
+                "--output-dir" -> {
+                    i++
+                    if (i < args.size) outputDir = args[i]
+                }
+                "--auto-pack" -> autoPack = true
+                else -> System.err.println("Warning: ignoring unknown argument '${args[i]}'")
+            }
+            i++
+        }
+
+        val res = operations.packAtlas(projectPath, outputDir = outputDir, autoPack = autoPack)
+        if (!res.valid) {
+            throw IllegalStateException(res.message)
+        }
+        val doc = checkNotNull(res.document)
+        println("Successfully packed '${doc.name}':")
+        println("  Atlas dimensions: ${doc.atlas.width}x${doc.atlas.height} (${doc.atlas.sizeBytes} bytes)")
+        println("  Base textures:    ${doc.atlas.textures.size}")
+        println("  Virtual slices:   ${doc.atlas.slices.size}")
+        println("  Aliases:          ${doc.atlas.aliases.size}")
+        println("  Total descriptors in TEXTURE_TABLE: ${res.descriptorCount}")
+        return 0
+    }
+
+    private fun runImport(args: List<String>): Int {
+        if (args.size < 2) {
+            System.err.println(
+                "Usage: atlas import <project.sfxproj|.sfxatlas> <images...> [--auto-quantize] [--snap-palette] [--auto-grow]",
+            )
+            return 1
+        }
+
+        val projectPath = args[0]
+        var autoQuantize = false
+        var snapPalette = false
+        var autoGrow = false
+        val imagePaths = mutableListOf<String>()
+
+        for (j in 1 until args.size) {
+            when (val arg = args[j]) {
+                "--auto-quantize" -> autoQuantize = true
+                "--snap-palette" -> snapPalette = true
+                "--auto-grow" -> autoGrow = true
+                else -> {
+                    if (arg.startsWith("-")) {
+                        System.err.println("Warning: ignoring unknown flag '$arg'")
+                    } else {
+                        imagePaths.add(arg)
+                    }
+                }
+            }
+        }
+
+        val resolution =
+            when {
+                snapPalette -> ConflictResolution.SNAP_TO_PALETTE
+                autoQuantize -> ConflictResolution.GLOBAL_QUANTIZE
+                else -> ConflictResolution.FAIL
+            }
+        val placement = if (autoGrow) PlacementPolicy.AUTO_GROW_MAX_256 else PlacementPolicy.STRICT_BOUNDS
+
+        val res =
+            operations.importAtlasImages(
+                projectPath = projectPath,
+                imagePaths = imagePaths,
+                conflictResolution = resolution,
+                placementPolicy = placement,
+            )
+        if (!res.valid) {
+            throw IllegalStateException(res.message)
+        }
+        println("Import complete: ${res.message}")
+        return 0
+    }
+
+    private fun runValidate(args: List<String>): Int {
+        if (args.isEmpty()) {
+            System.err.println("Usage: atlas validate <project.sfxproj|.sfxatlas>")
+            return 1
+        }
+
+        val res = operations.validateAtlas(args[0])
+        if (!res.valid) {
+            for (err in res.validation.errors) {
+                System.err.println("  Error [${err.code}]: ${err.message}")
+            }
+            throw IllegalStateException(res.message)
+        }
+        println("Validation passed: OK (${res.descriptorCount} descriptors)")
+        return 0
     }
 
     private fun runLevelCreate(args: List<String>): Int {
@@ -200,10 +291,11 @@ object CliMain {
             return 1
         }
 
-        val levelFile = File(args[0])
-        var atlasFile: File? = null
+        val levelPath = args[0]
+        var atlasPath: String? = null
         var cols = 8
         var rows = 8
+        var baseHeight = 0
         var topTex: String? = null
         var skirtTex: String? = null
         var yaw = 15
@@ -211,86 +303,246 @@ object CliMain {
         var i = 1
         while (i < args.size) {
             when (args[i]) {
-                "--atlas" -> {
-                    i++
-                    if (i < args.size) atlasFile = File(args[i])
-                }
-                "--cols" -> {
-                    i++
-                    if (i < args.size) cols = args[i].toInt()
-                }
-                "--rows" -> {
-                    i++
-                    if (i < args.size) rows = args[i].toInt()
-                }
-                "--top-tex" -> {
-                    i++
-                    if (i < args.size) topTex = args[i]
-                }
-                "--skirt-tex" -> {
-                    i++
-                    if (i < args.size) skirtTex = args[i]
-                }
-                "--yaw" -> {
-                    i++
-                    if (i < args.size) yaw = args[i].toInt()
-                }
+                "--atlas" -> if (++i < args.size) atlasPath = args[i]
+                "--cols" -> if (++i < args.size) cols = args[i].toInt()
+                "--rows" -> if (++i < args.size) rows = args[i].toInt()
+                "--height", "--base-height" -> if (++i < args.size) baseHeight = args[i].toInt()
+                "--top-tex" -> if (++i < args.size) topTex = args[i]
+                "--skirt-tex" -> if (++i < args.size) skirtTex = args[i]
+                "--yaw" -> if (++i < args.size) yaw = args[i].toInt()
                 else -> System.err.println("Warning: ignoring unknown argument '${args[i]}'")
             }
             i++
         }
 
-        val reqAtlasFile =
-            atlasFile ?: run {
+        val reqAtlas =
+            atlasPath ?: run {
                 System.err.println("Missing required flag: --atlas <atlas.sfxproj>")
                 return 1
             }
-        if (!reqAtlasFile.exists()) {
-            throw IllegalArgumentException("Atlas file '${reqAtlasFile.path}' does not exist.")
-        }
 
-        val (atlas, palette, _) = ProjectService.loadProject(reqAtlasFile)
-        val descriptors = atlas.resolvedDescriptors()
-        val defaultTex = descriptors.firstOrNull()?.name
-        val resolvedTop = topTex ?: defaultTex
-        val resolvedSkirt = skirtTex ?: resolvedTop
-        val relAtlasPath = computeRelativeAtlasPath(levelFile, reqAtlasFile)
-
-        val doc =
-            LevelDocument(
-                name = levelFile.nameWithoutExtension,
-                atlasPath = relAtlasPath,
-                grid =
-                    MapGrid.filled(
-                        cols = cols,
-                        rows = rows,
-                        defaultCell = MapCell(baseHeight = 0, topTex = resolvedTop, skirtTex = resolvedSkirt),
-                    ),
+        val res =
+            operations.createLevel(
+                levelPath = levelPath,
+                atlasPath = reqAtlas,
+                cols = cols,
+                rows = rows,
+                defaultTopTex = topTex,
+                defaultSkirtTex = skirtTex,
+                baseHeight = baseHeight,
+                yaw = yaw,
             )
-
-        val validation = LevelValidator.validate(levelFile, doc, overrideAtlas = atlas)
-        if (!validation.valid) {
-            val msgs = validation.errors.joinToString("; ") { "[${it.code}] ${it.message}" }
-            throw IllegalStateException("Level validation failed: $msgs")
-        }
-        for (warn in validation.warnings) {
+        for (warn in res.validation.warnings) {
             println("Warning [${warn.code}]: ${warn.message}")
         }
-
-        val exported =
-            LevelDocumentService.saveLevel(
-                levelFile = levelFile,
-                document = doc,
-                atlas = atlas,
-                palette = palette,
-                previewYaw = yaw,
-            )
-        println("Created level '${doc.name}' (${cols}x$rows, ${doc.grid.byteSize} bytes):")
-        println("  Manifest: ${exported.levelFile.absolutePath}")
-        println("  Binary:   ${exported.mapBinFile.absolutePath}")
-        println("  Header:   ${exported.headerFile.absolutePath}")
-        exported.previewPngFile?.let { println("  Preview:  ${it.absolutePath}") }
+        if (!res.valid) {
+            throw IllegalStateException(res.message)
+        }
+        println(res.message)
         return 0
+    }
+
+    private fun runLevelSetCells(args: List<String>): Int {
+        if (args.isEmpty()) {
+            System.err.println(
+                "Usage: level set-cells <level.sfxlevel> [--cells-json <json|@file>] [--cell <c,r> | --rect <c0,r0,c1,r1>] ...",
+            )
+            return 1
+        }
+
+        val levelPath = args[0]
+        val patches = mutableListOf<CellPatch>()
+        var resizeCols: Int? = null
+        var resizeRows: Int? = null
+        var autoPack = true
+        var yaw = 15
+
+        // Single-patch CLI flag accumulators
+        var singleCol: Int? = null
+        var singleRow: Int? = null
+        var rectC0: Int? = null
+        var rectR0: Int? = null
+        var rectC1: Int? = null
+        var rectR1: Int? = null
+        var flagHeight: Int? = null
+        var flagArchetype: String? = null
+        var flagRot: Int? = null
+        var flagTopTex: String? = null
+        var hasTopTex = false
+        var flagSkirtTex: String? = null
+        var hasSkirtTex = false
+        var flagPanelTex: String? = null
+        var hasPanelTex = false
+        var flagPanels: List<String>? = null
+        var flagTall2h: Boolean? = null
+
+        var i = 1
+        while (i < args.size) {
+            when (val flag = args[i]) {
+                "--cells-json" -> {
+                    require(++i < args.size) { "Missing value after --cells-json" }
+                    patches.addAll(parseCellsJsonArg(args[i]))
+                }
+                "--cell" -> {
+                    require(++i < args.size) { "Missing <c,r> value after --cell" }
+                    val parts = args[i].split(',').map { it.trim().toInt() }
+                    require(parts.size == 2) { "Expected --cell <col,row>, got '${args[i]}'" }
+                    singleCol = parts[0]
+                    singleRow = parts[1]
+                }
+                "--rect" -> {
+                    require(++i < args.size) { "Missing <c0,r0,c1,r1> value after --rect" }
+                    val parts = args[i].split(',').map { it.trim().toInt() }
+                    require(parts.size == 4) { "Expected --rect <c0,r0,c1,r1>, got '${args[i]}'" }
+                    rectC0 = parts[0]
+                    rectR0 = parts[1]
+                    rectC1 = parts[2]
+                    rectR1 = parts[3]
+                }
+                "--height", "--base-height" -> {
+                    require(++i < args.size) { "Missing value after $flag" }
+                    flagHeight = args[i].toInt()
+                }
+                "--archetype" -> {
+                    require(++i < args.size) { "Missing value after --archetype" }
+                    flagArchetype = args[i]
+                }
+                "--rot", "--rotation" -> {
+                    require(++i < args.size) { "Missing value after $flag" }
+                    flagRot = CellRotation.fromSymbol(args[i]).degrees
+                }
+                "--top-tex" -> {
+                    require(++i < args.size) { "Missing value after --top-tex" }
+                    flagTopTex = args[i]
+                    hasTopTex = true
+                }
+                "--skirt-tex" -> {
+                    require(++i < args.size) { "Missing value after --skirt-tex" }
+                    flagSkirtTex = args[i]
+                    hasSkirtTex = true
+                }
+                "--panel-tex" -> {
+                    require(++i < args.size) { "Missing value after --panel-tex" }
+                    flagPanelTex = args[i]
+                    hasPanelTex = true
+                }
+                "--panels" -> {
+                    require(++i < args.size) { "Missing value after --panels" }
+                    flagPanels =
+                        args[i]
+                            .split(',', '|')
+                            .map { it.trim() }
+                            .filter { it.isNotEmpty() }
+                }
+                "--tall-2h" -> {
+                    if (i + 1 < args.size && args[i + 1].lowercase() in setOf("true", "false")) {
+                        flagTall2h = args[++i].toBooleanStrict()
+                    } else {
+                        flagTall2h = true
+                    }
+                }
+                "--no-tall-2h" -> flagTall2h = false
+                "--resize" -> {
+                    require(++i < args.size) { "Missing <CxR> value after --resize" }
+                    val parts = args[i].lowercase().split('x', ',').map { it.trim().toInt() }
+                    require(parts.size == 2) { "Expected --resize <CxR>, got '${args[i]}'" }
+                    resizeCols = parts[0]
+                    resizeRows = parts[1]
+                }
+                "--no-pack" -> autoPack = false
+                "--yaw" -> {
+                    require(++i < args.size) { "Missing value after --yaw" }
+                    yaw = args[i].toInt()
+                }
+                else -> throw IllegalArgumentException("Unknown argument '$flag' for level set-cells")
+            }
+            i++
+        }
+
+        val hasFlagTarget = singleCol != null || rectC0 != null
+        val hasFlagAttrs =
+            flagHeight != null ||
+                flagArchetype != null ||
+                flagRot != null ||
+                hasTopTex ||
+                hasSkirtTex ||
+                hasPanelTex ||
+                flagPanels != null ||
+                flagTall2h != null
+
+        if (hasFlagAttrs && !hasFlagTarget) {
+            throw IllegalArgumentException("Cell attribute flags require --cell <c,r> or --rect <c0,r0,c1,r1>")
+        }
+
+        if (hasFlagTarget) {
+            patches.add(
+                CellPatch(
+                    col = singleCol,
+                    row = singleRow,
+                    colStart = rectC0,
+                    colEnd = rectC1,
+                    rowStart = rectR0,
+                    rowEnd = rectR1,
+                    baseHeight = flagHeight,
+                    archetype = flagArchetype,
+                    rotation = flagRot,
+                    topTex = flagTopTex,
+                    updateTopTex = hasTopTex,
+                    skirtTex = flagSkirtTex,
+                    updateSkirtTex = hasSkirtTex,
+                    panelTex = flagPanelTex,
+                    updatePanelTex = hasPanelTex,
+                    panels = flagPanels,
+                    tall2h = flagTall2h,
+                ),
+            )
+        }
+
+        if (patches.isEmpty() && resizeCols == null && resizeRows == null) {
+            System.err.println("Nothing to update: pass --cells-json, --cell / --rect, or --resize <CxR>.")
+            return 1
+        }
+
+        val res =
+            operations.setLevelCells(
+                levelPath = levelPath,
+                patches = patches,
+                resizeCols = resizeCols,
+                resizeRows = resizeRows,
+                autoPack = autoPack,
+                yaw = yaw,
+            )
+        for (warn in res.validation.warnings) {
+            println("Warning [${warn.code}]: ${warn.message}")
+        }
+        if (!res.valid) {
+            for (err in res.validation.errors) {
+                System.err.println("Error [${err.code}]: ${err.message}")
+            }
+            throw IllegalStateException(res.message)
+        }
+        println(res.message)
+        return 0
+    }
+
+    private fun parseCellsJsonArg(rawArg: String): List<CellPatch> {
+        val jsonText =
+            if (rawArg.startsWith("@")) {
+                val file = File(rawArg.substring(1))
+                require(file.exists()) { "Cells JSON file '${file.path}' does not exist" }
+                file.readText()
+            } else {
+                rawArg
+            }
+        val mapper = StudioMcpServer.createStrictMapper()
+        val trimmed = jsonText.trim()
+        val dtos: List<CellPatchDto> =
+            if (trimmed.startsWith("[")) {
+                mapper.readValue(trimmed, object : TypeReference<List<CellPatchDto>>() {})
+            } else {
+                listOf(mapper.readValue(trimmed, CellPatchDto::class.java))
+            }
+        return dtos.map { it.toDomain() }
     }
 
     private fun runLevelPack(args: List<String>): Int {
@@ -299,59 +551,28 @@ object CliMain {
             return 1
         }
 
-        val levelFile = File(args[0])
-        if (!levelFile.exists()) {
-            throw IllegalArgumentException("Level file '${levelFile.path}' does not exist.")
-        }
-
-        var outputDir: File? = null
+        val levelPath = args[0]
+        var outputDir: String? = null
         var yaw = 15
 
         var i = 1
         while (i < args.size) {
             when (args[i]) {
-                "--output-dir" -> {
-                    i++
-                    if (i < args.size) outputDir = File(args[i])
-                }
-                "--yaw" -> {
-                    i++
-                    if (i < args.size) yaw = args[i].toInt()
-                }
+                "--output-dir" -> if (++i < args.size) outputDir = args[i]
+                "--yaw" -> if (++i < args.size) yaw = args[i].toInt()
                 else -> System.err.println("Warning: ignoring unknown argument '${args[i]}'")
             }
             i++
         }
 
-        val doc = LevelDocumentService.loadLevel(levelFile)
-        val atlasFile = LevelDocumentService.resolveAtlasFile(levelFile, doc.atlasPath)
-        if (!atlasFile.exists()) {
-            throw IllegalStateException("Atlas file '${doc.atlasPath}' resolved to '${atlasFile.path}' does not exist.")
-        }
-        val (atlas, palette, _) = ProjectService.loadProject(atlasFile)
-
-        val validation = LevelValidator.validate(levelFile, doc, overrideAtlas = atlas)
-        for (warn in validation.warnings) {
+        val res = operations.packLevel(levelPath, outputDir = outputDir, yaw = yaw)
+        for (warn in res.validation.warnings) {
             println("Warning [${warn.code}]: ${warn.message}")
         }
-        if (!validation.valid) {
-            val msgs = validation.errors.joinToString("; ") { "[${it.code}] ${it.message}" }
-            throw IllegalStateException("Level validation failed: $msgs")
+        if (!res.valid) {
+            throw IllegalStateException(res.message)
         }
-
-        val exported =
-            LevelDocumentService.saveLevel(
-                levelFile = levelFile,
-                document = doc,
-                atlas = atlas,
-                palette = palette,
-                outputDir = outputDir,
-                previewYaw = yaw,
-            )
-        println("Successfully packed level '${doc.name}' (${doc.grid.cols}x${doc.grid.rows}, ${doc.grid.byteSize} bytes):")
-        println("  Binary:  ${exported.mapBinFile.absolutePath}")
-        println("  Header:  ${exported.headerFile.absolutePath}")
-        exported.previewPngFile?.let { println("  Preview: ${it.absolutePath}") }
+        println(res.message)
         return 0
     }
 
@@ -361,24 +582,17 @@ object CliMain {
             return 1
         }
 
-        val levelFile = File(args[0])
-        if (!levelFile.exists()) {
-            throw IllegalArgumentException("Level file '${levelFile.path}' does not exist.")
-        }
-
-        val doc = LevelDocumentService.loadLevel(levelFile)
-        val validation = LevelValidator.validate(levelFile, doc)
-        println("Validating level '${levelFile.name}' (${doc.grid.cols}x${doc.grid.rows})...")
-        for (warn in validation.warnings) {
+        val res = operations.validateLevel(args[0])
+        for (warn in res.validation.warnings) {
             println("  Warning [${warn.code}]: ${warn.message}")
         }
-        if (!validation.valid) {
-            for (err in validation.errors) {
+        if (!res.valid) {
+            for (err in res.validation.errors) {
                 System.err.println("  Error [${err.code}]: ${err.message}")
             }
-            throw IllegalStateException("Validation failed with ${validation.errors.size} error(s).")
+            throw IllegalStateException(res.message)
         }
-        println("Validation passed: OK (${validation.warnings.size} warning(s))")
+        println("Validation passed: OK (${res.validation.warnings.size} warning(s))")
         return 0
     }
 
@@ -390,309 +604,47 @@ object CliMain {
             return 1
         }
 
-        val inputFile = File(args[0])
-        if (!inputFile.exists()) {
-            throw IllegalArgumentException("Input ca65 file '${inputFile.path}' does not exist.")
-        }
-
-        var atlasFile: File? = null
-        var outputFile: File? = null
+        val ca65Path = args[0]
+        var atlasPath: String? = null
+        var outputPath: String? = null
         var yaw = 15
 
         var i = 1
         while (i < args.size) {
             when (args[i]) {
-                "--atlas" -> {
-                    i++
-                    if (i < args.size) atlasFile = File(args[i])
-                }
-                "--output" -> {
-                    i++
-                    if (i < args.size) outputFile = File(args[i])
-                }
-                "--yaw" -> {
-                    i++
-                    if (i < args.size) yaw = args[i].toInt()
-                }
+                "--atlas" -> if (++i < args.size) atlasPath = args[i]
+                "--output" -> if (++i < args.size) outputPath = args[i]
+                "--yaw" -> if (++i < args.size) yaw = args[i].toInt()
                 else -> System.err.println("Warning: ignoring unknown argument '${args[i]}'")
             }
             i++
         }
 
-        val reqAtlasFile =
-            atlasFile ?: run {
+        val reqAtlas =
+            atlasPath ?: run {
                 System.err.println("Missing required flag: --atlas <atlas.sfxproj>")
                 return 1
             }
-        val reqOutputFile =
-            outputFile ?: run {
+        val reqOutput =
+            outputPath ?: run {
                 System.err.println("Missing required flag: --output <level.sfxlevel>")
                 return 1
             }
-        if (!reqAtlasFile.exists()) {
-            throw IllegalArgumentException("Atlas file '${reqAtlasFile.path}' does not exist.")
-        }
 
-        val (atlas, palette, _) = ProjectService.loadProject(reqAtlasFile)
-        val relAtlasPath = computeRelativeAtlasPath(reqOutputFile, reqAtlasFile)
-        val doc =
-            Ca65MapImporter.importFile(
-                ca65File = inputFile,
-                atlasPath = relAtlasPath,
-                atlas = atlas,
-                levelName = reqOutputFile.nameWithoutExtension,
+        val res =
+            operations.importCa65Level(
+                ca65Path = ca65Path,
+                atlasPath = reqAtlas,
+                levelPath = reqOutput,
+                yaw = yaw,
             )
-
-        val validation = LevelValidator.validate(reqOutputFile, doc, overrideAtlas = atlas)
-        for (warn in validation.warnings) {
+        for (warn in res.validation.warnings) {
             println("Warning [${warn.code}]: ${warn.message}")
         }
-        if (!validation.valid) {
-            val msgs = validation.errors.joinToString("; ") { "[${it.code}] ${it.message}" }
-            throw IllegalStateException("Imported level failed validation: $msgs")
+        if (!res.valid) {
+            throw IllegalStateException(res.message)
         }
-
-        val exported =
-            LevelDocumentService.saveLevel(
-                levelFile = reqOutputFile,
-                document = doc,
-                atlas = atlas,
-                palette = palette,
-                previewYaw = yaw,
-            )
-        println("Imported '${inputFile.name}' -> '${exported.levelFile.path}' (${doc.grid.cols}x${doc.grid.rows}):")
-        println("  Binary:  ${exported.mapBinFile.absolutePath}")
-        println("  Header:  ${exported.headerFile.absolutePath}")
-        exported.previewPngFile?.let { println("  Preview: ${it.absolutePath}") }
-        return 0
-    }
-
-    private fun runPack(args: List<String>): Int {
-        if (args.isEmpty()) {
-            System.err.println("Usage: atlas pack <project.sfxproj|.sfxatlas> [--output-dir <dir>] [--auto-pack]")
-            return 1
-        }
-
-        val projectFile = File(args[0])
-        if (!projectFile.exists()) {
-            throw IllegalArgumentException("Project file '${projectFile.path}' does not exist.")
-        }
-
-        var outputDir: File? = null
-        var autoPack = false
-
-        var i = 1
-        while (i < args.size) {
-            when (args[i]) {
-                "--output-dir" -> {
-                    i++
-                    if (i < args.size) outputDir = File(args[i])
-                }
-                "--auto-pack" -> autoPack = true
-                else -> System.err.println("Warning: ignoring unknown argument '${args[i]}'")
-            }
-            i++
-        }
-
-        val (loadedAtlas, palette, gridSnap) = ProjectService.loadProject(projectFile)
-        var atlas = loadedAtlas
-
-        if (autoPack) {
-            val packed =
-                atlas.autoPack(gridSnap)
-                    ?: throw IllegalStateException(
-                        "Could not auto-pack textures into ${atlas.width}x${atlas.height} atlas with grid $gridSnap",
-                    )
-            atlas = packed
-        }
-
-        val targetFile = if (outputDir != null) File(outputDir, projectFile.name) else projectFile
-        val projectName = projectFile.nameWithoutExtension
-
-        ProjectService.saveProject(targetFile, projectName, atlas, palette, gridSnap)
-
-        val descriptors = atlas.resolvedDescriptors()
-        println("Successfully packed '$projectName':")
-        println("  Atlas dimensions: ${atlas.width}x${atlas.height} (${atlas.sizeBytes} bytes)")
-        println("  Base textures:    ${atlas.textures.size}")
-        println("  Virtual slices:   ${atlas.slices.size}")
-        println("  Aliases:          ${atlas.aliases.size}")
-        println("  Total descriptors in TEXTURE_TABLE: ${descriptors.size}")
-        println("  Saved manifest:   ${targetFile.absolutePath}")
-        return 0
-    }
-
-    private fun runImport(args: List<String>): Int {
-        if (args.size < 2) {
-            System.err.println(
-                "Usage: atlas import <project.sfxproj|.sfxatlas> <images...> [--auto-quantize] [--snap-palette]",
-            )
-            return 1
-        }
-
-        val projectFile = File(args[0])
-        if (!projectFile.exists()) {
-            throw IllegalArgumentException("Project file '${projectFile.path}' does not exist.")
-        }
-
-        var autoQuantize = false
-        var snapPalette = false
-        val imageFiles = mutableListOf<File>()
-
-        for (j in 1 until args.size) {
-            val arg = args[j]
-            when (arg) {
-                "--auto-quantize" -> autoQuantize = true
-                "--snap-palette" -> snapPalette = true
-                else -> {
-                    if (arg.startsWith("-")) {
-                        System.err.println("Warning: ignoring unknown flag '$arg'")
-                    } else {
-                        val imgFile = File(arg)
-                        if (!imgFile.exists()) throw IllegalArgumentException("Image file '${imgFile.path}' not found")
-                        imageFiles.add(imgFile)
-                    }
-                }
-            }
-        }
-
-        if (imageFiles.isEmpty()) {
-            throw IllegalArgumentException("No image files specified for import")
-        }
-
-        val (loadedAtlas, loadedPalette, gridSnap) = ProjectService.loadProject(projectFile)
-        var atlas = loadedAtlas
-        var palette = loadedPalette
-
-        for (imgFile in imageFiles) {
-            println("Importing '${imgFile.name}'...")
-            when (val result = TextureImporter.importFromFile(imgFile, palette)) {
-                is ImportResult.Success -> {
-                    val pos =
-                        atlas.findPlacement(result.texture, gridSnap)
-                            ?: throw IllegalStateException(
-                                "Could not find free placement for '${result.texture.name}' in ${atlas.width}x${atlas.height} atlas",
-                            )
-                    atlas = atlas.withTexture(result.texture.copy(x = pos.first, y = pos.second))
-                    palette = result.updatedPalette
-                    println("  Placed '${result.texture.name}' at (${pos.first}, ${pos.second})")
-                }
-                is ImportResult.NeedsRemapping -> {
-                    if (snapPalette) {
-                        val mapping = mutableMapOf<SnesColor, Int>()
-                        for (color in result.uniqueColors) {
-                            val existing = palette.findExactIndex(color)
-                            mapping[color] = existing ?: palette.findNearestAssignedIndex(color)
-                        }
-                        val tex =
-                            TextureImporter.createTextureFromImage(
-                                image = result.rawImage,
-                                name = result.suggestedName,
-                                colorMapping = mapping,
-                                fallbackPalette = palette,
-                            )
-                        val pos =
-                            atlas.findPlacement(tex, gridSnap)
-                                ?: throw IllegalStateException("Could not find free placement for '${tex.name}' in atlas")
-                        atlas = atlas.withTexture(tex.copy(x = pos.first, y = pos.second))
-                        println("  Snapped colors for '${tex.name}' and placed at (${pos.first}, ${pos.second})")
-                    } else if (autoQuantize) {
-                        val allColors = mutableListOf<SnesColor>()
-                        for (tex in atlas.textures) {
-                            for (v in 0 until tex.height) {
-                                for (u in 0 until tex.width) {
-                                    val slot = tex.getPixel(u, v)
-                                    if (slot != 0) allColors.add(palette[slot])
-                                }
-                            }
-                        }
-                        allColors.addAll(result.uniqueColors)
-                        val newPalette = MedianCutQuantizer.quantize(allColors)
-
-                        val remappedTextures =
-                            atlas.textures.map { tex ->
-                                val remapMap = mutableMapOf<Int, Int>()
-                                for (slot in 1..15) {
-                                    remapMap[slot] = newPalette.findNearestAssignedIndex(palette[slot])
-                                }
-                                tex.remapPixels(remapMap)
-                            }
-
-                        val incomingMapping = mutableMapOf<SnesColor, Int>()
-                        for (color in result.uniqueColors) {
-                            incomingMapping[color] = newPalette.findNearestAssignedIndex(color)
-                        }
-                        val newTex =
-                            TextureImporter.createTextureFromImage(
-                                image = result.rawImage,
-                                name = result.suggestedName,
-                                colorMapping = incomingMapping,
-                                fallbackPalette = newPalette,
-                            )
-
-                        palette = newPalette
-                        val tempAtlas = atlas.copy(textures = remappedTextures)
-                        val pos =
-                            tempAtlas.findPlacement(newTex, gridSnap)
-                                ?: throw IllegalStateException("Could not find free placement for '${newTex.name}' in quantized atlas")
-                        atlas = tempAtlas.withTexture(newTex.copy(x = pos.first, y = pos.second))
-                        println(
-                            "  Quantized 15-color palette, remapped textures, and placed '${newTex.name}' at (${pos.first}, ${pos.second})",
-                        )
-                    } else {
-                        throw IllegalStateException(
-                            "Image '${imgFile.name}' has unmapped colors: ${result.unmappedColors}. Pass --snap-palette or --auto-quantize.",
-                        )
-                    }
-                }
-                is ImportResult.Error -> throw IllegalArgumentException("Failed to import '${imgFile.name}': ${result.message}")
-            }
-        }
-
-        val projectName = projectFile.nameWithoutExtension
-        ProjectService.saveProject(projectFile, projectName, atlas, palette, gridSnap)
-        println("Import complete. Saved project to '${projectFile.path}'.")
-        return 0
-    }
-
-    private fun runValidate(args: List<String>): Int {
-        if (args.isEmpty()) {
-            System.err.println("Usage: atlas validate <project.sfxproj|.sfxatlas>")
-            return 1
-        }
-
-        val projectFile = File(args[0])
-        if (!projectFile.exists()) {
-            throw IllegalArgumentException("Project file '${projectFile.path}' not found")
-        }
-
-        val (atlas, _, gridSnap) = ProjectService.loadProject(projectFile)
-        println("Validating '${projectFile.name}'...")
-        println("  Atlas dimensions: ${atlas.width}x${atlas.height}, grid: ${gridSnap}px")
-
-        // 1. Validate textures within bounds
-        for (tex in atlas.textures) {
-            if (!tex.isWithinBounds(atlas.width, atlas.height)) {
-                throw IllegalStateException(
-                    "Texture '${tex.name}' exceeds atlas bounds: " +
-                        "(${tex.x}, ${tex.y}) + (${tex.width}x${tex.height}) > (${atlas.width}x${atlas.height})",
-                )
-            }
-        }
-
-        // 2. Validate collisions
-        for (i in atlas.textures.indices) {
-            for (j in i + 1 until atlas.textures.size) {
-                if (atlas.textures[i].intersects(atlas.textures[j])) {
-                    throw IllegalStateException("Collision detected between '${atlas.textures[i].name}' and '${atlas.textures[j].name}'")
-                }
-            }
-        }
-
-        // 3. Validate descriptors (slices and aliases)
-        val descriptors = atlas.resolvedDescriptors()
-        println("  Resolved ${descriptors.size} descriptors successfully.")
-        println("Validation passed: OK")
+        println(res.message)
         return 0
     }
 }

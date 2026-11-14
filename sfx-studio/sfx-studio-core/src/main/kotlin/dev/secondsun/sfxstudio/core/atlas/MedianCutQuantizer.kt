@@ -4,7 +4,7 @@ package dev.secondsun.sfxstudio.core.atlas
  * Implements median-cut color quantization to generate an optimal 15-color SNES BGR555 palette.
  * Slot 0 is always reserved for transparency. Opaque black is clamped to $0001.
  */
-object MedianCutQuantizer {
+internal object MedianCutQuantizer {
     private data class ColorBox(
         val colors: List<SnesColor>,
     ) {

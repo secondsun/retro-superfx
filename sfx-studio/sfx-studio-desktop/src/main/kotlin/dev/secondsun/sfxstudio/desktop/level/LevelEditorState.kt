@@ -3,7 +3,10 @@ package dev.secondsun.sfxstudio.desktop.level
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import dev.secondsun.sfxstudio.core.atlas.ProjectService
+import dev.secondsun.sfxstudio.core.atlas.AtlasDocument
+import dev.secondsun.sfxstudio.core.atlas.DescriptorTable
+import dev.secondsun.sfxstudio.core.atlas.SFX_ATLAS_EXTENSION
+import dev.secondsun.sfxstudio.core.atlas.SFX_PROJ_EXTENSION
 import dev.secondsun.sfxstudio.core.atlas.SnesPalette
 import dev.secondsun.sfxstudio.core.atlas.SourceTexture
 import dev.secondsun.sfxstudio.core.atlas.TextureAtlas
@@ -13,6 +16,7 @@ import dev.secondsun.sfxstudio.core.level.CellRotation
 import dev.secondsun.sfxstudio.core.level.DiagnosticSeverity
 import dev.secondsun.sfxstudio.core.level.EdgePanels
 import dev.secondsun.sfxstudio.core.level.IsoSoftwareRenderer
+import dev.secondsun.sfxstudio.core.level.LevelDiagnostic
 import dev.secondsun.sfxstudio.core.level.LevelDocument
 import dev.secondsun.sfxstudio.core.level.LevelDocumentService
 import dev.secondsun.sfxstudio.core.level.LevelValidationResult
@@ -21,8 +25,9 @@ import dev.secondsun.sfxstudio.core.level.MapCell
 import dev.secondsun.sfxstudio.core.level.MapGrid
 import dev.secondsun.sfxstudio.core.level.SFX_LEVEL_EXTENSION
 import dev.secondsun.sfxstudio.core.level.ShapeArchetype
-import dev.secondsun.sfxstudio.desktop.atlas.AtlasEditorState
+import dev.secondsun.sfxstudio.desktop.shell.AwtStudioPlatform
 import dev.secondsun.sfxstudio.desktop.shell.EditorSession
+import dev.secondsun.sfxstudio.desktop.shell.StudioPlatform
 import dev.secondsun.sfxstudio.desktop.shell.StudioState
 import java.io.File
 import java.util.UUID
@@ -56,8 +61,9 @@ data class BrushLayerMask(
 /**
  * Stateful editing session for an isometric [LevelDocument] (`.sfxlevel`) in SuperFX Studio Desktop.
  *
- * Resolves live [TextureAtlas] and [SnesPalette] data from an open [AtlasEditorState] tab when
- * available, falling back to a timestamp-keyed disk cache otherwise.
+ * Resolves live [AtlasDocument] instances via [StudioState.resolveLiveOrDiskAtlas] so unsaved
+ * textures, slices, aliases, and palette edits in open tabs propagate immediately to level
+ * creation, ca65 `.i` import, validation, and 3D software rendering.
  */
 class LevelEditorState(
     val studio: StudioState? = null,
@@ -68,8 +74,15 @@ class LevelEditorState(
             grid = MapGrid.filled(8, 8),
         ),
     initialAtlasFile: File? = null,
+    private val standalonePlatform: StudioPlatform? = null,
 ) : EditorSession {
     override val sessionId: String = UUID.randomUUID().toString()
+    override val defaultExtension: String = SFX_LEVEL_EXTENSION
+    override val documentTypeLabel: String = "Level Document"
+
+    private val fallbackPlatform by lazy { AwtStudioPlatform() }
+    val platform: StudioPlatform
+        get() = studio?.platform ?: standalonePlatform ?: fallbackPlatform
 
     private var _document = mutableStateOf(initialDocument)
     var document: LevelDocument
@@ -91,7 +104,13 @@ class LevelEditorState(
 
     override var hasUnsavedChanges by mutableStateOf(false)
     override var statusMessage by mutableStateOf("Ready")
-    var errorMessage by mutableStateOf<String?>(null)
+    var lastError by mutableStateOf<String?>(null)
+        private set
+
+    fun reportError(message: String) {
+        lastError = message
+        studio?.reportError(message)
+    }
 
     // Tooling & selection state
     var activeTool by mutableStateOf(LevelTool.SELECT)
@@ -121,9 +140,9 @@ class LevelEditorState(
     val canUndo: Boolean get() = undoStack.isNotEmpty()
     val canRedo: Boolean get() = redoStack.isNotEmpty()
 
-    // Disk fallback cache for closed atlases
-    private var cachedDiskKey: Pair<String, Long>? = null
-    private var cachedDiskData: Pair<TextureAtlas, SnesPalette>? = null
+    // Local disk cache only when running standalone without StudioState
+    private var standaloneDiskKey: Pair<String, Long>? = null
+    private var standaloneDiskDoc: AtlasDocument? = null
 
     override val statusSummary: String
         get() {
@@ -148,99 +167,75 @@ class LevelEditorState(
     }
 
     /**
-     * Resolves the active [TextureAtlas] and [SnesPalette] for rendering and validation.
-     * Prefers an open [AtlasEditorState] tab matching the canonical path so pixel/palette edits
-     * reflect live across tabs without requiring a disk save.
+     * Resolves the active [AtlasDocument] for rendering, validation, and ca65 import.
+     * Prefers an open `AtlasEditorState` tab matching the canonical path before touching disk.
      */
-    fun resolveAtlasAndPalette(): Pair<TextureAtlas, SnesPalette>? {
-        val targetFile = resolveAtlasFile()
-        if (targetFile != null) {
-            val targetCanonical = canonicalOrAbsolute(targetFile)
-            val openMatch =
-                studio
-                    ?.openSessions
-                    ?.filterIsInstance<AtlasEditorState>()
-                    ?.firstOrNull { session ->
-                        session.documentFile?.let { canonicalOrAbsolute(it) == targetCanonical } == true
-                    }
-            if (openMatch != null) {
-                return openMatch.atlas to openMatch.palette
+    fun resolveAtlasDocument(explicitAtlasFile: File? = null): AtlasDocument? {
+        val targetFile = explicitAtlasFile ?: resolveAtlasFile()
+        if (studio != null) {
+            return studio.resolveLiveOrDiskAtlas(targetFile)
+        }
+        if (targetFile != null && targetFile.exists() && targetFile.isFile) {
+            val canonical = StudioState.canonicalOrAbsolute(targetFile)
+            val key = canonical.path to targetFile.lastModified()
+            if (standaloneDiskKey == key && standaloneDiskDoc != null) {
+                return standaloneDiskDoc
             }
-
-            if (targetFile.exists() && targetFile.isFile) {
-                val key = targetCanonical.path to targetFile.lastModified()
-                if (cachedDiskKey == key && cachedDiskData != null) {
-                    return cachedDiskData
-                }
-                return try {
-                    val (loadedAtlas, loadedPal, _) = ProjectService.loadProject(targetFile)
-                    val pair = loadedAtlas to loadedPal
-                    cachedDiskKey = key
-                    cachedDiskData = pair
-                    pair
-                } catch (_: Exception) {
-                    null
-                }
-            }
-        } else {
-            // Fallback for brand-new untitled levels: bind preview to an open unsaved Atlas tab if present
-            val firstOpenAtlas =
-                studio
-                    ?.openSessions
-                    ?.filterIsInstance<AtlasEditorState>()
-                    ?.firstOrNull()
-            if (firstOpenAtlas != null) {
-                return firstOpenAtlas.atlas to firstOpenAtlas.palette
+            return try {
+                val loaded = AtlasDocument.load(targetFile)
+                standaloneDiskKey = key
+                standaloneDiskDoc = loaded
+                loaded
+            } catch (_: Exception) {
+                null
             }
         }
         return null
     }
 
+    fun resolveAtlasAndPalette(): Pair<TextureAtlas, SnesPalette>? = resolveAtlasDocument()?.let { it.atlas to it.palette }
+
     fun invalidateDiskAtlasCache() {
-        cachedDiskKey = null
-        cachedDiskData = null
+        standaloneDiskKey = null
+        standaloneDiskDoc = null
+        studio?.invalidateDiskAtlasCache()
     }
 
     fun currentValidation(): LevelValidationResult {
-        val resolved = resolveAtlasAndPalette()
-        val dummyFile = currentLevelFile ?: File(document.name + ".$SFX_LEVEL_EXTENSION")
-        return if (resolved != null) {
-            LevelValidator.validate(dummyFile, document, overrideAtlas = resolved.first)
-        } else {
-            LevelValidator.validate(dummyFile, document)
+        val atlasDoc = resolveAtlasDocument()
+        if (atlasDoc != null) {
+            return LevelValidator.validate(document, atlasDoc)
         }
+        val targetFile = resolveAtlasFile()
+        val diag =
+            if (targetFile == null) {
+                LevelDiagnostic(
+                    severity = DiagnosticSeverity.ERROR,
+                    code = "MISSING_ATLAS_PATH",
+                    message = "No Texture Atlas (.sfxproj) is linked to this level.",
+                )
+            } else {
+                LevelDiagnostic(
+                    severity = DiagnosticSeverity.ERROR,
+                    code = "ATLAS_NOT_FOUND",
+                    message = "Linked Texture Atlas '${targetFile.name}' could not be found or loaded.",
+                )
+            }
+        return LevelValidationResult(valid = false, errors = listOf(diag), warnings = emptyList())
     }
 
     /**
-     * Extracts a preview [SourceTexture] for any descriptor (base texture, virtual slice, or alias)
-     * so slice and alias swatches render accurately in the level palette dock.
+     * Extracts a preview [SourceTexture] directly from the backing [SourceTexture] sub-rectangle
+     * via [DescriptorTable] without materializing the entire atlas binary.
      */
     fun extractDescriptorPreview(
         atlas: TextureAtlas,
         desc: TextureDescriptorInfo,
-    ): SourceTexture? {
-        val direct = atlas.textures.find { it.name == desc.name }
-        if (direct != null) return direct
-
-        val atlasBytes = atlas.generateBinary()
-        val subPixels = ByteArray(desc.width * desc.height)
-        for (v in 0 until desc.height) {
-            for (u in 0 until desc.width) {
-                val idx = desc.romOffset + v * atlas.width + u
-                if (idx in atlasBytes.indices) {
-                    subPixels[v * desc.width + u] = atlasBytes[idx]
-                }
-            }
-        }
-        return SourceTexture(
-            name = desc.name,
-            width = desc.width,
-            height = desc.height,
-            x = 0,
-            y = 0,
-            indexedPixels = subPixels,
-        )
-    }
+    ): SourceTexture? =
+        atlas
+            .descriptorTable()
+            .getOrNull()
+            ?.extractPreviewTexture(desc)
 
     private fun pushUndo(snapshot: LevelDocument) {
         if (undoStack.lastOrNull() == snapshot) return
@@ -526,9 +521,20 @@ class LevelEditorState(
         clampSelectionToBounds()
     }
 
+    fun promptLinkAtlas() {
+        val picked =
+            platform.chooseOpenFile(
+                title = "Link Texture Atlas",
+                initialDir = studio?.lastImportDirectory ?: currentLevelFile?.parentFile?.absolutePath,
+                allowedExtensions = setOf(SFX_PROJ_EXTENSION, SFX_ATLAS_EXTENSION),
+            ) ?: return
+        linkAtlasFile(picked)
+    }
+
     fun linkAtlasFile(atlasFile: File) {
-        if (!atlasFile.exists()) {
-            errorMessage = "Atlas file '${atlasFile.path}' does not exist."
+        val resolvedDoc = resolveAtlasDocument(explicitAtlasFile = atlasFile)
+        if (resolvedDoc == null) {
+            reportError("Atlas file '${atlasFile.path}' does not exist or could not be loaded.")
             return
         }
         unsavedAtlasFile = atlasFile
@@ -537,8 +543,13 @@ class LevelEditorState(
             currentLevelFile?.let { computeRelativePath(it, atlasFile) }
                 ?: atlasFile.path
         mutateDocument(status = "Linked atlas '${atlasFile.name}'") { doc ->
-            val resolved = resolveAtlasAndPalette()?.first
-            val firstTex = resolved?.resolvedDescriptors()?.firstOrNull()?.name
+            val firstTex =
+                resolvedDoc
+                    .descriptorTable()
+                    .getOrNull()
+                    ?.entries
+                    ?.firstOrNull()
+                    ?.name
             val patchedCells =
                 if (firstTex != null) {
                     doc.grid.cells.map { cell ->
@@ -680,13 +691,24 @@ class LevelEditorState(
             brushCell = loaded.grid.cells.firstOrNull() ?: MapCell()
             selectedCells = setOf(0 to 0)
             hasUnsavedChanges = false
-            errorMessage = null
+            lastError = null
             statusMessage = "Opened level '${file.name}'"
             true
         } catch (e: Exception) {
-            errorMessage = "Failed to open level '${file.name}': ${e.message}"
+            reportError("Failed to open level '${file.name}': ${e.message}")
             false
         }
+
+    fun promptImportCa65Map() {
+        val picked =
+            platform.chooseOpenFile(
+                title = "Import Legacy ca65 Map (.i)",
+                initialDir = studio?.lastImportDirectory ?: currentLevelFile?.parentFile?.absolutePath,
+                allowedExtensions = setOf("i"),
+            ) ?: return
+        picked.parentFile?.absolutePath?.let { studio?.updateLastImportDirectory(it) }
+        importCa65Map(picked)
+    }
 
     fun importCa65Map(
         ca65File: File,
@@ -694,12 +716,7 @@ class LevelEditorState(
     ): Boolean =
         try {
             val atlasFile = explicitAtlasFile ?: resolveAtlasFile()
-            val atlas =
-                if (atlasFile != null && atlasFile.exists()) {
-                    ProjectService.loadProject(atlasFile).first
-                } else {
-                    resolveAtlasAndPalette()?.first
-                }
+            val atlasDoc = resolveAtlasDocument(explicitAtlasFile = atlasFile)
             val relAtlas =
                 if (atlasFile != null && currentLevelFile != null) {
                     computeRelativePath(currentLevelFile!!, atlasFile)
@@ -713,7 +730,7 @@ class LevelEditorState(
                 Ca65MapImporter.importFile(
                     ca65File = ca65File,
                     atlasPath = relAtlas,
-                    atlas = atlas,
+                    atlas = atlasDoc?.atlas,
                     levelName = document.name.ifBlank { ca65File.nameWithoutExtension },
                 )
             mutateDocument(status = "Imported '${ca65File.name}' (${imported.grid.cols}x${imported.grid.rows})") {
@@ -721,11 +738,14 @@ class LevelEditorState(
             }
             brushCell = imported.grid.cells.firstOrNull() ?: MapCell()
             selectedCells = setOf(0 to 0)
+            lastError = null
             true
         } catch (e: Exception) {
-            errorMessage = "Failed to import '${ca65File.name}': ${e.message}"
+            reportError("Failed to import '${ca65File.name}': ${e.message}")
             false
         }
+
+    fun requestSave(): Boolean = studio?.saveSession(this) ?: save()
 
     override fun save(): Boolean {
         val target = currentLevelFile ?: return false
@@ -735,7 +755,7 @@ class LevelEditorState(
     override fun saveAs(file: File): Boolean =
         try {
             val resolvedAtlasFile = resolveAtlasFile()
-            val resolvedPair = resolveAtlasAndPalette()
+            val atlasDoc = resolveAtlasDocument()
             val updatedDoc =
                 if (resolvedAtlasFile != null) {
                     document.copy(
@@ -746,38 +766,43 @@ class LevelEditorState(
                     document.copy(name = file.nameWithoutExtension)
                 }
 
-            val validation =
-                LevelValidator.validate(
-                    levelFile = file,
-                    document = updatedDoc,
-                    overrideAtlas = resolvedPair?.first,
+            if (atlasDoc == null) {
+                LevelDocumentService.saveAuthoringJson(file, updatedDoc)
+                document = updatedDoc
+                currentLevelFile = file
+                hasUnsavedChanges = false
+                reportError(
+                    "Saved '${file.name}', but binary .map export was skipped because no valid Texture Atlas is linked.",
                 )
+                statusMessage = "Saved '${file.name}' (.map skipped — no linked atlas)"
+                return true
+            }
+
+            val validation = LevelValidator.validate(document = updatedDoc, atlasDocument = atlasDoc)
             if (!validation.valid) {
                 val errSummary =
                     validation.errors
                         .take(3)
                         .joinToString("\n") { "• [${it.code}] ${it.message}" }
-                // Still save the authoring .sfxlevel JSON so work is never lost, while reporting why .map export was skipped
-                file.parentFile?.mkdirs()
-                file.writeText(LevelDocumentService.toJson(updatedDoc))
+                // Still save authoring .sfxlevel JSON so work is never lost, while reporting why .map export was skipped
+                LevelDocumentService.saveAuthoringJson(file, updatedDoc)
                 document = updatedDoc
                 currentLevelFile = file
                 hasUnsavedChanges = false
-                errorMessage = "Saved '${file.name}', but binary .map export was skipped due to validation errors:\n$errSummary"
+                reportError("Saved '${file.name}', but binary .map export was skipped due to validation errors:\n$errSummary")
                 statusMessage = "Saved '${file.name}' (with ${validation.errors.size} error(s))"
                 true
             } else {
-                LevelDocumentService.saveLevel(
+                LevelDocumentService.saveAndExport(
                     levelFile = file,
                     document = updatedDoc,
-                    atlas = resolvedPair?.first,
-                    palette = resolvedPair?.second,
+                    atlasDoc = atlasDoc,
                     previewYaw = cameraYaw,
                 )
                 document = updatedDoc
                 currentLevelFile = file
                 hasUnsavedChanges = false
-                errorMessage = null
+                lastError = null
                 val warnSuffix =
                     if (validation.warnings.isNotEmpty()) {
                         " (${validation.warnings.size} warning(s))"
@@ -788,7 +813,7 @@ class LevelEditorState(
                 true
             }
         } catch (e: Exception) {
-            errorMessage = "Failed to save '${file.name}': ${e.message}"
+            reportError("Failed to save '${file.name}': ${e.message}")
             false
         }
 
@@ -806,13 +831,6 @@ class LevelEditorState(
         const val MAX_HISTORY = 50
         const val PAN_STEP_PIXELS = 2
         const val MAX_PAN_PIXELS = 128
-
-        private fun canonicalOrAbsolute(file: File): File =
-            try {
-                file.canonicalFile
-            } catch (_: Throwable) {
-                file.absoluteFile
-            }
 
         private fun computeRelativePath(
             levelFile: File,

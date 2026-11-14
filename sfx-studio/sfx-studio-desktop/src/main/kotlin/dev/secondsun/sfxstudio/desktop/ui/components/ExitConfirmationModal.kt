@@ -24,11 +24,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
-import dev.secondsun.sfxstudio.desktop.atlas.AtlasEditorState
 import dev.secondsun.sfxstudio.desktop.shell.StudioState
-import java.awt.FileDialog
-import java.awt.Frame
-import java.io.File
 
 @Composable
 fun ExitConfirmationModal(
@@ -74,7 +70,6 @@ fun ExitConfirmationModal(
                     horizontalArrangement = Arrangement.End,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    // Cancel
                     TextButton(
                         onClick = { studioState.showExitConfirmationModal = false },
                     ) {
@@ -83,7 +78,6 @@ fun ExitConfirmationModal(
 
                     Spacer(modifier = Modifier.width(8.dp))
 
-                    // Discard and Exit
                     OutlinedButton(
                         onClick = {
                             studioState.showExitConfirmationModal = false
@@ -99,31 +93,9 @@ fun ExitConfirmationModal(
 
                     Spacer(modifier = Modifier.width(8.dp))
 
-                    // Save and Exit
                     Button(
                         onClick = {
-                            var allSaved = true
-                            for (session in dirtySessions) {
-                                val saved =
-                                    if (session.documentFile != null) {
-                                        session.save()
-                                    } else {
-                                        val dialog = FileDialog(null as Frame?, "Save Project", FileDialog.SAVE)
-                                        dialog.file = "${session.displayTitle}.sfxproj"
-                                        dialog.isVisible = true
-                                        val file = dialog.file?.let { File(dialog.directory, it) }
-                                        if (file != null) {
-                                            session.saveAs(file)
-                                        } else {
-                                            false
-                                        }
-                                    }
-                                if (!saved) {
-                                    allSaved = false
-                                    break
-                                }
-                            }
-                            if (allSaved) {
+                            if (studioState.saveAllDirtySessions()) {
                                 studioState.showExitConfirmationModal = false
                                 onConfirmExit()
                             }
@@ -134,43 +106,6 @@ fun ExitConfirmationModal(
                             ),
                     ) {
                         Text("Save & Exit", color = Color.White)
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun ExitConfirmationModal(
-    state: AtlasEditorState,
-    onConfirmExit: () -> Unit,
-) {
-    if (state.studio != null) {
-        ExitConfirmationModal(state.studio, onConfirmExit)
-    } else {
-        if (!state.showExitConfirmationModal) return
-        Dialog(onDismissRequest = { state.showExitConfirmationModal = false }) {
-            Surface(
-                modifier = Modifier.width(460.dp).wrapContentHeight(),
-                shape = RoundedCornerShape(8.dp),
-                color = Color(0xFF22242B),
-            ) {
-                Column(modifier = Modifier.padding(20.dp)) {
-                    Text("Unsaved Changes", style = MaterialTheme.typography.h6, color = Color.White)
-                    Spacer(modifier = Modifier.height(10.dp))
-                    Text("You have unsaved changes in '${state.projectName}'.", color = Color.LightGray)
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
-                        TextButton(onClick = { state.showExitConfirmationModal = false }) {
-                            Text("Cancel")
-                        }
-                        Button(onClick = {
-                            state.showExitConfirmationModal = false
-                            onConfirmExit()
-                        }) {
-                            Text("Discard & Exit")
-                        }
                     }
                 }
             }

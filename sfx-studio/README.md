@@ -13,27 +13,25 @@ A graphical desktop studio and headless asset pipeline built with **Compose Mult
   - 16-color palette (32 bytes binary, 16 little-endian words).
   - Slot 0 is permanently locked as **Transparent** (`$0000`).
   - Opaque black is clamped to **`$0001`** (`R=1, G=0, B=0`) to eliminate transparency ambiguity.
-  - Interactive 5-bit RGB sliders (`0..31`), hex word display, and color remapping.
-- **ca65 Assembly Atlas Index (`.i`) & Relocatable Texture Table (`.tab`)**:
-  - Exports `ATLAS_WIDTH`, `ATLAS_HEIGHT`, `ATLAS_SIZE_BYTES`, `ATLAS_STRIDE_SHIFT`, and per-texture constants (`TEXTURE_<NAME>_ID`, `TEXTURE_<NAME>_OFFSET`, `TEXTURE_<NAME>_U_MASK`, `TEXTURE_<NAME>_V_MASK`, `TEXTURE_<NAME>_WIDTH_SHIFT`).
+  - Standalone 15-color Median-Cut quantization across existing textures, plus interactive 5-bit RGB sliders (`0..31`) and color remapping.
+- **Canonical `DescriptorTable`, ca65 Atlas Index (`.i`), & Relocatable Texture Table (`.tab`)**:
+  - Unified `DescriptorTable` (`<= 256` descriptors for `u8` `.map` indices) with case-insensitive `TEXTURE_ID_*` / `TEX_*` resolution and `O(w*h)` sub-rectangle texel extraction.
   - Emits ROM-resident `TEXTURE_TABLE` (`.i`) and relocatable runtime `.tab` binaries (`magic = $5453 "ST"`) for Game Pak RAM Bank `$71` staging.
 - **Isometric Level Authoring (`.sfxlevel` -> `.map`, `.i`, `_preview.png`)**:
   - Symbolic texture binding across $4\times 4$ to $16\times 16$ grids, all 12 `IsoEngine` shape archetypes, 90-degree rotations, and `1h`/`2h` perimeter edge panels.
-  - Legacy `ca65` `def_cell` map importer (`showcase_map.i`, `starship_map.i`), Bank `$71` budget & geometry validator, and exact 30-degree orthographic software renderer (`IsoSoftwareRenderer`).
+  - Canonical `Absent` texture semantics (`NONE` / blank): `skirtTex = Absent` inherits `topTex` in both software preview and binary `.map`; `panelTex = Absent` renders nothing and serializes `0`.
+  - Legacy `ca65` `def_cell` map importer, Bank `$71` budget & geometry validator, and exact 30-degree orthographic software renderer (`IsoSoftwareRenderer`).
 - **Virtual Slices & Descriptor Aliases**:
-  - **Virtual Slices**: Define sub-regions of Source Textures sharing pixels without consuming additional atlas space.
+  - **Virtual Slices**: Define power-of-two sub-regions of Source Textures sharing pixels without consuming additional atlas space.
   - **Descriptor Aliases**: Symbolic alternate names resolving to existing texture descriptors.
+  - Cascading Source Texture renames and safe dependent-checked deletions.
 - **Multi-Document Tabbed Desktop Shell**:
-  - Tabbed workspace supporting multiple open `Atlas Document` and `Level Document` editors with live cross-tab texture/palette updates.
-  - Visual level editor with rotatable 3D Isometric Viewport, 2D Top-Down Grid, single/marquee multi-cell selection, Brush/Eyedropper tools with layer masks, and undo/redo history.
-  - Visual grid snapping (`4px`, `8px`, `16px`), drag-and-drop placement with boundary clamping and collision avoidance, auto-fit and shelf-packing.
-  - Zoomable pixel-art editor modal (Pencil, Flood Fill, Eyedropper, Undo/Redo).
-  - Palette Conflict & Reduction modal (Euclidean auto-snap and Median-Cut 15-color auto-quantize).
-  - Hex preview of generated binaries with offset highlighting.
-  - High-DPI and 4K display support with dynamic UI scaling.
-- **Headless CLI & MCP Tooling**:
-  - Headless atlas and level creation, packing, validation, ca65 import, and batch graphic import via `./scripts/sfx-studio.sh`.
-  - Stdio JSON-RPC Model Context Protocol (MCP) server via `./scripts/run-mcp.sh` exposing `sfx_pack_textures` and `sfx_manage_level` for agent automation.
+  - Tabbed workspace supporting multiple open `Atlas Document` and `Level Document` sessions with live in-memory cross-tab texture/palette propagation (`resolveLiveOrDiskAtlas`).
+  - Unified polymorphic save routing (`.sfxproj` vs `.sfxlevel`), platform-aware shortcuts (`Cmd+S` on macOS, `Ctrl+S` on Windows/Linux), non-blocking workspace diagnostics banners, and testable `StudioPlatform` host seam.
+- **Headless CLI & MCP Tooling (`StudioOperations`)**:
+  - Shared stdio-quiet `StudioOperations` facade with `PathPolicy` workspace sandboxing (blocking `../`, `atlasPath`, and symlink escapes).
+  - Headless atlas and level creation, cell/region patching (`level set-cells`), packing, validation, ca65 import, and batch graphic import via `./scripts/sfx-studio.sh`.
+  - Stdio JSON-RPC Model Context Protocol (MCP) server via `./scripts/run-mcp.sh` exposing `sfx_pack_textures` and `sfx_manage_level` with strict Jackson DTO validation.
 
 ---
 
@@ -42,34 +40,30 @@ A graphical desktop studio and headless asset pipeline built with **Compose Mult
 The project is structured as a modular 3-tier reactor:
 
 ```
-[sfx-studio-core] (Headless domain models, shelf packing, palette quantization, ca65 generator)
+[sfx-studio-core] (AtlasDocument, DescriptorTable, LevelValidator, IsoSoftwareRenderer, StudioOperations + PathPolicy)
        │
-       ├──> [sfx-studio-cli] (Headless CLI & stdio JSON-RPC MCP server)
+       ├──> [sfx-studio-cli] (Thin CliMain + strict-DTO StudioMcpServer over StudioOperations)
        │
-       └──> [sfx-studio-desktop] (Compose Multiplatform Desktop GUI & multi-document editor)
+       └──> [sfx-studio-desktop] (Compose Desktop GUI, StudioState + StudioPlatform, Atlas & Level editors)
 ```
 
-- **`sfx-studio-core`**: Headless domain layer with zero UI or MCP dependencies.
-- **`sfx-studio-cli`**: Command-line interface and MCP server.
-- **`sfx-studio-desktop`**: Compose Multiplatform desktop application.
+- **`sfx-studio-core`**: Pure headless domain and operations layer with zero UI or MCP dependencies.
+- **`sfx-studio-cli`**: Thin command-line and stdio JSON-RPC MCP adapters over `StudioOperations`.
+- **`sfx-studio-desktop`**: Compose Multiplatform desktop application isolated behind `StudioPlatform`.
 
 ---
 
 ## Building and Running
 
-### Build and Test
-```bash
-./mvnw clean test package
-```
-
-### Apply Code Formatting
+### Build, Format, and Verify
 ```bash
 ./mvnw spotless:apply
+./mvnw clean verify javadoc:javadoc
 ```
 
 ### Run Desktop Application
 ```bash
-./scripts/sfx-studio.sh [path/to/TEXTURES.sfxproj]
+./scripts/sfx-studio.sh [path/to/TEXTURES.sfxproj | path/to/courtyard.sfxlevel]
 ```
 
 ### Run Headless CLI Commands
@@ -77,16 +71,18 @@ The project is structured as a modular 3-tier reactor:
 # Validate Atlas Document:
 ./scripts/sfx-studio.sh atlas validate path/to/TEXTURES.sfxproj
 
-# Pack and export companion files:
-./scripts/sfx-studio.sh atlas pack path/to/TEXTURES.sfxproj
+# Pack companion files (.bin, .pal, .tab, .i, _atlas.png) without duplicating .sfxproj in --output-dir:
+./scripts/sfx-studio.sh atlas pack path/to/TEXTURES.sfxproj [--output-dir path/to/dist] [--auto-pack]
 
-# Import external images:
-./scripts/sfx-studio.sh atlas import path/to/TEXTURES.sfxproj tile1.png tile2.png --snap-palette
+# Import external images (defaults to strict bounds; pass --auto-grow to expand up to 256x256):
+./scripts/sfx-studio.sh atlas import path/to/TEXTURES.sfxproj tile1.png tile2.png --snap-palette [--auto-grow]
 
-# Create, validate, pack, or import isometric Level Documents:
+# Create, patch cells/regions, validate, pack, or import isometric Level Documents:
 ./scripts/sfx-studio.sh level create path/to/courtyard.sfxlevel --atlas path/to/TEXTURES.sfxproj --cols 8 --rows 8
+./scripts/sfx-studio.sh level set-cells path/to/courtyard.sfxlevel --rect 2,2,5,5 --height 2 --top-tex stone
+./scripts/sfx-studio.sh level set-cells path/to/courtyard.sfxlevel --cells-json @patches.json --resize 10x8
 ./scripts/sfx-studio.sh level validate path/to/courtyard.sfxlevel
-./scripts/sfx-studio.sh level pack path/to/courtyard.sfxlevel --yaw 15
+./scripts/sfx-studio.sh level pack path/to/courtyard.sfxlevel [--output-dir path/to/dist] --yaw 15
 ./scripts/sfx-studio.sh level import-ca65 path/to/showcase_map.i --atlas path/to/TEXTURES.sfxproj --output path/to/showcase.sfxlevel
 ```
 
@@ -101,3 +97,4 @@ The project is structured as a modular 3-tier reactor:
 - Domain Glossary: [`GLOSSARY.md`](GLOSSARY.md)
 - Monorepo Tracking ADR: [`../docs/adr/0005-umbrella-tracked-projects-toward-monorepo.md`](../docs/adr/0005-umbrella-tracked-projects-toward-monorepo.md)
 - Dedicated Studio MCP ADR: [`../docs/adr/0006-dedicated-studio-mcp-server-and-packaged-skills.md`](../docs/adr/0006-dedicated-studio-mcp-server-and-packaged-skills.md)
+- Bank `$71` Asset Staging & MSU-1 Seam ADR: [`../docs/adr/0007-bank-71-asset-staging-and-msu1-loader-seam.md`](../docs/adr/0007-bank-71-asset-staging-and-msu1-loader-seam.md)

@@ -141,11 +141,20 @@ fun TextureEditModal(state: AtlasEditorState) {
                         value = textureName,
                         onValueChange = { input ->
                             textureName = input
+                            val trimmed = input.trim()
+                            val duplicate =
+                                state.atlas.textures.withIndex().any { (idx, t) ->
+                                    idx != editIdx && t.name.equals(trimmed, ignoreCase = true)
+                                } ||
+                                    state.atlas.slices.any { it.name.equals(trimmed, ignoreCase = true) } ||
+                                    state.atlas.aliases.any { it.name.equals(trimmed, ignoreCase = true) }
                             nameError =
-                                if (!SourceTexture.isValidCa65Identifier(input)) {
-                                    "Must be a valid ca65 identifier ([A-Za-z_][A-Za-z0-9_]*)"
-                                } else {
-                                    null
+                                when {
+                                    !SourceTexture.isValidCa65Identifier(trimmed) ->
+                                        "Must be a valid ca65 identifier ([A-Za-z_][A-Za-z0-9_]*)"
+                                    duplicate ->
+                                        "Identifier '$trimmed' collides with an existing descriptor (case-insensitive)"
+                                    else -> null
                                 }
                         },
                         isError = nameError != null,
@@ -487,12 +496,7 @@ fun TextureEditModal(state: AtlasEditorState) {
                     Button(
                         onClick = {
                             if (nameError == null) {
-                                val updated =
-                                    originalTex.copy(
-                                        name = textureName,
-                                        indexedPixels = pixels,
-                                    )
-                                state.applyTextureEdit(editIdx, updated)
+                                state.applyTextureEdit(editIdx, textureName, pixels)
                             }
                         },
                         enabled = nameError == null,
