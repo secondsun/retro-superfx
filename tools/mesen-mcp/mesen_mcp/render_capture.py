@@ -58,9 +58,16 @@ def _compute_image_metrics(png_path: Path) -> Dict[str, Any]:
 
 
 def _build_capture_lua(
-    session: SfxTestSession, target_png: Path, settle_frames: int
+    session: SfxTestSession,
+    target_png: Path,
+    settle_frames: int,
+    inputs: Optional[Dict[str, int]] = None,
 ) -> str:
     test_stop_addr = session.resolve_gsu_exec_addr("test_stop")
+    test_setup_addr = session.resolve_gsu_exec_addr("test_setup")
+    setup_lines = session.emit_lua_overrides(
+        inputs or {}, indent="    ", allow_snes_wram=True
+    )
     escaped_png_path = (
         str(target_png).replace("\\", "\\\\").replace('"', '\\"')
     )
@@ -73,6 +80,24 @@ def _build_capture_lua(
         )
         test_stop_hook = f"\n{cb}\n"
 
+    input_hook = ""
+    if setup_lines:
+        apply_body = "\n".join(setup_lines)
+        if test_setup_addr is not None:
+            setup_cb = session.emit_gsu_exec_callback(
+                "function(address, value) applyInputOverrides() end",
+                test_setup_addr,
+            )
+            input_hook = f"\nlocal function applyInputOverrides()\n{apply_body}\nend\n{setup_cb}\n"
+        else:
+            input_hook = f"\nlocal function applyInputOverrides()\n{apply_body}\nend\n"
+
+    apply_on_frame_1 = (
+        "\n    if frameCount == 1 and applyInputOverrides ~= nil then applyInputOverrides() end"
+        if setup_lines and test_setup_addr is None
+        else ""
+    )
+
     has_test_stop_lua = "true" if test_stop_addr is not None else "false"
     return f"""-- Ephemeral Mesen Render Capture Script
 local target_png = "{escaped_png_path}"
@@ -82,7 +107,7 @@ local captured = false
 local gsu_stopped = false
 local has_test_stop = {has_test_stop_lua}
 local min_frames = {settle_frames}
-
+{input_hook}
 function doCapture()
     if captured then return end
     captured = true
@@ -99,7 +124,7 @@ function doCapture()
 end
 
 emu.addEventCallback(function()
-    frameCount = frameCount + 1
+    frameCount = frameCount + 1{apply_on_frame_1}
     if gsu_stopped then
         postStopFrames = postStopFrames + 1
         if postStopFrames >= 8 and frameCount >= min_frames then
@@ -118,6 +143,7 @@ def capture_sfx_render(
     scene_test_name: str,
     output_png_path: Optional[str] = None,
     settle_frames: int = 0,
+    inputs: Optional[Dict[str, int]] = None,
     timeout_seconds: int = 15,
     mesen_path: Optional[str] = None,
     runner: Optional[MesenRunner] = None,
@@ -141,6 +167,7 @@ def capture_sfx_render(
                 s,
                 target_png=ctx.output_png_path,  # type: ignore[arg-type]
                 settle_frames=settle_frames,
+                inputs=inputs,
             ),
             timeout_seconds=timeout_seconds,
             output_png_path=output_png_path,

@@ -192,7 +192,7 @@ def parse_transcript_jsonl(
 ) -> tuple[str, int, list[dict[str, Any]], str]:
     """Parse an Antigravity transcript.jsonl into (user_prompt, step_count, normalized_tool_calls, sfx_code)."""
     path = resolve_transcript_path(transcript_path)
-    user_prompt = ""
+    user_prompts: list[str] = []
     step_count = 0
     tool_calls: list[dict[str, Any]] = []
     code_parts: list[str] = []
@@ -209,12 +209,14 @@ def parse_transcript_jsonl(
             continue
         step_count += 1
 
-        if step.get("type") == "USER_INPUT" and not user_prompt:
+        if step.get("type") == "USER_INPUT":
             content = str(step.get("content", ""))
             m_req = re.search(
                 r"<USER_REQUEST>\s*(.*?)\s*</USER_REQUEST>", content, re.DOTALL
             )
-            user_prompt = m_req.group(1).strip() if m_req else content.strip()
+            extracted = m_req.group(1).strip() if m_req else content.strip()
+            if extracted:
+                user_prompts.append(extracted)
 
         raw_calls = step.get("tool_calls")
         if isinstance(raw_calls, list):
@@ -234,7 +236,7 @@ def parse_transcript_jsonl(
                         if snippet:
                             code_parts.append(snippet)
 
-    return user_prompt, step_count, tool_calls, "\n".join(code_parts)
+    return "\n\n".join(user_prompts), step_count, tool_calls, "\n".join(code_parts)
 
 
 
@@ -578,10 +580,15 @@ class TraceAndSnippetGrader:
                     message=f"{reason} (matched '{call_tool}' with args: {serialized})",
                 )
 
+        rule_prefix = (
+            f"{reason.split(']')[0]}] "
+            if reason.startswith("[") and "]" in reason
+            else ""
+        )
         return GraderCheckResult(
             grader_type="tool_forbidden",
             passed=True,
-            message=f"No forbidden '{forbidden_tool}' calls detected",
+            message=f"{rule_prefix}No forbidden '{forbidden_tool}' calls detected",
         )
 
     def _eval_code_invariant(
@@ -919,6 +926,9 @@ class TraceAndSnippetGrader:
         mcp_calls_by_tool: dict[str, int] = {}
         pngs_written: set[str] = set()
         pngs_read: set[str] = set()
+        file_read_counts: dict[str, int] = {}
+        edits_sfxproj = False
+        edits_sfxlevel = False
 
         for call in tool_calls:
             tname = str(call.get("tool") or "")
@@ -931,12 +941,21 @@ class TraceAndSnippetGrader:
 
             if tname == "read_file" and isinstance(targs, dict):
                 rpath = str(targs.get("Path", ""))
+                if rpath:
+                    file_read_counts[rpath] = file_read_counts.get(rpath, 0) + 1
                 if rpath.endswith("SKILL.md"):
                     skill_name = Path(rpath).parent.name
                     if skill_name not in skills_read:
                         skills_read.append(skill_name)
                 if rpath.lower().endswith(".png"):
                     pngs_read.add(Path(rpath).name)
+
+            if tname in ("write_file", "edit_file") and isinstance(targs, dict):
+                wpath = str(targs.get("Path", ""))
+                if wpath.lower().endswith(".sfxproj"):
+                    edits_sfxproj = True
+                elif wpath.lower().endswith(".sfxlevel"):
+                    edits_sfxlevel = True
 
             if tname == "write_file" and isinstance(targs, dict):
                 wpath = str(targs.get("Path", ""))
@@ -1029,6 +1048,45 @@ class TraceAndSnippetGrader:
                         message="[P0 Skill Routing] Bug-fix task did not read '.agents/skills/diagnosing-bugs/SKILL.md' before investigating",
                     )
                 )
+
+        # 4b. Asset & Level Studio Skill Activation Checks
+        if edits_sfxproj or "retro-superfx_studio:sfx_pack_textures" in mcp_calls_by_tool:
+            checks.append(
+                GraderCheckResult(
+                    grader_type="skill_activated",
+                    passed="texture-atlas" in skills_read,
+                    message=(
+                        "Activated 'texture-atlas' skill on texture atlas task"
+                        if "texture-atlas" in skills_read
+                        else "[P1 Skill Routing] Texture atlas task did not read '.agents/skills/texture-atlas/SKILL.md'"
+                    ),
+                )
+            )
+        if edits_sfxlevel or "retro-superfx_studio:sfx_manage_level" in mcp_calls_by_tool:
+            checks.append(
+                GraderCheckResult(
+                    grader_type="skill_activated",
+                    passed="iso-level" in skills_read,
+                    message=(
+                        "Activated 'iso-level' skill on isometric level task"
+                        if "iso-level" in skills_read
+                        else "[P1 Skill Routing] Isometric level task did not read '.agents/skills/iso-level/SKILL.md'"
+                    ),
+                )
+            )
+
+        # 4c. File Read Efficiency Check (flag files read > 5 times)
+        heavy_reads = {
+            Path(p).name: cnt for p, cnt in file_read_counts.items() if cnt > 5
+        }
+        if heavy_reads:
+            checks.append(
+                GraderCheckResult(
+                    grader_type="read_efficiency",
+                    passed=True,
+                    message=f"[Efficiency Warning] Repeated read_file (>5x) detected: {heavy_reads}",
+                )
+            )
 
         # 5. Multimodal Visual Inspection Check (if scratch PNGs were generated)
         if pngs_written:

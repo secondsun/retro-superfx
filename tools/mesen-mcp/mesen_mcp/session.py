@@ -420,16 +420,32 @@ class SfxTestSession:
         )
 
     def emit_lua_overrides(
-        self, inputs: Dict[str, int], *, indent: str = "    "
+        self,
+        inputs: Dict[str, int],
+        *,
+        indent: str = "    ",
+        allow_snes_wram: bool = False,
     ) -> List[str]:
-        """Emit Lua statements injecting 16/32-bit values into Bank $70/$71 GSURAM or GSU registers r0-r15."""
+        """Emit Lua statements injecting values into Bank $70/$71 GSURAM, SNES WRAM, or GSU registers r0-r15."""
         lines: List[str] = []
         for key, val in inputs.items():
-            target = self.artifacts.resolve_gsu_target(key, role="input symbol")
+            target = self.artifacts.resolve_gsu_target(
+                key, role="input symbol", allow_snes_wram=allow_snes_wram
+            )
             if target.is_register:
                 lines.append(
                     f'{indent}emu.setState({{ ["cart.coprocessor.{target.register}"] = {val & 0xFFFF} }})'
                 )
+            elif target.snes_wram_addr is not None:
+                addr = target.snes_wram_addr
+                if target.size == 1 and abs(val) <= 0xFF:
+                    lines.append(
+                        f"{indent}emu.write(0x{addr:04X}, {val & 0xFF}, emu.memType.snesWorkRam)"
+                    )
+                else:
+                    lines.append(
+                        f"{indent}emu.writeWord(0x{addr:04X}, {val & 0xFFFF}, emu.memType.snesWorkRam)"
+                    )
             else:
                 assert target.work_ram_addr is not None
                 addr = target.work_ram_addr
@@ -443,6 +459,10 @@ class SfxTestSession:
                     )
                     lines.append(
                         f"{indent}emu.writeWord(0x{addr + 2:04X}, {low_word}, emu.memType.gsuWorkRam)"
+                    )
+                elif target.size == 1 and abs(val) <= 0xFF:
+                    lines.append(
+                        f"{indent}emu.write(0x{addr:04X}, {val & 0xFF}, emu.memType.gsuWorkRam)"
                     )
                 else:
                     lines.append(

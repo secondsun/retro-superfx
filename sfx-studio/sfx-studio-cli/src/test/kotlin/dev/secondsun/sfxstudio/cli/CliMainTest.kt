@@ -106,6 +106,20 @@ class CliMainTest {
     }
 
     @Test
+    fun testAtlasPackAndValidateWithProjectFlag(
+        @TempDir tempDir: File,
+    ) {
+        val projFile = createSampleProject(tempDir, "TEST_FLAG")
+
+        val valCode = CliMain.execute(arrayOf("atlas", "validate", "--project", projFile.absolutePath))
+        assertEquals(0, valCode)
+
+        val packCode = CliMain.execute(arrayOf("atlas", "pack", "--auto-pack", "--project=${projFile.absolutePath}"))
+        assertEquals(0, packCode)
+        assertTrue(File(tempDir, "TEST_FLAG.pal").exists())
+    }
+
+    @Test
     fun testPackWithOutputDirExportsCompanionsWithoutCopyingSfxproj(
         @TempDir tempDir: File,
     ) {

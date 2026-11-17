@@ -56,7 +56,7 @@ Call the **`call_mcp_tool`** tool with:
 ```
 
 ### C. Framebuffer Render Capture (`capture_sfx_render` via `call_mcp_tool`)
-Runs a SuperFX graphical demo or scene (`IsoEngine`, `SpriteScale`) headlessly and captures a PNG of the framebuffer for visual inspection or perceptual hashing. After `capture_sfx_render` completes, call **`read_file`** directly on the returned `png_path` to visually inspect the rendered image.
+Runs a SuperFX graphical demo or scene (`IsoEngine`, `RamMapDemo`, `SpriteScale`) headlessly and captures a PNG of the framebuffer for visual inspection or perceptual hashing. Supports optional `inputs` overrides (GSURAM `$70/$71`, SNES WRAM `LORAM`/`$7E`, or `r0`–`r15`) so you can test different levels or camera states at runtime without editing assembly source and rebuilding. After `capture_sfx_render` completes, call **`read_file`** directly on the returned `png_path` to visually inspect the rendered image.
 
 Call the **`call_mcp_tool`** tool with:
 ```json
@@ -65,6 +65,10 @@ Call the **`call_mcp_tool`** tool with:
   "ToolName": "capture_sfx_render",
   "Arguments": {
     "scene_test_name": "IsoEngine",
+    "inputs": {
+      "current_level_idx": 1,
+      "pending_level_swap": 1
+    },
     "timeout_seconds": 15
   }
 }

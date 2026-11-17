@@ -82,6 +82,7 @@ def create_server(runner: Optional[MesenRunner] = None) -> FastMCP:
         test_name: Optional[str] = None,
         output_png_path: Optional[str] = None,
         settle_frames: int = 0,
+        inputs: Optional[Dict[str, int]] = None,
         timeout_seconds: int = 15,
     ) -> Dict[str, Any]:
         """Execute a SuperFX scene or test ROM headlessly and capture its framebuffer PNG for visual inspection.
@@ -92,6 +93,8 @@ def create_server(runner: Optional[MesenRunner] = None) -> FastMCP:
             output_png_path: Optional target file path for the captured PNG.
             settle_frames: Minimum frame count to wait before capturing (default: 0).
                 When 0, defaults to 60 for continuous scenes without test_stop, or 8 post-stop frames for tests.
+            inputs: Optional dictionary of symbol/register overrides (GSURAM $70/$71, SNES WRAM, or r0-r15)
+                injected before capturing the frame (e.g. {"current_level_idx": 1, "pending_level_swap": 1}).
             timeout_seconds: Maximum execution time in seconds (default: 15).
 
         Returns:
@@ -109,6 +112,7 @@ def create_server(runner: Optional[MesenRunner] = None) -> FastMCP:
             scene_test_name=resolved_scene,
             output_png_path=output_png_path,
             settle_frames=settle_frames,
+            inputs=inputs,
             timeout_seconds=timeout_seconds,
             runner=runner,
         )

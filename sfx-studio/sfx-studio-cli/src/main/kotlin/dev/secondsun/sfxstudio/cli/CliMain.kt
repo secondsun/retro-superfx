@@ -141,27 +141,27 @@ object CliMain {
             SuperFX Studio CLI
 
             Usage:
-              atlas pack <project.sfxproj|.sfxatlas> [--output-dir <dir>] [--auto-pack]
+              atlas pack [<project.sfxproj|.sfxatlas>] [--project <project>] [--output-dir <dir>] [--auto-pack]
                 Validates manifest, resolves virtual slices and aliases, optionally auto-packs,
                 and exports companion binaries (.bin, .pal, .tab, .i, _atlas.png).
 
-              atlas import <project.sfxproj|.sfxatlas> <images...> [--auto-quantize] [--snap-palette] [--auto-grow]
+              atlas import [<project.sfxproj|.sfxatlas>] [--project <project>] <images...> [--auto-quantize] [--snap-palette] [--auto-grow]
                 Imports one or more image files (PNG/BMP) into the project, mapping or quantizing
                 colors to the SNES palette, places them (optionally growing up to 256x256), and saves.
 
-              atlas validate <project.sfxproj|.sfxatlas>
+              atlas validate [<project.sfxproj|.sfxatlas>] [--project <project>]
                 Validates dimensions, bounds, coordinate collisions, slices, aliases, and <=256 descriptors.
 
-              level create <level.sfxlevel> --atlas <atlas.sfxproj> [--cols <4..16>] [--rows <4..16>] [--top-tex <name>] [--skirt-tex <name>] [--height <0..31>] [--yaw <0..119>]
+              level create [<level.sfxlevel>] [--project <level>] --atlas <atlas.sfxproj> [--cols <4..16>] [--rows <4..16>] [--top-tex <name>] [--skirt-tex <name>] [--height <0..31>] [--yaw <0..119>]
                 Creates a new isometric Level Document linked to an atlas and exports .map, .i, and _preview.png.
 
-              level set-cells <level.sfxlevel> [--cells-json <json|@file>] [--cell <c,r> | --rect <c0,r0,c1,r1>] [--height <0..31>] [--archetype <PRIM_*>] [--rot <0|90|180|270>] [--top-tex <name|NONE>] [--skirt-tex <name|NONE>] [--panel-tex <name|NONE>] [--panels <N,E,S,W|NONE>] [--tall-2h [true|false]] [--resize <CxR>] [--no-pack] [--yaw <0..119>]
+              level set-cells [<level.sfxlevel>] [--project <level>] [--cells-json <json|@file>] [--cell <c,r> | --rect <c0,r0,c1,r1>] [--height <0..31>] [--archetype <PRIM_*>] [--rot <0|90|180|270>] [--top-tex <name|NONE>] [--skirt-tex <name|NONE>] [--panel-tex <name|NONE>] [--panels <N,E,S,W|NONE>] [--tall-2h [true|false]] [--resize <CxR>] [--no-pack] [--yaw <0..119>]
                 Applies batch JSON and/or flag-driven cell/region edits (and optional grid resize) to a Level Document.
 
-              level pack <level.sfxlevel> [--output-dir <dir>] [--yaw <0..119>]
+              level pack [<level.sfxlevel>] [--project <level>] [--output-dir <dir>] [--yaw <0..119>]
                 Validates a Level Document against its shared atlas and exports .map, .i, and _preview.png.
 
-              level validate <level.sfxlevel>
+              level validate [<level.sfxlevel>] [--project <level>]
                 Validates grid bounds, symbolic texture names, Bank $71 atlas budget, and geometry rules.
 
               level import-ca65 <input.i> --atlas <atlas.sfxproj> --output <level.sfxlevel> [--yaw <0..119>]
@@ -178,25 +178,75 @@ object CliMain {
         )
     }
 
+    private fun extractTargetAndRest(
+        args: List<String>,
+        targetFlags: Set<String>,
+        valueFlags: Set<String> = emptySet(),
+    ): Pair<String?, List<String>> {
+        var flaggedTarget: String? = null
+        val afterFlagPass = mutableListOf<String>()
+        var i = 0
+        while (i < args.size) {
+            val arg = args[i]
+            val eqTarget = targetFlags.firstOrNull { arg.startsWith("$it=") }
+            when {
+                arg in targetFlags -> {
+                    if (i + 1 >= args.size) throw IllegalArgumentException("Missing value after $arg")
+                    flaggedTarget = args[++i]
+                }
+                eqTarget != null -> flaggedTarget = arg.substringAfter("$eqTarget=")
+                arg in valueFlags -> {
+                    afterFlagPass.add(arg)
+                    if (i + 1 < args.size) afterFlagPass.add(args[++i])
+                }
+                else -> afterFlagPass.add(arg)
+            }
+            i++
+        }
+        if (flaggedTarget != null) {
+            return flaggedTarget to afterFlagPass
+        }
+
+        var positionalTarget: String? = null
+        val rest = mutableListOf<String>()
+        var j = 0
+        while (j < afterFlagPass.size) {
+            val arg = afterFlagPass[j]
+            when {
+                arg in valueFlags -> {
+                    rest.add(arg)
+                    if (j + 1 < afterFlagPass.size) rest.add(afterFlagPass[++j])
+                }
+                !arg.startsWith("-") && positionalTarget == null -> positionalTarget = arg
+                else -> rest.add(arg)
+            }
+            j++
+        }
+        return positionalTarget to rest
+    }
+
     private fun runPack(args: List<String>): Int {
-        if (args.isEmpty()) {
-            System.err.println("Usage: atlas pack <project.sfxproj|.sfxatlas> [--output-dir <dir>] [--auto-pack]")
+        val (projectPath, rest) =
+            extractTargetAndRest(args, setOf("--project"), setOf("--output-dir"))
+        if (projectPath == null) {
+            System.err.println(
+                "Usage: atlas pack [<project.sfxproj|.sfxatlas>] [--project <project>] [--output-dir <dir>] [--auto-pack]",
+            )
             return 1
         }
 
-        val projectPath = args[0]
         var outputDir: String? = null
         var autoPack = false
 
-        var i = 1
-        while (i < args.size) {
-            when (args[i]) {
+        var i = 0
+        while (i < rest.size) {
+            when (rest[i]) {
                 "--output-dir" -> {
                     i++
-                    if (i < args.size) outputDir = args[i]
+                    if (i < rest.size) outputDir = rest[i]
                 }
                 "--auto-pack" -> autoPack = true
-                else -> System.err.println("Warning: ignoring unknown argument '${args[i]}'")
+                else -> System.err.println("Warning: ignoring unknown argument '${rest[i]}'")
             }
             i++
         }
@@ -216,21 +266,21 @@ object CliMain {
     }
 
     private fun runImport(args: List<String>): Int {
-        if (args.size < 2) {
+        val (projectPath, rest) = extractTargetAndRest(args, setOf("--project"))
+        if (projectPath == null || rest.none { !it.startsWith("-") }) {
             System.err.println(
-                "Usage: atlas import <project.sfxproj|.sfxatlas> <images...> [--auto-quantize] [--snap-palette] [--auto-grow]",
+                "Usage: atlas import [<project.sfxproj|.sfxatlas>] [--project <project>] <images...> [--auto-quantize] [--snap-palette] [--auto-grow]",
             )
             return 1
         }
 
-        val projectPath = args[0]
         var autoQuantize = false
         var snapPalette = false
         var autoGrow = false
         val imagePaths = mutableListOf<String>()
 
-        for (j in 1 until args.size) {
-            when (val arg = args[j]) {
+        for (arg in rest) {
+            when (arg) {
                 "--auto-quantize" -> autoQuantize = true
                 "--snap-palette" -> snapPalette = true
                 "--auto-grow" -> autoGrow = true
@@ -267,12 +317,16 @@ object CliMain {
     }
 
     private fun runValidate(args: List<String>): Int {
-        if (args.isEmpty()) {
-            System.err.println("Usage: atlas validate <project.sfxproj|.sfxatlas>")
+        val (projectPath, rest) = extractTargetAndRest(args, setOf("--project"))
+        if (projectPath == null) {
+            System.err.println("Usage: atlas validate [<project.sfxproj|.sfxatlas>] [--project <project>]")
             return 1
         }
+        for (arg in rest) {
+            System.err.println("Warning: ignoring unknown argument '$arg'")
+        }
 
-        val res = operations.validateAtlas(args[0])
+        val res = operations.validateAtlas(projectPath)
         if (!res.valid) {
             for (err in res.validation.errors) {
                 System.err.println("  Error [${err.code}]: ${err.message}")
@@ -284,14 +338,19 @@ object CliMain {
     }
 
     private fun runLevelCreate(args: List<String>): Int {
-        if (args.isEmpty()) {
+        val (levelPath, rest) =
+            extractTargetAndRest(
+                args,
+                setOf("--project", "--level"),
+                setOf("--atlas", "--cols", "--rows", "--height", "--base-height", "--top-tex", "--skirt-tex", "--yaw"),
+            )
+        if (levelPath == null) {
             System.err.println(
-                "Usage: level create <level.sfxlevel> --atlas <atlas.sfxproj> [--cols <4..16>] [--rows <4..16>] [--top-tex <name>] [--skirt-tex <name>]",
+                "Usage: level create [<level.sfxlevel>] [--project <level>] --atlas <atlas.sfxproj> [--cols <4..16>] [--rows <4..16>] [--top-tex <name>] [--skirt-tex <name>]",
             )
             return 1
         }
 
-        val levelPath = args[0]
         var atlasPath: String? = null
         var cols = 8
         var rows = 8
@@ -300,17 +359,17 @@ object CliMain {
         var skirtTex: String? = null
         var yaw = 15
 
-        var i = 1
-        while (i < args.size) {
-            when (args[i]) {
-                "--atlas" -> if (++i < args.size) atlasPath = args[i]
-                "--cols" -> if (++i < args.size) cols = args[i].toInt()
-                "--rows" -> if (++i < args.size) rows = args[i].toInt()
-                "--height", "--base-height" -> if (++i < args.size) baseHeight = args[i].toInt()
-                "--top-tex" -> if (++i < args.size) topTex = args[i]
-                "--skirt-tex" -> if (++i < args.size) skirtTex = args[i]
-                "--yaw" -> if (++i < args.size) yaw = args[i].toInt()
-                else -> System.err.println("Warning: ignoring unknown argument '${args[i]}'")
+        var i = 0
+        while (i < rest.size) {
+            when (rest[i]) {
+                "--atlas" -> if (++i < rest.size) atlasPath = rest[i]
+                "--cols" -> if (++i < rest.size) cols = rest[i].toInt()
+                "--rows" -> if (++i < rest.size) rows = rest[i].toInt()
+                "--height", "--base-height" -> if (++i < rest.size) baseHeight = rest[i].toInt()
+                "--top-tex" -> if (++i < rest.size) topTex = rest[i]
+                "--skirt-tex" -> if (++i < rest.size) skirtTex = rest[i]
+                "--yaw" -> if (++i < rest.size) yaw = rest[i].toInt()
+                else -> System.err.println("Warning: ignoring unknown argument '${rest[i]}'")
             }
             i++
         }
@@ -343,14 +402,34 @@ object CliMain {
     }
 
     private fun runLevelSetCells(args: List<String>): Int {
-        if (args.isEmpty()) {
+        val (levelPath, rest) =
+            extractTargetAndRest(
+                args,
+                setOf("--project", "--level"),
+                setOf(
+                    "--cells-json",
+                    "--cell",
+                    "--rect",
+                    "--height",
+                    "--base-height",
+                    "--archetype",
+                    "--rot",
+                    "--rotation",
+                    "--top-tex",
+                    "--skirt-tex",
+                    "--panel-tex",
+                    "--panels",
+                    "--resize",
+                    "--yaw",
+                ),
+            )
+        if (levelPath == null) {
             System.err.println(
-                "Usage: level set-cells <level.sfxlevel> [--cells-json <json|@file>] [--cell <c,r> | --rect <c0,r0,c1,r1>] ...",
+                "Usage: level set-cells [<level.sfxlevel>] [--project <level>] [--cells-json <json|@file>] [--cell <c,r> | --rect <c0,r0,c1,r1>] ...",
             )
             return 1
         }
 
-        val levelPath = args[0]
         val patches = mutableListOf<CellPatch>()
         var resizeCols: Int? = null
         var resizeRows: Int? = null
@@ -376,83 +455,83 @@ object CliMain {
         var flagPanels: List<String>? = null
         var flagTall2h: Boolean? = null
 
-        var i = 1
-        while (i < args.size) {
-            when (val flag = args[i]) {
+        var i = 0
+        while (i < rest.size) {
+            when (val flag = rest[i]) {
                 "--cells-json" -> {
-                    require(++i < args.size) { "Missing value after --cells-json" }
-                    patches.addAll(parseCellsJsonArg(args[i]))
+                    require(++i < rest.size) { "Missing value after --cells-json" }
+                    patches.addAll(parseCellsJsonArg(rest[i]))
                 }
                 "--cell" -> {
-                    require(++i < args.size) { "Missing <c,r> value after --cell" }
-                    val parts = args[i].split(',').map { it.trim().toInt() }
-                    require(parts.size == 2) { "Expected --cell <col,row>, got '${args[i]}'" }
+                    require(++i < rest.size) { "Missing <c,r> value after --cell" }
+                    val parts = rest[i].split(',').map { it.trim().toInt() }
+                    require(parts.size == 2) { "Expected --cell <col,row>, got '${rest[i]}'" }
                     singleCol = parts[0]
                     singleRow = parts[1]
                 }
                 "--rect" -> {
-                    require(++i < args.size) { "Missing <c0,r0,c1,r1> value after --rect" }
-                    val parts = args[i].split(',').map { it.trim().toInt() }
-                    require(parts.size == 4) { "Expected --rect <c0,r0,c1,r1>, got '${args[i]}'" }
+                    require(++i < rest.size) { "Missing <c0,r0,c1,r1> value after --rect" }
+                    val parts = rest[i].split(',').map { it.trim().toInt() }
+                    require(parts.size == 4) { "Expected --rect <c0,r0,c1,r1>, got '${rest[i]}'" }
                     rectC0 = parts[0]
                     rectR0 = parts[1]
                     rectC1 = parts[2]
                     rectR1 = parts[3]
                 }
                 "--height", "--base-height" -> {
-                    require(++i < args.size) { "Missing value after $flag" }
-                    flagHeight = args[i].toInt()
+                    require(++i < rest.size) { "Missing value after $flag" }
+                    flagHeight = rest[i].toInt()
                 }
                 "--archetype" -> {
-                    require(++i < args.size) { "Missing value after --archetype" }
-                    flagArchetype = args[i]
+                    require(++i < rest.size) { "Missing value after --archetype" }
+                    flagArchetype = rest[i]
                 }
                 "--rot", "--rotation" -> {
-                    require(++i < args.size) { "Missing value after $flag" }
-                    flagRot = CellRotation.fromSymbol(args[i]).degrees
+                    require(++i < rest.size) { "Missing value after $flag" }
+                    flagRot = CellRotation.fromSymbol(rest[i]).degrees
                 }
                 "--top-tex" -> {
-                    require(++i < args.size) { "Missing value after --top-tex" }
-                    flagTopTex = args[i]
+                    require(++i < rest.size) { "Missing value after --top-tex" }
+                    flagTopTex = rest[i]
                     hasTopTex = true
                 }
                 "--skirt-tex" -> {
-                    require(++i < args.size) { "Missing value after --skirt-tex" }
-                    flagSkirtTex = args[i]
+                    require(++i < rest.size) { "Missing value after --skirt-tex" }
+                    flagSkirtTex = rest[i]
                     hasSkirtTex = true
                 }
                 "--panel-tex" -> {
-                    require(++i < args.size) { "Missing value after --panel-tex" }
-                    flagPanelTex = args[i]
+                    require(++i < rest.size) { "Missing value after --panel-tex" }
+                    flagPanelTex = rest[i]
                     hasPanelTex = true
                 }
                 "--panels" -> {
-                    require(++i < args.size) { "Missing value after --panels" }
+                    require(++i < rest.size) { "Missing value after --panels" }
                     flagPanels =
-                        args[i]
+                        rest[i]
                             .split(',', '|')
                             .map { it.trim() }
                             .filter { it.isNotEmpty() }
                 }
                 "--tall-2h" -> {
-                    if (i + 1 < args.size && args[i + 1].lowercase() in setOf("true", "false")) {
-                        flagTall2h = args[++i].toBooleanStrict()
+                    if (i + 1 < rest.size && rest[i + 1].lowercase() in setOf("true", "false")) {
+                        flagTall2h = rest[++i].toBooleanStrict()
                     } else {
                         flagTall2h = true
                     }
                 }
                 "--no-tall-2h" -> flagTall2h = false
                 "--resize" -> {
-                    require(++i < args.size) { "Missing <CxR> value after --resize" }
-                    val parts = args[i].lowercase().split('x', ',').map { it.trim().toInt() }
-                    require(parts.size == 2) { "Expected --resize <CxR>, got '${args[i]}'" }
+                    require(++i < rest.size) { "Missing <CxR> value after --resize" }
+                    val parts = rest[i].lowercase().split('x', ',').map { it.trim().toInt() }
+                    require(parts.size == 2) { "Expected --resize <CxR>, got '${rest[i]}'" }
                     resizeCols = parts[0]
                     resizeRows = parts[1]
                 }
                 "--no-pack" -> autoPack = false
                 "--yaw" -> {
-                    require(++i < args.size) { "Missing value after --yaw" }
-                    yaw = args[i].toInt()
+                    require(++i < rest.size) { "Missing value after --yaw" }
+                    yaw = rest[i].toInt()
                 }
                 else -> throw IllegalArgumentException("Unknown argument '$flag' for level set-cells")
             }
@@ -546,21 +625,24 @@ object CliMain {
     }
 
     private fun runLevelPack(args: List<String>): Int {
-        if (args.isEmpty()) {
-            System.err.println("Usage: level pack <level.sfxlevel> [--output-dir <dir>] [--yaw <0..119>]")
+        val (levelPath, rest) =
+            extractTargetAndRest(args, setOf("--project", "--level"), setOf("--output-dir", "--yaw"))
+        if (levelPath == null) {
+            System.err.println(
+                "Usage: level pack [<level.sfxlevel>] [--project <level>] [--output-dir <dir>] [--yaw <0..119>]",
+            )
             return 1
         }
 
-        val levelPath = args[0]
         var outputDir: String? = null
         var yaw = 15
 
-        var i = 1
-        while (i < args.size) {
-            when (args[i]) {
-                "--output-dir" -> if (++i < args.size) outputDir = args[i]
-                "--yaw" -> if (++i < args.size) yaw = args[i].toInt()
-                else -> System.err.println("Warning: ignoring unknown argument '${args[i]}'")
+        var i = 0
+        while (i < rest.size) {
+            when (rest[i]) {
+                "--output-dir" -> if (++i < rest.size) outputDir = rest[i]
+                "--yaw" -> if (++i < rest.size) yaw = rest[i].toInt()
+                else -> System.err.println("Warning: ignoring unknown argument '${rest[i]}'")
             }
             i++
         }
@@ -577,12 +659,16 @@ object CliMain {
     }
 
     private fun runLevelValidate(args: List<String>): Int {
-        if (args.isEmpty()) {
-            System.err.println("Usage: level validate <level.sfxlevel>")
+        val (levelPath, rest) = extractTargetAndRest(args, setOf("--project", "--level"))
+        if (levelPath == null) {
+            System.err.println("Usage: level validate [<level.sfxlevel>] [--project <level>]")
             return 1
         }
+        for (arg in rest) {
+            System.err.println("Warning: ignoring unknown argument '$arg'")
+        }
 
-        val res = operations.validateLevel(args[0])
+        val res = operations.validateLevel(levelPath)
         for (warn in res.validation.warnings) {
             println("  Warning [${warn.code}]: ${warn.message}")
         }

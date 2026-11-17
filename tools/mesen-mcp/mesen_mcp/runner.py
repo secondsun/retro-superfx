@@ -134,6 +134,7 @@ def run_sfx_suite(
         "failed": fail_count,
         "skipped": skip_count,
         "failed_tests": failed_tests,
+        "summary": summary_banner,
         "results": results,
         "output": full_output,
     }

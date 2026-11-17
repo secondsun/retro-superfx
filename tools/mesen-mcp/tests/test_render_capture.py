@@ -129,3 +129,37 @@ def test_capture_sfx_render_missing_file_cleanup_bytes_timeout_and_nonexistent(t
     res_missing = capture_sfx_render(scene_test_name="nonexistent_scene_xyz")
     assert res_missing["status"] == "FAIL"
     assert res_missing["png_path"] is None
+
+
+def test_capture_sfx_render_inputs_override_gsuram_and_snes_wram(tmp_path):
+    scene_dir = tmp_path / "inputs_scene"
+    scene_dir.mkdir()
+    (scene_dir / "SuperFX.sfc").write_bytes(b"\x00" * 64)
+    (scene_dir / "SuperFX.cpu.sym").write_text(
+        "al 000200 .current_level_idx\n"
+        "al 000201 .pending_level_swap\n"
+        "al 700010 .GSU_CAMERA_X\n",
+        encoding="utf-8",
+    )
+
+    def populate_png(_cmd, lua_code):
+        assert lua_code is not None
+        _write_synthetic_snes_frame(_extract_target_png(lua_code), draw_box=True)
+        return None
+
+    fake = FakeMesenRunner(stdout="__CAPTURE_SAVED__\n", on_run=populate_png)
+    out_png = tmp_path / "inputs_capture.png"
+    res = capture_sfx_render(
+        scene_test_name=str(scene_dir),
+        output_png_path=str(out_png),
+        settle_frames=10,
+        inputs={"current_level_idx": 1, "pending_level_swap": 1, "GSU_CAMERA_X": 256},
+        runner=fake,
+    )
+    assert res["status"] == "SUCCESS"
+    lua = fake.last_lua_code
+    assert lua is not None
+    assert "emu.write(0x0200, 1, emu.memType.snesWorkRam)" in lua
+    assert "emu.writeWord(0x0010, 256, emu.memType.gsuWorkRam)" in lua
+    assert "applyInputOverrides()" in lua
+

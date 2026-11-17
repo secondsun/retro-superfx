@@ -166,7 +166,7 @@ class ResolvedSymbol:
 
 @dataclass(frozen=True)
 class GsuTarget:
-    """Validated GSU register or Bank $70/$71 GSURAM target for Lua harness emission."""
+    """Validated GSU register, Bank $70/$71 GSURAM, or SNES WRAM target for Lua harness emission."""
 
     key: str
     base_name: str
@@ -175,6 +175,7 @@ class GsuTarget:
     symbol: Optional[ResolvedSymbol] = None
     full_address: Optional[int] = None
     work_ram_addr: Optional[int] = None
+    snes_wram_addr: Optional[int] = None
     size: int = 2
 
     @property
@@ -809,8 +810,10 @@ class BuildArtifactIndex:
                         break
         return close
 
-    def resolve_gsu_target(self, key: str, *, role: str = "symbol") -> GsuTarget:
-        """Resolve 'r0'-'r15' or 'SYM +/- offset' into a validated 24-bit Bank $70/$71 GsuTarget."""
+    def resolve_gsu_target(
+        self, key: str, *, role: str = "symbol", allow_snes_wram: bool = False
+    ) -> GsuTarget:
+        """Resolve 'r0'-'r15' or 'SYM +/- offset' into a validated 24-bit Bank $70/$71 (or SNES-WRAM) GsuTarget."""
         key_clean = key.strip()
         if not key_clean:
             raise ValueError(f"Empty {role} key")
@@ -853,6 +856,27 @@ class BuildArtifactIndex:
         if sym is None:
             raise ValueError(f"Unresolved {role}: '{base_name}' in '{key}'")
 
+        est_size = sym.size if (sym.size is not None and sym.size > 0) else 2
+        full_addr = sym.val + offset_delta
+
+        if allow_snes_wram and sym.region == "SNES-WRAM":
+            target_bank = (full_addr >> 16) & 0xFF
+            target_offset = full_addr & 0xFFFF
+            snes_wram_addr = (
+                ((0x01 if target_bank == 0x7F else 0x00) << 16) | target_offset
+            )
+            return GsuTarget(
+                key=key,
+                base_name=base_name,
+                offset_delta=offset_delta,
+                register=None,
+                symbol=sym,
+                full_address=full_addr,
+                work_ram_addr=None,
+                snes_wram_addr=snes_wram_addr,
+                size=est_size,
+            )
+
         if sym.bank not in (0x70, 0x71):
             raise ValueError(
                 f"Symbol '{sym.name}' at 0x{sym.val:06X} (bank ${sym.bank:02X}, region {sym.region}) "
@@ -860,7 +884,6 @@ class BuildArtifactIndex:
                 f"Game Pak RAM Bank $70 ($70:0000-$70:FFFF) and Staging Bank $71 ($71:0000-$71:FFFF)."
             )
 
-        full_addr = sym.val + offset_delta
         if not (0x700000 <= full_addr <= 0x71FFFF):
             raise ValueError(
                 f"GSURAM {role} '{key}' resolves to 0x{full_addr:06X}, outside $70:0000-$71:FFFF."
@@ -869,7 +892,6 @@ class BuildArtifactIndex:
         target_bank = (full_addr >> 16) & 0xFF
         target_offset = full_addr & 0xFFFF
         work_ram_addr = ((target_bank - 0x70) << 16) | target_offset
-        est_size = sym.size if (sym.size is not None and sym.size > 0) else 2
 
         return GsuTarget(
             key=key,
