@@ -7,6 +7,8 @@ import dev.secondsun.sfxstudio.core.atlas.AtlasValidationResult
 import dev.secondsun.sfxstudio.core.atlas.ConflictResolution
 import dev.secondsun.sfxstudio.core.atlas.ExportedAssets
 import dev.secondsun.sfxstudio.core.atlas.PlacementPolicy
+import dev.secondsun.sfxstudio.core.fft.FftLevelImporter
+import dev.secondsun.sfxstudio.core.fft.FftMeshImporter
 import dev.secondsun.sfxstudio.core.level.Ca65MapImporter
 import dev.secondsun.sfxstudio.core.level.CellPatch
 import dev.secondsun.sfxstudio.core.level.DiagnosticSeverity
@@ -19,8 +21,21 @@ import dev.secondsun.sfxstudio.core.level.LevelValidator
 import dev.secondsun.sfxstudio.core.level.MapCell
 import dev.secondsun.sfxstudio.core.level.MapGrid
 import dev.secondsun.sfxstudio.core.level.applyPatches
+import dev.secondsun.sfxstudio.core.mesh.ExportedMeshAssets
+import dev.secondsun.sfxstudio.core.mesh.HybridMeshDocument
+import dev.secondsun.sfxstudio.core.mesh.MeshValidationResult
 import java.nio.file.Files
 import java.nio.file.Path
+
+data class MeshOperationResult(
+    val valid: Boolean,
+    val document: HybridMeshDocument? = null,
+    val meshFile: Path,
+    val validation: MeshValidationResult,
+    val exportedAssets: ExportedMeshAssets? = null,
+    val exportedFiles: List<String> = emptyList(),
+    val message: String,
+)
 
 data class AtlasOperationResult(
     val valid: Boolean,
@@ -628,6 +643,182 @@ class StudioOperations(
             exportedAssets = exported,
             exportedFiles = formatLevelAssets(exported),
             message = "Imported '${ca65File.name}' into '${doc.name}' (${doc.grid.cols}x${doc.grid.rows}).",
+        )
+    }
+
+    /**
+     * Imports a Final Fantasy Tactics stage from [isoPath] (`mapId` in `0..125`), generating a
+     * Bank-`$71`-sized [AtlasDocument] at [atlasPath] and [LevelDocument] at [levelPath] along
+     * with all companion binaries and preview images.
+     */
+    fun importFftLevel(
+        isoPath: String,
+        mapId: Int,
+        atlasPath: String,
+        levelPath: String,
+        yaw: Int = 15,
+    ): LevelOperationResult {
+        val isoFilePath = pathPolicy.resolve(isoPath)
+        val atlasFilePath = pathPolicy.resolve(atlasPath)
+        val levelFilePath = pathPolicy.resolve(levelPath)
+
+        val isoFile = isoFilePath.toFile()
+        if (!isoFile.exists()) {
+            return levelErrorResult(
+                levelFilePath = levelFilePath,
+                code = "ISO_FILE_NOT_FOUND",
+                message = "FFT ISO file '${isoFile.path}' does not exist.",
+            )
+        }
+
+        val atlasFile = atlasFilePath.toFile()
+        val levelFile = levelFilePath.toFile()
+        val relAtlasPath = computeRelativeAtlasPath(levelFilePath, atlasFilePath, atlasPath)
+
+        val imported =
+            FftLevelImporter.importFromIso(
+                isoFile = isoFile,
+                mapId = mapId,
+                atlasName = atlasFile.nameWithoutExtension,
+                levelName = levelFile.nameWithoutExtension,
+                atlasRelativePath = relAtlasPath,
+            )
+
+        val atlasValidation = imported.atlasDocument.validate(warnBank71Overflow = true)
+        if (!atlasValidation.valid) {
+            return levelErrorResult(
+                levelFilePath = levelFilePath,
+                code = "IMPORTED_ATLAS_INVALID",
+                message = atlasValidation.errors.joinToString("; ") { it.message },
+                document = imported.levelDocument,
+            )
+        }
+
+        val levelValidation = LevelValidator.validate(imported.levelDocument, imported.atlasDocument)
+        if (!levelValidation.valid) {
+            return LevelOperationResult(
+                valid = false,
+                document = imported.levelDocument,
+                levelFile = levelFilePath,
+                validation = levelValidation,
+                message = "Imported FFT map $mapId failed validation (${levelValidation.errors.size} error(s)).",
+            )
+        }
+
+        val atlasAssets = imported.atlasDocument.saveAndExport(atlasFile)
+        val levelAssets =
+            LevelDocumentService.saveAndExport(
+                levelFile = levelFile,
+                document = imported.levelDocument,
+                atlasDoc = imported.atlasDocument,
+                outputDir = null,
+                previewYaw = yaw,
+            )
+
+        val exportedFiles =
+            buildList {
+                addAll(formatLevelAssets(levelAssets))
+                add(pathPolicy.formatForOutput(atlasFilePath))
+                add(pathPolicy.formatForOutput(atlasAssets.graphicsBinFile.toPath()))
+                add(pathPolicy.formatForOutput(atlasAssets.paletteBinFile.toPath()))
+                atlasAssets.tableBinFile?.let { add(pathPolicy.formatForOutput(it.toPath())) }
+                add(pathPolicy.formatForOutput(atlasAssets.indexFile.toPath()))
+                add(pathPolicy.formatForOutput(atlasAssets.pngFile.toPath()))
+            }
+
+        return LevelOperationResult(
+            valid = true,
+            document = imported.levelDocument,
+            levelFile = levelFilePath,
+            validation = levelValidation,
+            exportedAssets = levelAssets,
+            exportedFiles = exportedFiles,
+            message =
+                "Imported FFT MAP${mapId.toString().padStart(3, '0')} into '${imported.levelDocument.name}' " +
+                    "(${imported.levelDocument.grid.cols}x${imported.levelDocument.grid.rows}, " +
+                    "atlas ${imported.atlasDocument.atlas.width}x${imported.atlasDocument.atlas.height}).",
+        )
+    }
+
+    /**
+     * Imports a Final Fantasy Tactics stage from [isoPath] (`mapId` in `0..125`) into a hybrid
+     * flat-shaded + hero-textured [HybridMeshDocument] (`<outputMeshPath>`) and companion
+     * Bank-`$71` files (`<outputBase>.msh`, `<outputBase>_preview.png`, `<atlasPrefix>.bin`,
+     * `<atlasPrefix>.tab`, `<atlasPrefix>.pal`, `<atlasPrefix>_sheet.png`).
+     */
+    fun importFftMesh(
+        isoPath: String,
+        mapId: Int,
+        atlasPrefix: String,
+        outputMeshPath: String,
+        yaw: Int? = null,
+        scale: Double = 1.0,
+    ): MeshOperationResult {
+        val isoFilePath = pathPolicy.resolve(isoPath)
+        val atlasPrefixPath = pathPolicy.resolve(atlasPrefix)
+        val meshFilePath = pathPolicy.resolve(outputMeshPath)
+
+        val isoFile = isoFilePath.toFile()
+        if (!isoFile.exists()) {
+            val msg = "FFT ISO file '${isoFile.path}' does not exist."
+            return MeshOperationResult(
+                valid = false,
+                meshFile = meshFilePath,
+                validation = MeshValidationResult(valid = false, errors = listOf(msg)),
+                message = msg,
+            )
+        }
+
+        val meshFile = meshFilePath.toFile()
+        val imported =
+            FftMeshImporter.importFromIso(
+                isoFile = isoFile,
+                mapId = mapId,
+                meshName = meshFile.nameWithoutExtension,
+                defaultYaw = yaw,
+                scaleMultiplier = scale,
+            )
+        val validation = imported.meshDocument.validate()
+        if (!validation.valid) {
+            return MeshOperationResult(
+                valid = false,
+                document = imported.meshDocument,
+                meshFile = meshFilePath,
+                validation = validation,
+                message = validation.errors.joinToString("; "),
+            )
+        }
+
+        val exported =
+            imported.meshDocument.saveAndExport(
+                meshFile = meshFile,
+                atlasPrefixFile = atlasPrefixPath.toFile(),
+                heroSheet = imported.heroSheet,
+            )
+        val exportedFiles =
+            listOf(
+                exported.meshFile,
+                exported.mshFile,
+                exported.previewPngFile,
+                exported.binFile,
+                exported.tabFile,
+                exported.palFile,
+                exported.sheetPngFile,
+            ).map { pathPolicy.formatForOutput(it.toPath()) }
+
+        val texFaces = imported.meshDocument.faces.count { it.isTextured }
+        val flatFaces = imported.meshDocument.faces.size - texFaces
+        return MeshOperationResult(
+            valid = true,
+            document = imported.meshDocument,
+            meshFile = meshFilePath,
+            validation = validation,
+            exportedAssets = exported,
+            exportedFiles = exportedFiles,
+            message =
+                "Imported FFT MAP${mapId.toString().padStart(3, '0')} hybrid mesh '${imported.meshDocument.name}' " +
+                    "(${imported.meshDocument.vertices.size} verts, ${imported.meshDocument.faces.size} faces: " +
+                    "$flatFaces flat + $texFaces hero-textured, .msh=${exported.mshFile.length()} B).",
         )
     }
 

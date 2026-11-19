@@ -82,8 +82,24 @@ object CliMain {
                         "pack" -> runLevelPack(subArgs.drop(1))
                         "validate" -> runLevelValidate(subArgs.drop(1))
                         "import-ca65", "import_ca65" -> runLevelImportCa65(subArgs.drop(1))
+                        "import-fft", "import_fft" -> runLevelImportFft(subArgs.drop(1))
                         else -> {
                             System.err.println("Unknown level subcommand: '${subArgs[0]}'")
+                            printUsage()
+                            1
+                        }
+                    }
+                }
+                "mesh" -> {
+                    val subArgs = args.drop(1)
+                    if (subArgs.isEmpty() || subArgs[0] in listOf("help", "--help", "-h")) {
+                        printUsage()
+                        return if (subArgs.isEmpty()) 1 else 0
+                    }
+                    when (subArgs[0]) {
+                        "import-fft", "import_fft" -> runMeshImportFft(subArgs.drop(1))
+                        else -> {
+                            System.err.println("Unknown mesh subcommand: '${subArgs[0]}'")
                             printUsage()
                             1
                         }
@@ -166,6 +182,12 @@ object CliMain {
 
               level import-ca65 <input.i> --atlas <atlas.sfxproj> --output <level.sfxlevel> [--yaw <0..119>]
                 Imports a legacy ca65 def_cell map include into a .sfxlevel document and exports companion files.
+
+              level import-fft <iso.bin> --map <0..125> --atlas <atlas.sfxproj> --output <level.sfxlevel> [--yaw <0..119>]
+                Extracts a Final Fantasy Tactics stage into a 15-color <=32KB atlas and .sfxlevel document.
+
+              mesh import-fft <iso.bin> --map <0..125> --atlas-prefix <PREFIX> --output <scene.sfxmesh> [--yaw <0..119>] [--scale <mult>]
+                Extracts a Final Fantasy Tactics stage into a hybrid flat + hero-textured 3D mesh (.msh, .bin, .tab, .pal).
 
               --mcp [--workspace <path>]
                 Starts the Model Context Protocol (MCP) stdio server for SuperFX texture atlas and level tools.
@@ -728,6 +750,145 @@ object CliMain {
             println("Warning [${warn.code}]: ${warn.message}")
         }
         if (!res.valid) {
+            throw IllegalStateException(res.message)
+        }
+        println(res.message)
+        return 0
+    }
+
+    private fun runLevelImportFft(args: List<String>): Int {
+        val (isoPath, rest) =
+            extractTargetAndRest(
+                args,
+                setOf("--iso"),
+                setOf("--map", "--atlas", "--output", "--level", "--yaw"),
+            )
+        if (isoPath == null) {
+            System.err.println(
+                "Usage: level import-fft <iso.bin> --map <0..125> --atlas <atlas.sfxproj> --output <level.sfxlevel> [--yaw <0..119>]",
+            )
+            return 1
+        }
+
+        var mapId: Int? = null
+        var atlasPath: String? = null
+        var outputPath: String? = null
+        var yaw = 15
+
+        var i = 0
+        while (i < rest.size) {
+            when (rest[i]) {
+                "--map" -> if (++i < rest.size) mapId = rest[i].toInt()
+                "--atlas" -> if (++i < rest.size) atlasPath = rest[i]
+                "--output", "--level" -> if (++i < rest.size) outputPath = rest[i]
+                "--yaw" -> if (++i < rest.size) yaw = rest[i].toInt()
+                else -> System.err.println("Warning: ignoring unknown argument '${rest[i]}'")
+            }
+            i++
+        }
+
+        val reqMap =
+            mapId ?: run {
+                System.err.println("Missing required flag: --map <0..125>")
+                return 1
+            }
+        val reqAtlas =
+            atlasPath ?: run {
+                System.err.println("Missing required flag: --atlas <atlas.sfxproj>")
+                return 1
+            }
+        val reqOutput =
+            outputPath ?: run {
+                System.err.println("Missing required flag: --output <level.sfxlevel>")
+                return 1
+            }
+
+        val res =
+            operations.importFftLevel(
+                isoPath = isoPath,
+                mapId = reqMap,
+                atlasPath = reqAtlas,
+                levelPath = reqOutput,
+                yaw = yaw,
+            )
+        for (warn in res.validation.warnings) {
+            println("Warning [${warn.code}]: ${warn.message}")
+        }
+        if (!res.valid) {
+            for (err in res.validation.errors) {
+                System.err.println("Error [${err.code}]: ${err.message}")
+            }
+            throw IllegalStateException(res.message)
+        }
+        println(res.message)
+        return 0
+    }
+
+    private fun runMeshImportFft(args: List<String>): Int {
+        val (isoPath, rest) =
+            extractTargetAndRest(
+                args,
+                setOf("--iso"),
+                setOf("--map", "--atlas-prefix", "--output", "--mesh", "--yaw", "--scale"),
+            )
+        if (isoPath == null) {
+            System.err.println(
+                "Usage: mesh import-fft <iso.bin> --map <0..125> --atlas-prefix <PREFIX> --output <scene.sfxmesh> [--yaw <0..119>] [--scale <mult>]",
+            )
+            return 1
+        }
+
+        var mapId: Int? = null
+        var atlasPrefix: String? = null
+        var outputPath: String? = null
+        var yaw: Int? = null
+        var scale = 1.0
+
+        var i = 0
+        while (i < rest.size) {
+            when (rest[i]) {
+                "--map" -> if (++i < rest.size) mapId = rest[i].toInt()
+                "--atlas-prefix" -> if (++i < rest.size) atlasPrefix = rest[i]
+                "--output", "--mesh" -> if (++i < rest.size) outputPath = rest[i]
+                "--yaw" -> if (++i < rest.size) yaw = rest[i].toInt()
+                "--scale" -> if (++i < rest.size) scale = rest[i].toDouble()
+                else -> System.err.println("Warning: ignoring unknown argument '${rest[i]}'")
+            }
+            i++
+        }
+
+        val reqMap =
+            mapId ?: run {
+                System.err.println("Missing required flag: --map <0..125>")
+                return 1
+            }
+        val reqPrefix =
+            atlasPrefix ?: run {
+                System.err.println("Missing required flag: --atlas-prefix <PREFIX>")
+                return 1
+            }
+        val reqOutput =
+            outputPath ?: run {
+                System.err.println("Missing required flag: --output <scene.sfxmesh>")
+                return 1
+            }
+
+        val res =
+            operations.importFftMesh(
+                isoPath = isoPath,
+                mapId = reqMap,
+                atlasPrefix = reqPrefix,
+                outputMeshPath = reqOutput,
+                yaw = yaw,
+                scale = scale,
+            )
+        for (warn in res.validation.warnings) {
+            println("Warning: $warn")
+        }
+        if (!res.valid) {
+            for (err in res.validation.errors) {
+                System.err.println("Error: $err")
+            }
             throw IllegalStateException(res.message)
         }
         println(res.message)

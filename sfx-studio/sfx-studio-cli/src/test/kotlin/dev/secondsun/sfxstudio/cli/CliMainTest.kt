@@ -381,6 +381,23 @@ class CliMainTest {
         assertEquals(1, CliMain.execute(arrayOf("atlas", "unknown_subcommand")))
         assertEquals(1, CliMain.execute(arrayOf("level")))
         assertEquals(1, CliMain.execute(arrayOf("level", "unknown_subcommand")))
+        assertEquals(1, CliMain.execute(arrayOf("level", "import-fft")))
+        assertEquals(1, CliMain.execute(arrayOf("level", "import-fft", "missing.bin", "--map", "0")))
+        assertEquals(
+            2,
+            CliMain.execute(arrayOf("level", "import-fft", "missing.bin", "--map", "0", "--atlas", "a.sfxproj", "--output", "b.sfxlevel")),
+        )
+        assertEquals(0, CliMain.execute(arrayOf("mesh", "help")))
+        assertEquals(1, CliMain.execute(arrayOf("mesh")))
+        assertEquals(1, CliMain.execute(arrayOf("mesh", "unknown_subcommand")))
+        assertEquals(1, CliMain.execute(arrayOf("mesh", "import-fft")))
+        assertEquals(1, CliMain.execute(arrayOf("mesh", "import-fft", "missing.bin", "--map", "56")))
+        assertEquals(
+            2,
+            CliMain.execute(
+                arrayOf("mesh", "import-fft", "missing.bin", "--map", "56", "--atlas-prefix", "A", "--output", "b.sfxmesh"),
+            ),
+        )
         assertEquals(1, CliMain.execute(arrayOf("unknown_verb")))
     }
 
