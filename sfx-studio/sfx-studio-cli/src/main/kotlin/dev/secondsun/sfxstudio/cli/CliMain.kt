@@ -105,6 +105,21 @@ object CliMain {
                         }
                     }
                 }
+                "sprite" -> {
+                    val subArgs = args.drop(1)
+                    if (subArgs.isEmpty() || subArgs[0] in listOf("help", "--help", "-h")) {
+                        printUsage()
+                        return if (subArgs.isEmpty()) 1 else 0
+                    }
+                    when (subArgs[0]) {
+                        "pack" -> runSpritePack(subArgs.drop(1))
+                        else -> {
+                            System.err.println("Unknown sprite subcommand: '${subArgs[0]}'")
+                            printUsage()
+                            1
+                        }
+                    }
+                }
                 "pack" -> runPack(args.drop(1))
                 "import" -> runImport(args.drop(1))
                 "validate" -> runValidate(args.drop(1))
@@ -188,6 +203,9 @@ object CliMain {
 
               mesh import-fft <iso.bin> --map <0..125> --atlas-prefix <PREFIX> --output <scene.sfxmesh> [--yaw <0..119>] [--scale <mult>]
                 Extracts a Final Fantasy Tactics stage into a hybrid flat + hero-textured 3D mesh (.msh, .bin, .tab, .pal).
+
+              sprite pack <sheet.png> [--output-dir <dir>] [--name <base>] [--frame-width <16>] [--frame-height <24>] [--no-quantize] [--alpha-threshold <128>] [--transparent-rgb <RRGGBB>]
+                Compiles a PNG sprite sheet into SNES 4bpp OBJ tiles (.chr), BGR555 palette (.pal), 1-bit Sprite Masks (.msk), and ca65 include (.i).
 
               --mcp [--workspace <path>]
                 Starts the Model Context Protocol (MCP) stdio server for SuperFX texture atlas and level tools.
@@ -889,6 +907,71 @@ object CliMain {
             for (err in res.validation.errors) {
                 System.err.println("Error: $err")
             }
+            throw IllegalStateException(res.message)
+        }
+        println(res.message)
+        return 0
+    }
+
+    private fun runSpritePack(args: List<String>): Int {
+        val (imagePath, rest) =
+            extractTargetAndRest(
+                args,
+                setOf("--input", "--sheet", "--image"),
+                setOf("--output-dir", "--name", "--frame-width", "--frame-height", "--alpha-threshold", "--transparent-rgb"),
+            )
+        if (imagePath == null) {
+            System.err.println(
+                "Usage: sprite pack <sheet.png> [--output-dir <dir>] [--name <base>] [--frame-width <16>] [--frame-height <24>] [--no-quantize] [--alpha-threshold <128>] [--transparent-rgb <RRGGBB>]",
+            )
+            return 1
+        }
+
+        var outputDir: String? = null
+        var name: String? = null
+        var frameWidth = 16
+        var frameHeight = 24
+        var autoQuantize = true
+        var alphaThreshold = 128
+        var transparentRgb: Int? = null
+
+        var i = 0
+        while (i < rest.size) {
+            when (rest[i]) {
+                "--output-dir" -> if (++i < rest.size) outputDir = rest[i]
+                "--name" -> if (++i < rest.size) name = rest[i]
+                "--frame-width" -> if (++i < rest.size) frameWidth = rest[i].toInt()
+                "--frame-height" -> if (++i < rest.size) frameHeight = rest[i].toInt()
+                "--no-quantize" -> autoQuantize = false
+                "--alpha-threshold" -> if (++i < rest.size) alphaThreshold = rest[i].toInt()
+                "--transparent-rgb" -> {
+                    if (++i < rest.size) {
+                        val cleaned =
+                            rest[i]
+                                .removePrefix("#")
+                                .removePrefix("0x")
+                                .removePrefix("0X")
+                                .removePrefix("$")
+                        transparentRgb = cleaned.toInt(16) and 0x00FFFFFF
+                    }
+                }
+                else -> System.err.println("Warning: ignoring unknown argument '${rest[i]}'")
+            }
+            i++
+        }
+
+        val res =
+            operations.packSpriteSheet(
+                imagePath = imagePath,
+                outputDir = outputDir,
+                name = name,
+                frameWidth = frameWidth,
+                frameHeight = frameHeight,
+                autoQuantize = autoQuantize,
+                alphaThreshold = alphaThreshold,
+                transparentRgb = transparentRgb,
+            )
+        if (!res.valid) {
             throw IllegalStateException(res.message)
         }
         println(res.message)

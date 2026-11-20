@@ -9,9 +9,19 @@ import dev.secondsun.sfxstudio.core.atlas.SourceTexture
 import dev.secondsun.sfxstudio.core.atlas.TextureAtlas
 import dev.secondsun.sfxstudio.core.atlas.VirtualSlice
 import dev.secondsun.sfxstudio.core.level.CellRotation
+import dev.secondsun.sfxstudio.core.level.FacingDirection
+import dev.secondsun.sfxstudio.core.level.GameplayBinarySerializer
+import dev.secondsun.sfxstudio.core.level.GameplayLayer
+import dev.secondsun.sfxstudio.core.level.InteractableKind
+import dev.secondsun.sfxstudio.core.level.InteractableSpawn
 import dev.secondsun.sfxstudio.core.level.LevelBinarySerializer
 import dev.secondsun.sfxstudio.core.level.LevelDocumentService
+import dev.secondsun.sfxstudio.core.level.NpcAiType
+import dev.secondsun.sfxstudio.core.level.NpcSpawn
+import dev.secondsun.sfxstudio.core.level.PlayerSpawn
+import dev.secondsun.sfxstudio.core.level.RewardKind
 import dev.secondsun.sfxstudio.core.level.ShapeArchetype
+import dev.secondsun.sfxstudio.core.sprite.SpriteMaskPacker
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
@@ -421,5 +431,122 @@ class CliMainTest {
 
         val code = CliMain.execute(arrayOf("atlas", "validate", projFile.absolutePath))
         assertEquals(2, code)
+    }
+
+    @Test
+    fun testSpritePackCli(
+        @TempDir tempDir: File,
+    ) {
+        val img = BufferedImage(32, 24, BufferedImage.TYPE_INT_ARGB)
+        img.setRGB(0, 0, Color(248, 0, 0, 255).rgb)
+        img.setRGB(15, 23, Color(0, 248, 0, 255).rgb)
+        img.setRGB(16, 12, Color(0, 0, 248, 255).rgb)
+        val sheetPng = File(tempDir, "hero_sheet.png")
+        ImageIO.write(img, "png", sheetPng)
+
+        val outDir = File(tempDir, "dist")
+        val code =
+            CliMain.execute(
+                arrayOf(
+                    "sprite",
+                    "pack",
+                    sheetPng.absolutePath,
+                    "--output-dir",
+                    outDir.absolutePath,
+                    "--name",
+                    "hero",
+                    "--frame-width",
+                    "16",
+                    "--frame-height",
+                    "24",
+                ),
+            )
+        assertEquals(0, code)
+        assertTrue(File(outDir, "hero.chr").exists())
+        assertTrue(File(outDir, "hero.pal").exists())
+        assertTrue(File(outDir, "hero.msk").exists())
+        assertTrue(File(outDir, "hero.i").exists())
+
+        val parsedMsk = SpriteMaskPacker.parseMskBinary(File(outDir, "hero.msk").readBytes())
+        assertEquals(2, parsedMsk.frameCount)
+        assertEquals(48, parsedMsk.frameBytes)
+        assertEquals(0x80, parsedMsk.frameMasks[0][0].toInt() and 0xFF)
+        assertEquals(0x01, parsedMsk.frameMasks[0][23 * 2 + 1].toInt() and 0xFF)
+        assertEquals(0x80, parsedMsk.frameMasks[1][12 * 2].toInt() and 0xFF)
+
+        assertEquals(0, CliMain.execute(arrayOf("sprite", "help")))
+        assertEquals(1, CliMain.execute(arrayOf("sprite")))
+        assertEquals(1, CliMain.execute(arrayOf("sprite", "pack")))
+    }
+
+    @Test
+    fun testLevelPackAndValidateWithGameplayLayerCli(
+        @TempDir tempDir: File,
+    ) {
+        val projFile = createSampleProject(tempDir, "RPG_ATLAS")
+        val levelFile = File(tempDir, "rpg_stage.sfxlevel")
+        assertEquals(
+            0,
+            CliMain.execute(
+                arrayOf(
+                    "level",
+                    "create",
+                    levelFile.absolutePath,
+                    "--atlas",
+                    projFile.absolutePath,
+                    "--cols",
+                    "6",
+                    "--rows",
+                    "6",
+                ),
+            ),
+        )
+        assertFalse(File(tempDir, "rpg_stage.gmap").exists())
+
+        // Attach typed gameplay layer and save
+        val baseDoc = LevelDocumentService.loadLevel(levelFile)
+        val withGameplay =
+            baseDoc.copy(
+                gameplay =
+                    GameplayLayer(
+                        playerSpawn = PlayerSpawn(1, 1, FacingDirection.SOUTH),
+                        npcs = listOf(NpcSpawn(id = "slime_1", col = 3, row = 3, spriteId = 1, aiType = NpcAiType.GUARD)),
+                        interactables =
+                            listOf(
+                                InteractableSpawn(
+                                    id = "chest_1",
+                                    col = 4,
+                                    row = 1,
+                                    kind = InteractableKind.CHEST,
+                                    closedSpriteId = 4,
+                                    openSpriteId = 5,
+                                    rewardKind = RewardKind.HP_HEAL,
+                                    rewardValue = 10,
+                                ),
+                            ),
+                    ),
+            )
+        LevelDocumentService.saveAuthoringJson(levelFile, withGameplay)
+
+        assertEquals(0, CliMain.execute(arrayOf("level", "validate", levelFile.absolutePath)))
+        assertEquals(0, CliMain.execute(arrayOf("level", "pack", levelFile.absolutePath)))
+
+        val gmapFile = File(tempDir, "rpg_stage.gmap")
+        val gameplayIncFile = File(tempDir, "rpg_stage_gameplay.i")
+        assertTrue(gmapFile.exists())
+        assertTrue(gameplayIncFile.exists())
+
+        val parsed = GameplayBinarySerializer.deserialize(gmapFile.readBytes())
+        assertEquals(1, parsed.npcs.size)
+        assertEquals(1, parsed.interactables.size)
+        assertTrue(gameplayIncFile.readText().contains("RPG_STAGE_NPC_SLIME_1_IDX = 0"))
+
+        // Invalid out-of-bounds spawn must fail validation
+        val invalidDoc =
+            withGameplay.copy(
+                gameplay = withGameplay.gameplay!!.copy(playerSpawn = PlayerSpawn(9, 9)),
+            )
+        LevelDocumentService.saveAuthoringJson(levelFile, invalidDoc)
+        assertEquals(2, CliMain.execute(arrayOf("level", "validate", levelFile.absolutePath)))
     }
 }

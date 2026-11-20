@@ -246,11 +246,353 @@ object LevelValidator {
             }
         }
 
+        document.gameplay?.let { gameplay ->
+            validateGameplay(grid, gameplay, errors)
+        }
+
         return LevelValidationResult(
             valid = errors.isEmpty(),
             errors = errors,
             warnings = warnings,
         )
+    }
+
+    private fun validateGameplay(
+        grid: MapGrid,
+        gameplay: GameplayLayer,
+        errors: MutableList<LevelDiagnostic>,
+    ) {
+        val seenOverrides = mutableSetOf<Pair<Int, Int>>()
+        for (ov in gameplay.walkabilityOverrides) {
+            if (!grid.isInBounds(ov.col, ov.row)) {
+                errors.add(
+                    LevelDiagnostic(
+                        severity = DiagnosticSeverity.ERROR,
+                        code = "GAMEPLAY_WALKABILITY_OUT_OF_BOUNDS",
+                        message =
+                            "Walkability override at (${ov.col}, ${ov.row}) is out of bounds (${grid.cols}x${grid.rows}).",
+                        col = ov.col,
+                        row = ov.row,
+                    ),
+                )
+            } else if (!seenOverrides.add(ov.col to ov.row)) {
+                errors.add(
+                    LevelDiagnostic(
+                        severity = DiagnosticSeverity.ERROR,
+                        code = "DUPLICATE_WALKABILITY_OVERRIDE",
+                        message = "Duplicate walkability override at (${ov.col}, ${ov.row}).",
+                        col = ov.col,
+                        row = ov.row,
+                    ),
+                )
+            }
+            if (ov.moveCost !in 0..7) {
+                errors.add(
+                    LevelDiagnostic(
+                        severity = DiagnosticSeverity.ERROR,
+                        code = "GAMEPLAY_INVALID_MOVE_COST",
+                        message = "Walkability override at (${ov.col}, ${ov.row}) moveCost ${ov.moveCost} must be in 0..7.",
+                        col = ov.col,
+                        row = ov.row,
+                    ),
+                )
+            }
+            if (ov.flags !in 0..15) {
+                errors.add(
+                    LevelDiagnostic(
+                        severity = DiagnosticSeverity.ERROR,
+                        code = "GAMEPLAY_INVALID_WALK_FLAGS",
+                        message = "Walkability override at (${ov.col}, ${ov.row}) flags ${ov.flags} must be in 0..15.",
+                        col = ov.col,
+                        row = ov.row,
+                    ),
+                )
+            }
+        }
+
+        val walkGrid = GameplayBinarySerializer.buildWalkabilityGrid(grid, gameplay)
+
+        fun isCellWalkable(
+            col: Int,
+            row: Int,
+        ): Boolean =
+            grid.isInBounds(col, row) &&
+                ((walkGrid[row * grid.cols + col].toInt() and GameplayBinarySerializer.WALK_FLAG_WALKABLE) != 0)
+
+        val spawn = gameplay.playerSpawn
+        if (!grid.isInBounds(spawn.col, spawn.row)) {
+            errors.add(
+                LevelDiagnostic(
+                    severity = DiagnosticSeverity.ERROR,
+                    code = "PLAYER_SPAWN_OUT_OF_BOUNDS",
+                    message = "Player spawn (${spawn.col}, ${spawn.row}) is out of bounds (${grid.cols}x${grid.rows}).",
+                    col = spawn.col,
+                    row = spawn.row,
+                ),
+            )
+        } else if (!isCellWalkable(spawn.col, spawn.row)) {
+            errors.add(
+                LevelDiagnostic(
+                    severity = DiagnosticSeverity.ERROR,
+                    code = "PLAYER_SPAWN_ON_NON_WALKABLE",
+                    message = "Player spawn (${spawn.col}, ${spawn.row}) sits on a non-walkable cell.",
+                    col = spawn.col,
+                    row = spawn.row,
+                ),
+            )
+        }
+
+        if (gameplay.npcs.size > 255) {
+            errors.add(
+                LevelDiagnostic(
+                    severity = DiagnosticSeverity.ERROR,
+                    code = "TOO_MANY_NPCS",
+                    message = "Gameplay layer defines ${gameplay.npcs.size} NPCs (maximum 255).",
+                ),
+            )
+        }
+
+        val playerPos = spawn.col to spawn.row
+        val seenNpcIds = mutableSetOf<String>()
+        val npcPositions = mutableMapOf<Pair<Int, Int>, String>()
+
+        for (npc in gameplay.npcs) {
+            if (npc.id.isBlank()) {
+                errors.add(
+                    LevelDiagnostic(
+                        severity = DiagnosticSeverity.ERROR,
+                        code = "BLANK_NPC_ID",
+                        message = "NPC at (${npc.col}, ${npc.row}) has a blank id.",
+                        col = npc.col,
+                        row = npc.row,
+                    ),
+                )
+            } else if (!seenNpcIds.add(npc.id)) {
+                errors.add(
+                    LevelDiagnostic(
+                        severity = DiagnosticSeverity.ERROR,
+                        code = "DUPLICATE_NPC_ID",
+                        message = "Duplicate NPC id '${npc.id}'.",
+                        col = npc.col,
+                        row = npc.row,
+                    ),
+                )
+            }
+
+            if (!grid.isInBounds(npc.col, npc.row)) {
+                errors.add(
+                    LevelDiagnostic(
+                        severity = DiagnosticSeverity.ERROR,
+                        code = "NPC_SPAWN_OUT_OF_BOUNDS",
+                        message = "NPC '${npc.id}' spawn (${npc.col}, ${npc.row}) is out of bounds (${grid.cols}x${grid.rows}).",
+                        col = npc.col,
+                        row = npc.row,
+                    ),
+                )
+            } else {
+                if (!isCellWalkable(npc.col, npc.row)) {
+                    errors.add(
+                        LevelDiagnostic(
+                            severity = DiagnosticSeverity.ERROR,
+                            code = "NPC_SPAWN_ON_NON_WALKABLE",
+                            message = "NPC '${npc.id}' spawn (${npc.col}, ${npc.row}) sits on a non-walkable cell.",
+                            col = npc.col,
+                            row = npc.row,
+                        ),
+                    )
+                }
+                val pos = npc.col to npc.row
+                if (pos == playerPos) {
+                    errors.add(
+                        LevelDiagnostic(
+                            severity = DiagnosticSeverity.ERROR,
+                            code = "NPC_OVERLAPS_PLAYER_SPAWN",
+                            message = "NPC '${npc.id}' at (${npc.col}, ${npc.row}) overlaps playerSpawn.",
+                            col = npc.col,
+                            row = npc.row,
+                        ),
+                    )
+                }
+                val existing = npcPositions.putIfAbsent(pos, npc.id)
+                if (existing != null) {
+                    errors.add(
+                        LevelDiagnostic(
+                            severity = DiagnosticSeverity.ERROR,
+                            code = "NPC_OVERLAPS_NPC",
+                            message = "NPC '${npc.id}' at (${npc.col}, ${npc.row}) overlaps NPC '$existing'.",
+                            col = npc.col,
+                            row = npc.row,
+                        ),
+                    )
+                }
+            }
+
+            if (npc.patrolWaypoints.size > GameplayBinarySerializer.MAX_WAYPOINTS) {
+                errors.add(
+                    LevelDiagnostic(
+                        severity = DiagnosticSeverity.ERROR,
+                        code = "NPC_TOO_MANY_WAYPOINTS",
+                        message =
+                            "NPC '${npc.id}' defines ${npc.patrolWaypoints.size} patrol waypoints " +
+                                "(maximum ${GameplayBinarySerializer.MAX_WAYPOINTS}).",
+                        col = npc.col,
+                        row = npc.row,
+                    ),
+                )
+            }
+            for ((wpIdx, wp) in npc.patrolWaypoints.withIndex()) {
+                if (!grid.isInBounds(wp.col, wp.row)) {
+                    errors.add(
+                        LevelDiagnostic(
+                            severity = DiagnosticSeverity.ERROR,
+                            code = "NPC_WAYPOINT_OUT_OF_BOUNDS",
+                            message =
+                                "NPC '${npc.id}' waypoint #$wpIdx (${wp.col}, ${wp.row}) " +
+                                    "is out of bounds (${grid.cols}x${grid.rows}).",
+                            col = wp.col,
+                            row = wp.row,
+                        ),
+                    )
+                } else if (!isCellWalkable(wp.col, wp.row)) {
+                    errors.add(
+                        LevelDiagnostic(
+                            severity = DiagnosticSeverity.ERROR,
+                            code = "NPC_WAYPOINT_ON_NON_WALKABLE",
+                            message =
+                                "NPC '${npc.id}' waypoint #$wpIdx (${wp.col}, ${wp.row}) sits on a non-walkable cell.",
+                            col = wp.col,
+                            row = wp.row,
+                        ),
+                    )
+                }
+            }
+
+            if (npc.spriteId !in 0..255 ||
+                npc.aggroRange !in 0..255 ||
+                npc.hp !in 1..255 ||
+                npc.atk !in 0..255 ||
+                npc.def !in 0..255 ||
+                npc.speed !in 0..255 ||
+                npc.movePoints !in 0..255
+            ) {
+                errors.add(
+                    LevelDiagnostic(
+                        severity = DiagnosticSeverity.ERROR,
+                        code = "NPC_STAT_OUT_OF_RANGE",
+                        message = "NPC '${npc.id}' has stat/sprite field outside valid byte range (hp: 1..255, others: 0..255).",
+                        col = npc.col,
+                        row = npc.row,
+                    ),
+                )
+            }
+        }
+
+        if (gameplay.interactables.size > 255) {
+            errors.add(
+                LevelDiagnostic(
+                    severity = DiagnosticSeverity.ERROR,
+                    code = "TOO_MANY_INTERACTABLES",
+                    message = "Gameplay layer defines ${gameplay.interactables.size} interactables (maximum 255).",
+                ),
+            )
+        }
+
+        val seenInteractableIds = mutableSetOf<String>()
+        val interactablePositions = mutableMapOf<Pair<Int, Int>, String>()
+
+        for (inter in gameplay.interactables) {
+            if (inter.id.isBlank()) {
+                errors.add(
+                    LevelDiagnostic(
+                        severity = DiagnosticSeverity.ERROR,
+                        code = "BLANK_INTERACTABLE_ID",
+                        message = "Interactable at (${inter.col}, ${inter.row}) has a blank id.",
+                        col = inter.col,
+                        row = inter.row,
+                    ),
+                )
+            } else if (!seenInteractableIds.add(inter.id)) {
+                errors.add(
+                    LevelDiagnostic(
+                        severity = DiagnosticSeverity.ERROR,
+                        code = "DUPLICATE_INTERACTABLE_ID",
+                        message = "Duplicate interactable id '${inter.id}'.",
+                        col = inter.col,
+                        row = inter.row,
+                    ),
+                )
+            }
+
+            if (!grid.isInBounds(inter.col, inter.row)) {
+                errors.add(
+                    LevelDiagnostic(
+                        severity = DiagnosticSeverity.ERROR,
+                        code = "INTERACTABLE_OUT_OF_BOUNDS",
+                        message =
+                            "Interactable '${inter.id}' (${inter.col}, ${inter.row}) " +
+                                "is out of bounds (${grid.cols}x${grid.rows}).",
+                        col = inter.col,
+                        row = inter.row,
+                    ),
+                )
+            } else {
+                val pos = inter.col to inter.row
+                if (pos == playerPos) {
+                    errors.add(
+                        LevelDiagnostic(
+                            severity = DiagnosticSeverity.ERROR,
+                            code = "INTERACTABLE_OVERLAPS_PLAYER_SPAWN",
+                            message = "Interactable '${inter.id}' at (${inter.col}, ${inter.row}) overlaps playerSpawn.",
+                            col = inter.col,
+                            row = inter.row,
+                        ),
+                    )
+                }
+                val overlappingNpc = npcPositions[pos]
+                if (overlappingNpc != null) {
+                    errors.add(
+                        LevelDiagnostic(
+                            severity = DiagnosticSeverity.ERROR,
+                            code = "INTERACTABLE_OVERLAPS_NPC",
+                            message =
+                                "Interactable '${inter.id}' at (${inter.col}, ${inter.row}) overlaps NPC '$overlappingNpc'.",
+                            col = inter.col,
+                            row = inter.row,
+                        ),
+                    )
+                }
+                val existing = interactablePositions.putIfAbsent(pos, inter.id)
+                if (existing != null) {
+                    errors.add(
+                        LevelDiagnostic(
+                            severity = DiagnosticSeverity.ERROR,
+                            code = "INTERACTABLE_OVERLAPS_INTERACTABLE",
+                            message =
+                                "Interactable '${inter.id}' at (${inter.col}, ${inter.row}) " +
+                                    "overlaps interactable '$existing'.",
+                            col = inter.col,
+                            row = inter.row,
+                        ),
+                    )
+                }
+            }
+
+            if (inter.closedSpriteId !in 0..255 ||
+                inter.openSpriteId !in 0..255 ||
+                inter.rewardValue !in 0..255 ||
+                inter.messageId !in 0..255
+            ) {
+                errors.add(
+                    LevelDiagnostic(
+                        severity = DiagnosticSeverity.ERROR,
+                        code = "INTERACTABLE_FIELD_OUT_OF_RANGE",
+                        message = "Interactable '${inter.id}' has sprite/reward/message field outside valid 0..255 range.",
+                        col = inter.col,
+                        row = inter.row,
+                    ),
+                )
+            }
+        }
     }
 
     private fun neighborTopHeight(cell: MapCell): Int =

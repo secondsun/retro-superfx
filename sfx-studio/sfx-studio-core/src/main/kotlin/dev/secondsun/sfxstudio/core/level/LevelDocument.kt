@@ -332,6 +332,7 @@ data class LevelDocument(
     val atlasPath: String,
     val grid: MapGrid,
     val gameplayLayers: Map<String, Any?>? = null,
+    val gameplay: GameplayLayer? = null,
 )
 
 internal data class LevelCellDto(
@@ -355,6 +356,7 @@ internal data class LevelDocumentDto(
     var atlasPath: String? = null,
     var cells: List<LevelCellDto>? = null,
     var gameplayLayers: Map<String, Any?>? = null,
+    var gameplay: GameplayLayerDto? = null,
 )
 
 data class ExportedLevelAssets(
@@ -362,6 +364,8 @@ data class ExportedLevelAssets(
     val mapBinFile: File,
     val headerFile: File,
     val previewPngFile: File?,
+    val gmapBinFile: File? = null,
+    val gameplayHeaderFile: File? = null,
 )
 
 /**
@@ -549,6 +553,124 @@ object LevelDocumentService {
             atlasPath = document.atlasPath,
             cells = cellDtos,
             gameplayLayers = document.gameplayLayers,
+            gameplay = document.gameplay?.let { gameplayToDto(it) },
+        )
+    }
+
+    private fun gameplayToDto(gameplay: GameplayLayer): GameplayLayerDto =
+        GameplayLayerDto(
+            walkabilityOverrides =
+                gameplay.walkabilityOverrides
+                    .takeIf { it.isNotEmpty() }
+                    ?.map {
+                        WalkabilityOverrideDto(
+                            col = it.col,
+                            row = it.row,
+                            walkable = it.walkable,
+                            moveCost = it.moveCost,
+                            flags = it.flags,
+                        )
+                    },
+            playerSpawn =
+                PlayerSpawnDto(
+                    col = gameplay.playerSpawn.col,
+                    row = gameplay.playerSpawn.row,
+                    facing =
+                        gameplay.playerSpawn.facing.name
+                            .lowercase(),
+                ),
+            npcs =
+                gameplay.npcs
+                    .takeIf { it.isNotEmpty() }
+                    ?.map { npc ->
+                        NpcSpawnDto(
+                            id = npc.id,
+                            col = npc.col,
+                            row = npc.row,
+                            spriteId = npc.spriteId,
+                            aiType = npc.aiType.name.lowercase(),
+                            aggroRange = npc.aggroRange,
+                            patrolWaypoints =
+                                npc.patrolWaypoints
+                                    .takeIf { it.isNotEmpty() }
+                                    ?.map { GridCoordDto(it.col, it.row) },
+                            hp = npc.hp,
+                            atk = npc.atk,
+                            def = npc.def,
+                            speed = npc.speed,
+                            movePoints = npc.movePoints,
+                        )
+                    },
+            interactables =
+                gameplay.interactables
+                    .takeIf { it.isNotEmpty() }
+                    ?.map { inter ->
+                        InteractableSpawnDto(
+                            id = inter.id,
+                            col = inter.col,
+                            row = inter.row,
+                            kind = inter.kind.name.lowercase(),
+                            closedSpriteId = inter.closedSpriteId,
+                            openSpriteId = inter.openSpriteId,
+                            rewardKind = inter.rewardKind.name.lowercase(),
+                            rewardValue = inter.rewardValue,
+                            messageId = inter.messageId,
+                        )
+                    },
+        )
+
+    private fun gameplayFromDto(dto: GameplayLayerDto): GameplayLayer {
+        val spawnDto =
+            dto.playerSpawn
+                ?: throw IllegalArgumentException("gameplay.playerSpawn is required when gameplay layer is present")
+        return GameplayLayer(
+            walkabilityOverrides =
+                dto.walkabilityOverrides.orEmpty().map { ov ->
+                    WalkabilityOverride(
+                        col = ov.col,
+                        row = ov.row,
+                        walkable = ov.walkable,
+                        moveCost = ov.moveCost ?: if (ov.walkable) 1 else 0,
+                        flags = ov.flags,
+                    )
+                },
+            playerSpawn =
+                PlayerSpawn(
+                    col = spawnDto.col,
+                    row = spawnDto.row,
+                    facing = FacingDirection.fromSymbol(spawnDto.facing ?: "south"),
+                ),
+            npcs =
+                dto.npcs.orEmpty().map { npc ->
+                    NpcSpawn(
+                        id = npc.id.orEmpty(),
+                        col = npc.col,
+                        row = npc.row,
+                        spriteId = npc.spriteId,
+                        aiType = NpcAiType.fromSymbol(npc.aiType ?: "guard"),
+                        aggroRange = npc.aggroRange,
+                        patrolWaypoints = npc.patrolWaypoints.orEmpty().map { GridCoord(it.col, it.row) },
+                        hp = npc.hp,
+                        atk = npc.atk,
+                        def = npc.def,
+                        speed = npc.speed,
+                        movePoints = npc.movePoints,
+                    )
+                },
+            interactables =
+                dto.interactables.orEmpty().map { inter ->
+                    InteractableSpawn(
+                        id = inter.id.orEmpty(),
+                        col = inter.col,
+                        row = inter.row,
+                        kind = InteractableKind.fromSymbol(inter.kind ?: "chest"),
+                        closedSpriteId = inter.closedSpriteId,
+                        openSpriteId = inter.openSpriteId,
+                        rewardKind = RewardKind.fromSymbol(inter.rewardKind ?: "none"),
+                        rewardValue = inter.rewardValue,
+                        messageId = inter.messageId,
+                    )
+                },
         )
     }
 
@@ -600,6 +722,7 @@ object LevelDocumentService {
             atlasPath = dto.atlasPath.orEmpty(),
             grid = MapGrid(cols = dto.cols, rows = dto.rows, cells = cellsArray.toList()),
             gameplayLayers = dto.gameplayLayers,
+            gameplay = dto.gameplay?.let { gameplayFromDto(it) },
         )
     }
 
@@ -625,6 +748,8 @@ object LevelDocumentService {
     ): ExportedLevelAssets {
         val mapBytes = LevelBinarySerializer.serialize(document.grid, atlasDoc.atlas)
         val headerText = LevelHeaderGenerator.generate(baseName, document.grid)
+        val gmapBytes = document.gameplay?.let { GameplayBinarySerializer.serialize(document.grid, it) }
+        val gameplayHeaderText = document.gameplay?.let { GameplayHeaderGenerator.generate(baseName, document.grid, it) }
 
         outputDir.mkdirs()
         val headerFile = File(outputDir, "$baseName.i")
@@ -632,6 +757,15 @@ object LevelDocumentService {
 
         val mapBinFile = File(outputDir, "$baseName.map")
         mapBinFile.writeBytes(mapBytes)
+
+        val gmapBinFile =
+            gmapBytes?.let { bytes ->
+                File(outputDir, "$baseName.gmap").also { it.writeBytes(bytes) }
+            }
+        val gameplayHeaderFile =
+            gameplayHeaderText?.let { text ->
+                File(outputDir, "${baseName}_gameplay.i").also { it.writeText(text) }
+            }
 
         val png = File(outputDir, "${baseName}_preview.png")
         IsoSoftwareRenderer.writePreviewPng(
@@ -647,13 +781,15 @@ object LevelDocumentService {
             mapBinFile = mapBinFile,
             headerFile = headerFile,
             previewPngFile = png,
+            gmapBinFile = gmapBinFile,
+            gameplayHeaderFile = gameplayHeaderFile,
         )
     }
 
     /**
      * Saves `.sfxlevel` JSON to [levelFile] in place and exports companion runtime assets
-     * (`.map`, `.i`, `_preview.png`) to `outputDir ?: levelFile.parentFile` using the explicitly
-     * supplied [atlasDoc] (zero implicit disk atlas lookups).
+     * (`.map`, `.i`, `_preview.png`, plus `.gmap` and `_gameplay.i` when a typed gameplay layer is present)
+     * to `outputDir ?: levelFile.parentFile` using the explicitly supplied [atlasDoc] (zero implicit disk atlas lookups).
      */
     fun saveAndExport(
         levelFile: File,
@@ -665,6 +801,8 @@ object LevelDocumentService {
         val mapBytes = LevelBinarySerializer.serialize(document.grid, atlasDoc.atlas)
         val baseName = levelFile.nameWithoutExtension
         val headerText = LevelHeaderGenerator.generate(baseName, document.grid)
+        val gmapBytes = document.gameplay?.let { GameplayBinarySerializer.serialize(document.grid, it) }
+        val gameplayHeaderText = document.gameplay?.let { GameplayHeaderGenerator.generate(baseName, document.grid, it) }
         val json = toJson(document)
 
         levelFile.parentFile?.mkdirs()
@@ -678,6 +816,15 @@ object LevelDocumentService {
 
         val mapBinFile = File(destDir, "$baseName.map")
         mapBinFile.writeBytes(mapBytes)
+
+        val gmapBinFile =
+            gmapBytes?.let { bytes ->
+                File(destDir, "$baseName.gmap").also { it.writeBytes(bytes) }
+            }
+        val gameplayHeaderFile =
+            gameplayHeaderText?.let { text ->
+                File(destDir, "${baseName}_gameplay.i").also { it.writeText(text) }
+            }
 
         val png = File(destDir, "${baseName}_preview.png")
         IsoSoftwareRenderer.writePreviewPng(
@@ -693,6 +840,8 @@ object LevelDocumentService {
             mapBinFile = mapBinFile,
             headerFile = headerFile,
             previewPngFile = png,
+            gmapBinFile = gmapBinFile,
+            gameplayHeaderFile = gameplayHeaderFile,
         )
     }
 }

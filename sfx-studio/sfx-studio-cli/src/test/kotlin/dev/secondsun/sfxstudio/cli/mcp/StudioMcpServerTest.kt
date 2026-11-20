@@ -9,7 +9,11 @@ import dev.secondsun.sfxstudio.core.atlas.SourceTexture
 import dev.secondsun.sfxstudio.core.atlas.TextureAtlas
 import dev.secondsun.sfxstudio.core.atlas.VirtualSlice
 import dev.secondsun.sfxstudio.core.level.CellRotation
+import dev.secondsun.sfxstudio.core.level.FacingDirection
+import dev.secondsun.sfxstudio.core.level.GameplayLayer
 import dev.secondsun.sfxstudio.core.level.LevelDocumentService
+import dev.secondsun.sfxstudio.core.level.NpcSpawn
+import dev.secondsun.sfxstudio.core.level.PlayerSpawn
 import dev.secondsun.sfxstudio.core.level.ShapeArchetype
 import io.modelcontextprotocol.spec.McpSchema.TextContent
 import org.junit.jupiter.api.AfterEach
@@ -439,6 +443,38 @@ class StudioMcpServerTest {
         val valJson = objectMapper.readTree((valRes.content[0] as TextContent).text)
         assertEquals("SUCCESS", valJson.get("status").asText())
         assertTrue(valJson.get("valid").asBoolean())
+
+        // Attach typed gameplay layer and verify sfx_manage_level validate + pack emit .gmap & _gameplay.i
+        val levelFile = File(tempDir, "levels/garden.sfxlevel")
+        val withGameplay =
+            LevelDocumentService
+                .loadLevel(levelFile)
+                .copy(
+                    gameplay =
+                        GameplayLayer(
+                            playerSpawn = PlayerSpawn(0, 0, FacingDirection.NORTH),
+                            npcs = listOf(NpcSpawn(id = "scout", col = 5, row = 5)),
+                        ),
+                )
+        LevelDocumentService.saveAuthoringJson(levelFile, withGameplay)
+
+        val packRes =
+            s.executeTool(
+                "sfx_manage_level",
+                mapOf(
+                    "action" to "pack",
+                    "level_path" to "levels/garden.sfxlevel",
+                ),
+            )
+        assertFalse(packRes.isError)
+        val packJson = objectMapper.readTree((packRes.content[0] as TextContent).text)
+        assertEquals("SUCCESS", packJson.get("status").asText())
+        assertTrue(packJson.get("valid").asBoolean())
+        val exported = packJson.get("exportedFiles").map { it.asText() }
+        assertTrue(exported.any { it.endsWith("garden.gmap") })
+        assertTrue(exported.any { it.endsWith("garden_gameplay.i") })
+        assertTrue(File(tempDir, "levels/garden.gmap").exists())
+        assertTrue(File(tempDir, "levels/garden_gameplay.i").exists())
     }
 
     @Test

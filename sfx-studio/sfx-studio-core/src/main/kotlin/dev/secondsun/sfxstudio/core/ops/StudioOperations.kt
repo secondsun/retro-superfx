@@ -24,8 +24,21 @@ import dev.secondsun.sfxstudio.core.level.applyPatches
 import dev.secondsun.sfxstudio.core.mesh.ExportedMeshAssets
 import dev.secondsun.sfxstudio.core.mesh.HybridMeshDocument
 import dev.secondsun.sfxstudio.core.mesh.MeshValidationResult
+import dev.secondsun.sfxstudio.core.sprite.CompiledSpriteSheet
+import dev.secondsun.sfxstudio.core.sprite.ExportedSpriteAssets
+import dev.secondsun.sfxstudio.core.sprite.SpriteSheetCompiler
+import dev.secondsun.sfxstudio.core.sprite.SpriteSheetSpec
 import java.nio.file.Files
 import java.nio.file.Path
+
+data class SpriteOperationResult(
+    val valid: Boolean,
+    val imageFile: Path,
+    val compiled: CompiledSpriteSheet? = null,
+    val exportedAssets: ExportedSpriteAssets? = null,
+    val exportedFiles: List<String> = emptyList(),
+    val message: String,
+)
 
 data class MeshOperationResult(
     val valid: Boolean,
@@ -822,6 +835,83 @@ class StudioOperations(
         )
     }
 
+    /**
+     * Compiles a PNG sprite sheet into SNES planar 4bpp OBJ tiles (`.chr`), 32-byte BGR555
+     * palette (`.pal`), pixel-exact 1-bit Sprite Masks (`.msk`), and ca65 include (`.i`).
+     */
+    fun packSpriteSheet(
+        imagePath: String,
+        outputDir: String? = null,
+        name: String? = null,
+        frameWidth: Int = 16,
+        frameHeight: Int = 24,
+        autoQuantize: Boolean = true,
+        alphaThreshold: Int = 128,
+        transparentRgb: Int? = null,
+    ): SpriteOperationResult {
+        val imgPath = pathPolicy.resolve(imagePath)
+        val outDirPath = outputDir?.let { pathPolicy.resolve(it) }
+        val imgFile = imgPath.toFile()
+        if (!imgFile.exists()) {
+            return SpriteOperationResult(
+                valid = false,
+                imageFile = imgPath,
+                message = "Sprite sheet image '${imgFile.path}' does not exist.",
+            )
+        }
+
+        val baseName = name?.takeIf { it.isNotBlank() } ?: imgFile.nameWithoutExtension
+        val spec =
+            try {
+                SpriteSheetSpec(
+                    frameWidth = frameWidth,
+                    frameHeight = frameHeight,
+                    alphaThreshold = alphaThreshold,
+                    transparentRgb = transparentRgb,
+                    autoQuantize = autoQuantize,
+                )
+            } catch (e: IllegalArgumentException) {
+                return SpriteOperationResult(
+                    valid = false,
+                    imageFile = imgPath,
+                    message = e.message ?: "Invalid sprite sheet spec",
+                )
+            }
+
+        val compiled =
+            try {
+                SpriteSheetCompiler.compileFile(pngFile = imgFile, spec = spec, name = baseName)
+            } catch (e: Exception) {
+                return SpriteOperationResult(
+                    valid = false,
+                    imageFile = imgPath,
+                    message = e.message ?: "Failed to compile sprite sheet '${imgFile.path}'",
+                )
+            }
+
+        val targetDir = (outDirPath ?: imgPath.parent ?: imgPath).toFile()
+        val exported = SpriteSheetCompiler.export(compiled, targetDir, baseName = baseName)
+        val exportedFiles =
+            listOf(
+                exported.chrFile,
+                exported.palFile,
+                exported.mskFile,
+                exported.includeFile,
+            ).map { pathPolicy.formatForOutput(it.toPath()) }
+
+        return SpriteOperationResult(
+            valid = true,
+            imageFile = imgPath,
+            compiled = compiled,
+            exportedAssets = exported,
+            exportedFiles = exportedFiles,
+            message =
+                "Successfully packed sprite sheet '$baseName' (${compiled.frameCount} frame(s), " +
+                    "${compiled.frameWidth}x${compiled.frameHeight}, " +
+                    ".chr=${compiled.chrBytes.size} B, .msk=${compiled.mskBytes.size} B).",
+        )
+    }
+
     private fun computeRelativeAtlasPath(
         levelFilePath: Path,
         atlasFilePath: Path,
@@ -841,6 +931,8 @@ class StudioOperations(
             assets.levelFile?.let { add(it.toPath()) }
             add(assets.mapBinFile.toPath())
             add(assets.headerFile.toPath())
+            assets.gmapBinFile?.let { add(it.toPath()) }
+            assets.gameplayHeaderFile?.let { add(it.toPath()) }
             assets.previewPngFile?.let { add(it.toPath()) }
         }.map { pathPolicy.formatForOutput(it) }
 
