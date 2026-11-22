@@ -264,6 +264,24 @@ def default_sfx_audit_runner(code: str) -> list[dict[str, Any]]:
     for_stack: list[tuple[int, int]] = []  # (line_no, stack_depth_at_entry)
     sp_delta = 0
 
+    _alu_ops = {
+        "add",
+        "adc",
+        "sub",
+        "sbc",
+        "and",
+        "bic",
+        "or",
+        "xor",
+        "mult",
+        "umult",
+    }
+    _move_ops = {"move", "moves", "moveb", "movew"}
+    _modal_ops = {"from", "to", "with"}
+    has_modal_prefix = False
+    last_move_non_r0: tuple[str, str, str, int] | None = None
+    pending_r0_move_alu: tuple[tuple[str, str, str, int], str, int] | None = None
+
     for idx, (line_no, stmt) in enumerate(statements):
         tokens = stmt.split()
         if not tokens:
@@ -272,12 +290,81 @@ def default_sfx_audit_runner(code: str) -> list[dict[str, Any]]:
 
         # Skip pure labels (e.g. "done:")
         if head.endswith(":") and len(tokens) == 1:
+            last_move_non_r0 = None
+            pending_r0_move_alu = None
             continue
         if head.endswith(":"):
+            last_move_non_r0 = None
+            pending_r0_move_alu = None
             tokens = tokens[1:]
             if not tokens:
                 continue
             head = tokens[0].lower()
+
+        # Track UNPREFIXED_ALU_AFTER_MOVE (Issue #28)
+        if head in ("alt1", "alt2", "alt3"):
+            pass
+        elif head in _modal_ops:
+            has_modal_prefix = True
+            last_move_non_r0 = None
+            pending_r0_move_alu = None
+        else:
+            if has_modal_prefix:
+                has_modal_prefix = False
+                last_move_non_r0 = None
+                pending_r0_move_alu = None
+            elif head in _move_ops:
+                raw_ops = " ".join(tokens[1:]).replace(",", " ").split()
+                dest_reg = raw_ops[0] if len(raw_ops) >= 1 else ""
+                src_reg = raw_ops[1] if len(raw_ops) >= 2 else ""
+                if (
+                    pending_r0_move_alu is not None
+                    and dest_reg.lower() == pending_r0_move_alu[0][1].lower()
+                    and src_reg.lower() == "r0"
+                ):
+                    pm_op, pm_dest, pm_src, pm_line = pending_r0_move_alu[0]
+                    alu_op, alu_line = pending_r0_move_alu[1], pending_r0_move_alu[2]
+                    diagnostics.append(
+                        {
+                            "line": alu_line,
+                            "rule": "UNPREFIXED_ALU_AFTER_MOVE",
+                            "severity": "WARNING",
+                            "message": (
+                                f"Unprefixed '{alu_op}' on line {alu_line} follows '{pm_op} {pm_dest}, {pm_src}' "
+                                f"on line {pm_line}; '{pm_op}' resets Sreg/Dreg to R0 so '{alu_op}' modifies R0 "
+                                f"instead of {pm_dest}. Use 'from {pm_src}; to {pm_dest}; {alu_op} ...' or "
+                                f"'with {pm_dest}; {alu_op} ...'."
+                            ),
+                        }
+                    )
+                pending_r0_move_alu = None
+                if dest_reg and dest_reg.lower() != "r0":
+                    last_move_non_r0 = (head, dest_reg, src_reg, line_no)
+                else:
+                    last_move_non_r0 = None
+            elif last_move_non_r0 is not None and head in _alu_ops:
+                pm_op, pm_dest, pm_src, pm_line = last_move_non_r0
+                if pm_src.lower() != "r0":
+                    diagnostics.append(
+                        {
+                            "line": line_no,
+                            "rule": "UNPREFIXED_ALU_AFTER_MOVE",
+                            "severity": "WARNING",
+                            "message": (
+                                f"Unprefixed '{head}' on line {line_no} follows '{pm_op} {pm_dest}, {pm_src}' "
+                                f"on line {pm_line}; '{pm_op}' resets Sreg/Dreg to R0 so '{head}' modifies R0 "
+                                f"instead of {pm_dest}. Use 'from {pm_src}; to {pm_dest}; {head} ...' or "
+                                f"'with {pm_dest}; {head} ...'."
+                            ),
+                        }
+                    )
+                    pending_r0_move_alu = None
+                else:
+                    pending_r0_move_alu = (last_move_non_r0, head, line_no)
+                last_move_non_r0 = None
+            else:
+                last_move_non_r0 = None
+                pending_r0_move_alu = None
 
         if head == "function":
             fn_stack.append(line_no)
@@ -1110,8 +1197,90 @@ class TraceAndSnippetGrader:
                     )
                 )
 
-        # 6. FX3 Static Audit on any authored/edited SuperFX assembly
-        if sfx_code.strip():
+        # 6. FX3 Static Audit on any authored/edited SuperFX assembly (Issue #29)
+        # Prefer full on-disk file or full write_file content for whole-file block-balancing rules;
+        # for partial edit_file hunks whose file is no longer on disk, apply only local rules.
+        whole_file_block_rules = {
+            "UNCLOSED_FUNCTION",
+            "UNBALANCED_ENDFUNCTION",
+            "UNCLOSED_FOR",
+            "UNBALANCED_ENDFOR",
+            "STACK_LEAK_ON_RETURN",
+            "LOOP_STACK_IMBALANCE",
+        }
+        sfx_exts = (".s", ".sgs", ".i", ".inc")
+        modified_sfx_paths: list[str] = []
+        written_sfx_content: dict[str, str] = {}
+        edited_sfx_hunks: dict[str, list[str]] = {}
+        for call in tool_calls:
+            tname = str(call.get("tool") or "")
+            targs = call.get("args") or {}
+            if tname not in ("write_file", "edit_file") or not isinstance(targs, dict):
+                continue
+            fpath = str(targs.get("Path", ""))
+            if not fpath.endswith(sfx_exts):
+                continue
+            if fpath not in modified_sfx_paths:
+                modified_sfx_paths.append(fpath)
+            if tname == "write_file":
+                cnt = str(targs.get("Content") or "")
+                if cnt:
+                    written_sfx_content[fpath] = cnt
+            elif tname == "edit_file":
+                repl = str(targs.get("Replacement") or "")
+                if repl:
+                    edited_sfx_hunks.setdefault(fpath, []).append(repl)
+
+        if modified_sfx_paths:
+            all_violations: list[dict[str, Any]] = []
+            for fpath in modified_sfx_paths:
+                candidate = Path(fpath)
+                disk_path: Path | None = None
+                if candidate.is_absolute() and candidate.is_file():
+                    disk_path = candidate
+                else:
+                    rel_candidate = self.workspace_root / fpath
+                    if rel_candidate.is_file():
+                        disk_path = rel_candidate
+
+                if disk_path is not None:
+                    try:
+                        full_text = disk_path.read_text(encoding="utf-8", errors="replace")
+                    except OSError:
+                        full_text = ""
+                    if full_text.strip():
+                        all_violations.extend(self.diagnostic_runner(full_text))
+                elif fpath in written_sfx_content:
+                    all_violations.extend(self.diagnostic_runner(written_sfx_content[fpath]))
+                else:
+                    for hunk in edited_sfx_hunks.get(fpath, []):
+                        hunk_diags = self.diagnostic_runner(hunk)
+                        all_violations.extend(
+                            d
+                            for d in hunk_diags
+                            if str(d.get("rule", "")) not in whole_file_block_rules
+                        )
+
+            if all_violations:
+                first = all_violations[0]
+                msg = first.get("message", str(first))
+                rule = first.get("rule", "DIAGNOSTIC")
+                checks.append(
+                    GraderCheckResult(
+                        grader_type="lsp_audit_clean",
+                        passed=False,
+                        message=f"LSP audit reported {len(all_violations)} violation(s): [{rule}] {msg}",
+                    )
+                )
+            else:
+                checks.append(
+                    GraderCheckResult(
+                        grader_type="lsp_audit_clean",
+                        passed=True,
+                        message="LSP audit reported 0 blocking violations",
+                    )
+                )
+        elif sfx_code.strip():
             checks.append(self._eval_lsp_audit_clean({}, sfx_code))
 
         # 7. Optional specific case graders

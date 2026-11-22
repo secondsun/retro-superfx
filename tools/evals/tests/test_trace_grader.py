@@ -645,6 +645,137 @@ def test_transcript_normalization_and_audit(tmp_path: Path) -> None:
     assert mcp_edit_rep.passed is True
 
 
+def test_unprefixed_alu_after_move_rule_in_default_runner() -> None:
+    from evals.trace_grader import default_sfx_audit_runner
+
+    bad_code = "move r7, r14\nadd #6\nmove r7, r0\n"
+    bad_diags = default_sfx_audit_runner(bad_code)
+    assert any(d["rule"] == "UNPREFIXED_ALU_AFTER_MOVE" for d in bad_diags)
+
+    for clean_code in (
+        "from r14\nto r7\nadd #6\n",
+        "move r0, r14\nadd #6\nmove r7, r0\n",
+        "move r6, r0\nadd r0\nadd r0\n",
+        "move r7, r14\nwith r7\nadd #6\n",
+    ):
+        diags = default_sfx_audit_runner(clean_code)
+        assert not any(
+            d["rule"] == "UNPREFIXED_ALU_AFTER_MOVE" for d in diags
+        ), f"Unexpected UNPREFIXED_ALU_AFTER_MOVE for:\n{clean_code}"
+
+
+def test_transcript_partial_edit_hunks_do_not_false_positive_block_balance(
+    tmp_path: Path,
+) -> None:
+    import json
+
+    grader = TraceAndSnippetGrader(workspace_root=tmp_path)
+
+    # 1. Partial edit_file hunks on non-existent path must NOT trigger UNCLOSED_FUNCTION / UNBALANCED_ENDFUNCTION
+    partial_ok = tmp_path / "partial_ok.jsonl"
+    partial_ok_lines = [
+        {
+            "step_index": 0,
+            "type": "USER_INPUT",
+            "content": "<USER_REQUEST>\nRefactor helper header and footer.\n</USER_REQUEST>",
+        },
+        {
+            "step_index": 1,
+            "type": "PLANNER_RESPONSE",
+            "tool_calls": [
+                {
+                    "name": "edit_file",
+                    "args": {
+                        "Path": '"/nonexistent/foo.i"',
+                        "Target": '"function foo\\n    nop"',
+                        "Replacement": '"function foo\\n    from r14\\n    to r7\\n    add #6"',
+                    },
+                },
+                {
+                    "name": "edit_file",
+                    "args": {
+                        "Path": '"/nonexistent/bar.i"',
+                        "Target": '"    return\\nendfunction"',
+                        "Replacement": '"    nop\\n    return\\nendfunction"',
+                    },
+                },
+            ],
+        },
+    ]
+    partial_ok.write_text(
+        "\n".join(json.dumps(x) for x in partial_ok_lines) + "\n", encoding="utf-8"
+    )
+    ok_rep = grader.audit_transcript(partial_ok)
+    assert ok_rep.passed is True, [c.message for c in ok_rep.checks if not c.passed]
+
+    # 2. Partial edit_file hunk containing a local FX3 violation MUST still fail
+    partial_bad = tmp_path / "partial_bad.jsonl"
+    partial_bad_lines = [
+        {
+            "step_index": 0,
+            "type": "USER_INPUT",
+            "content": "<USER_REQUEST>\nUpdate raster loop.\n</USER_REQUEST>",
+        },
+        {
+            "step_index": 1,
+            "type": "PLANNER_RESPONSE",
+            "tool_calls": [
+                {
+                    "name": "edit_file",
+                    "args": {
+                        "Path": '"/nonexistent/bad.i"',
+                        "Target": '"nop"',
+                        "Replacement": '"function foo\\n    move r7, r14\\n    add #6\\n    move r7, r0"',
+                    },
+                },
+            ],
+        },
+    ]
+    partial_bad.write_text(
+        "\n".join(json.dumps(x) for x in partial_bad_lines) + "\n", encoding="utf-8"
+    )
+    bad_rep = grader.audit_transcript(partial_bad)
+    assert bad_rep.passed is False
+    assert any(
+        c.grader_type == "lsp_audit_clean" and "UNPREFIXED_ALU_AFTER_MOVE" in c.message
+        for c in bad_rep.checks
+    )
+
+    # 3. Partial edit_file hunk on an existing balanced on-disk file audits the full file and passes
+    on_disk = tmp_path / "balanced.i"
+    on_disk.write_text(
+        "function demo_fn\n    from r14\n    to r7\n    add #6\n    return\nendfunction\n",
+        encoding="utf-8",
+    )
+    disk_transcript = tmp_path / "disk_transcript.jsonl"
+    disk_lines = [
+        {
+            "step_index": 0,
+            "type": "USER_INPUT",
+            "content": "<USER_REQUEST>\nTweak demo_fn header.\n</USER_REQUEST>",
+        },
+        {
+            "step_index": 1,
+            "type": "PLANNER_RESPONSE",
+            "tool_calls": [
+                {
+                    "name": "edit_file",
+                    "args": {
+                        "Path": json.dumps(str(on_disk)),
+                        "Target": '"function demo_fn"',
+                        "Replacement": '"function demo_fn\\n    from r14\\n    to r7\\n    add #6"',
+                    },
+                },
+            ],
+        },
+    ]
+    disk_transcript.write_text(
+        "\n".join(json.dumps(x) for x in disk_lines) + "\n", encoding="utf-8"
+    )
+    disk_rep = grader.audit_transcript(disk_transcript)
+    assert disk_rep.passed is True, [c.message for c in disk_rep.checks if not c.passed]
+
+
 
 
 
