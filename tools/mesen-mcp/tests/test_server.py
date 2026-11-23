@@ -150,3 +150,33 @@ async def test_server_all_five_tools_via_fake_runner(tmp_path):
     payload_addr = json.loads(res_addr.content[0].text)
     assert payload_addr["status"] == "SUCCESS"
     assert payload_addr["address"] == "0x038030"
+
+    # 5b. sfx_resolve_address batch symbols + summary
+    res_batch = await srv_prof.call_tool(
+        "sfx_resolve_address",
+        {
+            "project": str(proj),
+            "symbols": ["test_setup", "test_stop", "INPUT", "MISSING_SYM"],
+            "summary": True,
+        },
+    )
+    payload_batch = json.loads(res_batch.content[0].text)
+    assert payload_batch["status"] == "SUCCESS"
+    assert payload_batch["found_count"] == 3
+    assert payload_batch["missing"] == ["MISSING_SYM"]
+    assert payload_batch["results"]["INPUT"]["offset_hex"] == "0x0010"
+    assert payload_batch["results"]["INPUT"]["word_aligned"] is True
+    assert payload_batch["results"]["MISSING_SYM"]["found"] is False
+    assert payload_batch["dbg_summary"]["file_count"] == 1
+    assert payload_batch["dbg_summary"]["gsu_file_count"] == 1
+
+    # 1b. run_sfx_test batch test_names
+    res_batch_run = await srv_run.call_tool(
+        "run_sfx_test",
+        {"test_names": [str(proj), str(proj)]},
+    )
+    payload_batch_run = json.loads(res_batch_run.content[0].text)
+    assert payload_batch_run["status"] == "PASS"
+    assert payload_batch_run["total"] == 2
+    assert payload_batch_run["passed"] == 2
+    assert payload_batch_run["failed"] == 0

@@ -73,12 +73,12 @@ Modify `Test.sgs`:
    In `test_start:`, call the macro or function under test.
 4. **Memory Settling NOPs**:
    SuperFX RAM stores are pipelined/asynchronous. Insert 8 `nop`s before `test_stop:` so buffered writes commit to RAM before Lua intercepts execution.
-5. **Halt**:
+5. **Halt / Loop Back**:
+   Loop back to `test_setup:` (which supports multi-case suites and keeps `sfx_audit_diagnostics` free of `PIPELINE_SETTLING_8_NOP` errors) — or if using `stop`, keep all 8 settling `nop`s immediately before `stop`:
    ```assembly
    test_stop:
        nop
-       nop
-       stop
+       bra test_setup
        nop
    ```
 
@@ -134,17 +134,18 @@ Or synchronize symbol addresses into `test.lua` using [extract_syms.py](./script
 python3 .agents/skills/create-gsu-test/scripts/extract_syms.py tests/<test_name>/Test.cpu.sym --update-lua tests/<test_name>/test.lua
 ```
 
-Verify that all data buffers (`INPUT`, `OUTPUT`, `TEST_CASE_IDX`, `TEST_RESULT`) are reported as **word-aligned** (even 16-bit offset). Note that executing the test via `retro-superfx_mesen:run_sfx_test` also automatically synchronizes top-level symbol assignments in `test.lua` before running.
+Verify that all data buffers (`INPUT`, `OUTPUT`, `TEST_CASE_IDX`, `TEST_RESULT`) are reported as **word-aligned** (even 16-bit offset). Note that `retro-superfx_mesen:run_sfx_test` syncs an *ephemeral* copy of `test.lua` at runtime and does **not** rewrite the file on disk; always run `extract_syms.py --update-lua` or `.agents/skills/run-gsu-test/scripts/sync_test_labels.py` before committing so the pre-commit symbol check passes.
 
 ---
 
 ### Step 7: Configure Lua Test Assertions (`test.lua`)
 Edit `tests/<test_name>/test.lua`:
-- Intercept `test_stop`:
+- Intercept `test_stop` (and `test_setup` for multi-case harnesses):
   ```lua
   emu.addMemoryCallback(onTestStop, emu.callbackType.exec, test_stop, test_stop, 4, emu.memType.gsuWorkRam)
   ```
-  *(Note: cpuType `4` is GSU, memoryType is `emu.memType.gsuWorkRam`).*
+  > [!IMPORTANT]
+  > Always pass the 6th argument `emu.memType.gsuWorkRam` (with `cpuType = 4` for GSU) when the test executes from GSURAM (`PBR = $70`). Omitting `emu.memType.gsuWorkRam` causes Mesen CE to silently miss the callback and time out.
 - Read memory using `emu.read(...)` (bytes) or `emu.readWord(...)` / `emu.read16(...)` (words).
 - When loading external binary fixtures (`Data/*.bin`) inside `test.lua`, always resolve paths relative to `script_dir` (included in `test_template/test.lua` via `debug.getinfo(1, "S").source`) rather than relying on the process CWD or hardcoding `/Users/...` or `/home/...` paths.
 - Log results using `print(...)` so they output to `stdout` in test runner mode.

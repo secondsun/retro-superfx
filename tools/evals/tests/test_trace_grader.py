@@ -776,6 +776,82 @@ def test_transcript_partial_edit_hunks_do_not_false_positive_block_balance(
     assert disk_rep.passed is True, [c.message for c in disk_rep.checks if not c.passed]
 
 
+def test_transcript_p0_grep_policy_exempts_todo_scans_and_dbg_header_checks(
+    tmp_path: Path,
+) -> None:
+    import json
+
+    grader = TraceAndSnippetGrader(workspace_root=tmp_path)
+
+    # Allowed: TODO/FIXME comment scan across .i files, and .dbg ^file table check
+    ok_transcript = tmp_path / "ok_grep.jsonl"
+    ok_lines = [
+        {
+            "step_index": 0,
+            "type": "USER_INPUT",
+            "content": "<USER_REQUEST>\nAudit TODOs and verify .dbg file headers.\n</USER_REQUEST>",
+        },
+        {
+            "step_index": 1,
+            "type": "PLANNER_RESPONSE",
+            "tool_calls": [
+                {
+                    "name": "run_command",
+                    "args": {
+                        "CommandLine": 'grep -rnE "TODO|FIXME|WIP" snes-sfx-demo/X-GSU/ --include="*.i"',
+                    },
+                },
+                {
+                    "name": "run_command",
+                    "args": {
+                        "CommandLine": 'grep -E "^file\\s|gsu_mesh\\.i" snes-sfx-demo/X-GSU/IsoRPGDemo/SuperFX.dbg | head -n 25',
+                    },
+                },
+            ],
+        },
+    ]
+    ok_transcript.write_text(
+        "\n".join(json.dumps(x) for x in ok_lines) + "\n", encoding="utf-8"
+    )
+    ok_rep = grader.audit_transcript(ok_transcript)
+    assert ok_rep.passed is True, [c.message for c in ok_rep.checks if not c.passed]
+
+    # Forbidden: grepping a symbol in .sgs or grepping a symbol in .cpu.sym/.dbg
+    bad_sym = tmp_path / "bad_sym.jsonl"
+    bad_sym.write_text(
+        "\n".join(
+            json.dumps(x)
+            for x in [
+                {
+                    "step_index": 0,
+                    "type": "USER_INPUT",
+                    "content": "<USER_REQUEST>\nCheck symbol.\n</USER_REQUEST>",
+                },
+                {
+                    "step_index": 1,
+                    "type": "PLANNER_RESPONSE",
+                    "tool_calls": [
+                        {
+                            "name": "run_command",
+                            "args": {
+                                "CommandLine": "grep gsu_mesh_build_scene snes-sfx-demo/X-GSU/IsoRPGDemo/SuperFX.dbg",
+                            },
+                        }
+                    ],
+                },
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    bad_rep = grader.audit_transcript(bad_sym)
+    assert bad_rep.passed is False
+    assert any(
+        not c.passed and "P0 Address Policy" in c.message for c in bad_rep.checks
+    )
+
+
+
 
 
 

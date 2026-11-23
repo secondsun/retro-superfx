@@ -100,12 +100,39 @@ with open(lua_file, "r", encoding="utf-8", errors="replace") as f:
 if stale:
     for var, act, exp in stale:
         print(f"[pre-commit] Error: Symbol \x27{var}\x27 in X-GSU/tests/{test_name}/test.lua ({act}) is out of sync with Test.cpu.sym ({exp})!", file=sys.stderr)
-    print("[pre-commit] Please update test.lua or run sfx_resolve_address / run_sfx_test to synchronize symbol addresses.", file=sys.stderr)
+    print(f"[pre-commit] Run: python3 ../.agents/skills/run-gsu-test/scripts/sync_test_labels.py X-GSU/tests/{test_name}/Test.cpu.sym X-GSU/tests/{test_name}/test.lua", file=sys.stderr)
     sys.exit(1)
 ' "$sym_file" "$lua_file" "$test_name" || exit 1
         fi
       fi
     done
+
+    # Also smoke-build affected production ROMs with --Werror when shared engine/build files change.
+    if [ -f "$root/../sfx-optimizer/target/sfx-optimizer.jar" ]; then
+      if echo "$staged_files" | grep -qE '^(libSFX/libSFX\.make|X-GSU/(common|gsu_iso|gsu_maths)/)'; then
+        echo "[pre-commit] building X-GSU/IsoEngine (--Werror)"
+        make -s -C "$root/X-GSU/IsoEngine" SFX_OPT_FLAGS="--Werror" || {
+          echo "[pre-commit] IsoEngine --Werror build failed." >&2
+          exit 1
+        }
+      fi
+      if echo "$staged_files" | grep -qE '^(libSFX/libSFX\.make|X-GSU/(gsu_mesh|IsoRPGDemo)/)'; then
+        echo "[pre-commit] building X-GSU/IsoRPGDemo (--Werror)"
+        make -s -C "$root/X-GSU/IsoRPGDemo" SFX_OPT_FLAGS="--Werror" || {
+          echo "[pre-commit] IsoRPGDemo --Werror build failed." >&2
+          exit 1
+        }
+      fi
+    fi
+  fi
+fi
+
+# Reject Kotlin `return@repeat` footgun (acts as continue, not break) in any staged .kt files.
+staged_kt="$(git diff --cached --name-only --diff-filter=ACMR | grep -E '\.kt$' || true)"
+if [ -n "$staged_kt" ]; then
+  if echo "$staged_kt" | xargs grep -n 'return@repeat' 2>/dev/null; then
+    echo "[pre-commit] Error: Found 'return@repeat' in staged Kotlin source (acts as continue, not break). Use a 'for' loop with 'break' instead." >&2
+    exit 1
   fi
 fi
 
@@ -113,7 +140,8 @@ fi
 [ -x ./mvnw ] || exit 0
 
 # Skip when no JVM sources are staged.
-if ! git diff --cached --name-only --diff-filter=ACMR | grep -qE '\.(kt|java|kts)$|(^|/)pom\.xml$'; then
+staged_jvm="$(git diff --cached --name-only --diff-filter=ACMR | grep -E '\.(kt|java|kts)$|(^|/)pom\.xml$' || true)"
+if [ -z "$staged_jvm" ]; then
   exit 0
 fi
 
@@ -128,4 +156,12 @@ echo "[pre-commit] test"
   echo "[pre-commit] Tests failed." >&2
   exit 1
 }
+
+if echo "$staged_jvm" | grep -qE '\.java$' && grep -q 'maven-javadoc-plugin' pom.xml 2>/dev/null; then
+  echo "[pre-commit] javadoc:javadoc"
+  ./mvnw -q javadoc:javadoc || {
+    echo "[pre-commit] Javadoc check failed." >&2
+    exit 1
+  }
+fi
 

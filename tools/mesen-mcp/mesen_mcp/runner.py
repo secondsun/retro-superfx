@@ -2,7 +2,7 @@
 
 from pathlib import Path
 import re
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from mesen_mcp.session import MesenRunner, SfxTestSession
 from mesen_mcp.utils import get_repo_root, resolve_test_dir
@@ -140,14 +140,89 @@ def run_sfx_suite(
     }
 
 
-def run_sfx_test(
-    test_name: str,
+def run_sfx_tests(
+    test_names: List[str],
     timeout_seconds: int = 15,
     mesen_path: Optional[str] = None,
     runner: Optional[MesenRunner] = None,
     skip_compile: bool = False,
 ) -> Dict[str, Any]:
-    """Incrementally compile and headlessly execute a SuperFX unit test via an ephemeral synced Lua script."""
+    """Execute a curated list of SuperFX unit tests and aggregate structured pass/fail results."""
+    results = []
+    pass_count = 0
+    fail_count = 0
+    skip_count = 0
+    failed_tests = []
+    output_lines = []
+
+    for name in test_names:
+        res = run_sfx_test(
+            test_name=name,
+            timeout_seconds=timeout_seconds,
+            mesen_path=mesen_path,
+            runner=runner,
+            skip_compile=skip_compile,
+        )
+        results.append(res)
+        st = res.get("status")
+        if st == "PASS":
+            pass_count += 1
+            output_lines.append(f"PASS: {name}")
+        elif st == "SKIP":
+            skip_count += 1
+            output_lines.append(f"SKIP: {name} — {res.get('reason', '')}")
+        else:
+            fail_count += 1
+            failed_tests.append(name)
+            err_msg = res.get("error") or res.get("output", "")
+            first_line = err_msg.splitlines()[0] if err_msg else "Test failed"
+            output_lines.append(f"FAIL: {name} ({first_line})")
+
+    summary_banner = (
+        f"SuperFX Test Batch Summary ({len(test_names)} tests)\n"
+        f"Passed: {pass_count} | Failed: {fail_count} | Skipped: {skip_count}"
+    )
+    if failed_tests:
+        summary_banner += f"\nFailed tests: {', '.join(failed_tests)}"
+
+    return {
+        "status": "PASS" if fail_count == 0 else "FAIL",
+        "test": ",".join(test_names),
+        "total": len(results),
+        "passed": pass_count,
+        "failed": fail_count,
+        "skipped": skip_count,
+        "failed_tests": failed_tests,
+        "summary": summary_banner,
+        "results": results,
+        "output": "\n".join(output_lines) + "\n\n" + summary_banner,
+    }
+
+
+def run_sfx_test(
+    test_name: Optional[str] = None,
+    timeout_seconds: int = 15,
+    mesen_path: Optional[str] = None,
+    runner: Optional[MesenRunner] = None,
+    skip_compile: bool = False,
+    test_names: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """Incrementally compile and headlessly execute one or more SuperFX unit tests via ephemeral synced Lua."""
+    if test_names:
+        return run_sfx_tests(
+            test_names=test_names,
+            timeout_seconds=timeout_seconds,
+            mesen_path=mesen_path,
+            runner=runner,
+            skip_compile=skip_compile,
+        )
+    if not test_name:
+        return {
+            "status": "FAIL",
+            "test": "",
+            "error": "Provide either 'test_name' or 'test_names'.",
+            "output": "",
+        }
     if test_name.strip().lower() == "all":
         return run_sfx_suite(
             timeout_seconds=timeout_seconds,

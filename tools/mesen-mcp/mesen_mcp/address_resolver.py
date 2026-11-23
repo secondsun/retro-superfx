@@ -41,11 +41,13 @@ def format_symbol(sym: ResolvedSymbol) -> Dict[str, Any]:
 def resolve_address(
     project: Optional[str] = None,
     symbol: Optional[str] = None,
+    symbols: Optional[List[str]] = None,
     end_symbol: Optional[str] = None,
     end_address: Optional[Union[str, int]] = None,
     address: Optional[Union[str, int]] = None,
     prefix: Optional[str] = None,
     range: Optional[str] = None,
+    summary: bool = False,
     max_results: int = 20,
 ) -> Dict[str, Any]:
     """Resolve symbol <-> address from ld65 .dbg and .cpu.sym outputs without launching Mesen."""
@@ -168,6 +170,33 @@ def resolve_address(
             output["found"] = False
             output["error"] = f"Symbol '{symbol}' not found in '{project}'."
             output["suggestions"] = index.suggest_symbols(symbol, limit=5)
+
+    # 1b. Batch Symbols Query
+    if symbols is not None:
+        batch_results: Dict[str, Any] = {}
+        missing: List[str] = []
+        found_count = 0
+        for sym_query in symbols:
+            matched_sym = index.resolve_symbol(sym_query, allow_output_aliases=True)
+            if matched_sym is not None:
+                found_count += 1
+                entry = format_symbol(matched_sym)
+                entry["found"] = True
+                entry["offset_hex"] = f"0x{matched_sym.offset:04X}"
+                entry["word_aligned"] = (matched_sym.offset % 2) == 0
+                batch_results[sym_query] = entry
+            else:
+                missing.append(sym_query)
+                batch_results[sym_query] = {
+                    "found": False,
+                    "error": f"Symbol '{sym_query}' not found in '{target_project}'.",
+                    "suggestions": index.suggest_symbols(sym_query, limit=5),
+                }
+        output["results"] = batch_results
+        output["found_count"] = found_count
+        output["missing"] = missing
+        if missing and found_count == 0 and symbol is None:
+            output["status"] = "NOT_FOUND"
 
     # 2. Address Query
     if address is not None:
@@ -295,15 +324,38 @@ def resolve_address(
         output["total_matches"] = len(unique_prefix)
         output["matches"] = [format_symbol(s) for s in unique_prefix[:max_results]]
 
+    # 5. Debug Artifact Summary Query
+    if summary:
+        dbg_summary: Dict[str, Any] = {
+            "total_symbols": len(all_symbols),
+            "dbg_file": str(index.dbg_file) if index.dbg_file else None,
+            "sym_file": str(index.sym_file) if index.sym_file else None,
+        }
+        if index.dbg_data is not None:
+            all_files = sorted(index.dbg_data.files.values(), key=lambda f: f.id)
+            gsu_files = [
+                {"id": f.id, "name": f.name, "size": f.size, "mod": f.mod}
+                for f in all_files
+                if f.name.endswith((".sgs", ".i", ".inc"))
+            ]
+            dbg_summary["file_count"] = len(all_files)
+            dbg_summary["line_count"] = len(index.dbg_data.lines)
+            dbg_summary["segment_count"] = len(index.dbg_data.segments)
+            dbg_summary["gsu_file_count"] = len(gsu_files)
+            dbg_summary["gsu_files"] = gsu_files[:max_results]
+        output["dbg_summary"] = dbg_summary
+
     if (
         symbol is None
+        and symbols is None
         and address is None
         and range is None
         and prefix is None
+        and not summary
     ):
         output["message"] = (
             f"Loaded {len(all_symbols)} symbols from '{project}'. "
-            f"Specify 'symbol', 'address', 'prefix', or 'range' to query."
+            f"Specify 'symbol', 'symbols', 'address', 'prefix', 'range', or 'summary=True' to query."
         )
         output["total_symbols"] = len(all_symbols)
 

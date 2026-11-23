@@ -1,5 +1,5 @@
 import argparse
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 try:
     from mcp.server.mcpserver import MCPServer as FastMCP
@@ -22,23 +22,29 @@ def create_server(runner: Optional[MesenRunner] = None) -> FastMCP:
     )
 
     @app.tool()
-    def run_sfx_test(test_name: str, timeout_seconds: int = 15) -> Dict[str, Any]:
-        """Use INSTEAD OF './tools/run-sfx-test.sh' to compile and execute a SuperFX unit test headlessly using Mesen.
+    def run_sfx_test(
+        test_name: Optional[str] = None,
+        test_names: Optional[List[str]] = None,
+        timeout_seconds: int = 15,
+    ) -> Dict[str, Any]:
+        """Use INSTEAD OF './tools/run-sfx-test.sh' to compile and execute one or more SuperFX unit tests headlessly using Mesen.
 
         Args:
-            test_name: Name of the test directory (e.g. 'sqrt', 'transform', 'vector3_add')
-                       or path to the test directory, or 'all' to run all active unit tests.
-            timeout_seconds: Maximum execution time in seconds (default: 15).
+            test_name: Name of a single test directory (e.g. 'sqrt', 'transform', 'vector3_add'),
+                       path to the test directory, or 'all' to run all active unit tests.
+            test_names: Optional list of test names/paths to run as a single batch (e.g. ['test_spill_alloc', 'sprite_mask']).
+            timeout_seconds: Maximum execution time in seconds per test (default: 15).
 
         Returns:
             Structured test results including 'status' ('PASS' | 'FAIL'), 'test',
-            'exit_code', and 'output'. When test_name is 'all', includes 'total',
-            'passed', 'failed', 'skipped', and 'results'.
+            'exit_code', and 'output'. When test_name is 'all' or test_names is provided,
+            includes 'total', 'passed', 'failed', 'skipped', and 'results'.
         """
         from mesen_mcp.runner import run_sfx_test as execute_run_sfx_test
 
         return execute_run_sfx_test(
             test_name=test_name,
+            test_names=test_names,
             timeout_seconds=timeout_seconds,
             runner=runner,
         )
@@ -175,12 +181,14 @@ def create_server(runner: Optional[MesenRunner] = None) -> FastMCP:
         symbol: Optional[str] = None,
         symbol_name: Optional[str] = None,
         name: Optional[str] = None,
+        symbols: Optional[List[str]] = None,
         end_symbol: Optional[str] = None,
         end_address: Optional[Union[str, int]] = None,
         address: Optional[Union[str, int]] = None,
         addr: Optional[Union[str, int]] = None,
         prefix: Optional[str] = None,
         range: Optional[str] = None,
+        summary: bool = False,
         max_results: int = 20,
     ) -> Dict[str, Any]:
         """Use INSTEAD OF grep on .cpu.sym/.dbg to resolve symbol <-> address and inspect memory layout from ld65 build outputs.
@@ -188,11 +196,13 @@ def create_server(runner: Optional[MesenRunner] = None) -> FastMCP:
         Args:
             project: Path or name of the demo or test directory (optional; defaults to last used or 'IsoEngine'; also accepts 'target_name' or 'scene_test_name').
             symbol: Symbol name to look up (with or without leading '.', also accepts 'symbol_name' or 'name').
+            symbols: Optional list of symbol names to resolve in a single batch (returns 'results', 'found_count', 'missing', 'offset_hex', 'word_aligned').
             end_symbol: Optional end symbol or label name to compute byte_span, cache_lines_16b, and fits_in_512b_cache from 'symbol'.
             end_address: Optional end address (hex string or int) to compute byte_span and cache residency from 'symbol'.
             address: Address as hex string or int, or bank:offset (e.g. '80:9DA6', '0xAE88', 0x700B1A; also accepts 'addr').
             prefix: Prefix string to find matching symbols (e.g. 'ISO_CAM').
             range: Address range string (e.g. '700000-701FFF') to list symbols sorted by address.
+            summary: When true, returns .dbg file/line/segment summary statistics and GSU source files.
             max_results: Maximum number of list items to return (default: 20).
 
         Returns:
@@ -207,11 +217,13 @@ def create_server(runner: Optional[MesenRunner] = None) -> FastMCP:
         return execute_resolve_address(
             project=resolved_proj,
             symbol=resolved_sym,
+            symbols=symbols,
             end_symbol=end_symbol,
             end_address=end_address,
             address=resolved_addr,
             prefix=prefix,
             range=range,
+            summary=summary,
             max_results=max_results,
         )
 

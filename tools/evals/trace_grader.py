@@ -1055,6 +1055,34 @@ class TraceAndSnippetGrader:
         checks: list[GraderCheckResult] = []
 
         # 1. Universal P0: No grep/rg on .s/.sgs/.i/.inc sources for symbols
+        # (Exempt plain-text comment/TODO marker scans and .dbg metadata header checks.)
+        asm_grep_re = re.compile(
+            r"(?<![|\w \t])[ \t]*\b(grep|egrep|fgrep|rg|ag)\b(?:(?![ \t]*\|[ \t])[^;\n])*?\.(s|sgs|i|inc)\b",
+            re.IGNORECASE,
+        )
+        comment_marker_re = re.compile(
+            r"\b(TODO|FIXME|WIP|HACK|NOTE|FUTURE|stub|placeholder|deferred)\b",
+            re.IGNORECASE,
+        )
+        dbg_meta_grep_re = re.compile(
+            r"""\b(grep|egrep|fgrep|rg|ag)\b[^;\n]*["']\^(?:file|line)(?:\\s|\\t|\s|\|)[^"']*["'][^;\n]*\.dbg\b""",
+            re.IGNORECASE,
+        )
+        asm_symbol_calls = [
+            c
+            for c in tool_calls
+            if not (
+                str(c.get("tool") or "") == "run_command"
+                and isinstance(c.get("args"), dict)
+                and (
+                    (
+                        asm_grep_re.search(str(c["args"].get("CommandLine", "")))
+                        and comment_marker_re.search(str(c["args"].get("CommandLine", "")))
+                    )
+                    or dbg_meta_grep_re.search(str(c["args"].get("CommandLine", "")))
+                )
+            )
+        ]
         checks.append(
             self._eval_tool_forbidden(
                 {
@@ -1062,11 +1090,22 @@ class TraceAndSnippetGrader:
                     "args_pattern": r"(?<![|\w \t])[ \t]*\b(grep|egrep|fgrep|rg|ag)\b(?:(?![ \t]*\|[ \t])[^;\n])*?\.(s|sgs|i|inc)\b",
                     "reason": "[P0 Symbol/Ref Policy] Do not grep .s/.sgs/.i/.inc sources; use sfx_lookup_symbol or sfx_find_references on retro-superfx_lsp",
                 },
-                tool_calls,
+                asm_symbol_calls,
             )
         )
 
         # 2. Universal P0: No grep/rg on .sym/.dbg for linker addresses
+        # (Exempt inspecting ld65 .dbg file/line metadata header records like '^file\s' / '^line\s'.)
+        addr_policy_calls = [
+            c
+            for c in tool_calls
+            if not (
+                str(c.get("tool") or "") == "run_command"
+                and isinstance(c.get("args"), dict)
+                and ".sym" not in str(c["args"].get("CommandLine", ""))
+                and dbg_meta_grep_re.search(str(c["args"].get("CommandLine", "")))
+            )
+        ]
         checks.append(
             self._eval_tool_forbidden(
                 {
@@ -1074,7 +1113,7 @@ class TraceAndSnippetGrader:
                     "args_pattern": r"(?<![|\w \t])[ \t]*\b(grep|egrep|fgrep|rg|ag)\b(?:(?![ \t]*\|[ \t])[^;\n])*?\.(sym|dbg)\b",
                     "reason": "[P0 Address Policy] Do not grep .cpu.sym or .dbg files; use sfx_resolve_address on retro-superfx_mesen",
                 },
-                tool_calls,
+                addr_policy_calls,
             )
         )
 
