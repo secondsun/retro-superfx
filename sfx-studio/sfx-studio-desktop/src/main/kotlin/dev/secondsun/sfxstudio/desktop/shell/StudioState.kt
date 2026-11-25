@@ -13,7 +13,17 @@ import dev.secondsun.sfxstudio.core.level.MapGrid
 import dev.secondsun.sfxstudio.core.level.SFX_LEVEL_EXTENSION
 import dev.secondsun.sfxstudio.desktop.atlas.AtlasEditorState
 import dev.secondsun.sfxstudio.desktop.level.LevelEditorState
+import dev.secondsun.sfxstudio.desktop.ui.theme.AccentColorPreset
+import dev.secondsun.sfxstudio.desktop.ui.theme.StudioColors
+import dev.secondsun.sfxstudio.desktop.ui.theme.StudioViewportClass
+import dev.secondsun.sfxstudio.desktop.ui.theme.ThemeModePreference
 import java.io.File
+
+enum class TouchModePreference {
+    AUTO,
+    COMPACT,
+    TOUCH,
+}
 
 class StudioState(
     initialFiles: List<File> = emptyList(),
@@ -49,8 +59,111 @@ class StudioState(
         setPreference("lastExportDirectory", dir)
     }
 
-    // UI scaling
+    // UI scaling & adaptive shell preferences
     var uiScaleMultiplier by mutableStateOf(1.0f)
+
+    var touchModePreference by mutableStateOf(
+        getPreference("touchModePreference")
+            ?.let { raw -> runCatching { TouchModePreference.valueOf(raw) }.getOrNull() }
+            ?: TouchModePreference.AUTO,
+    )
+        private set
+
+    fun updateTouchModePreference(mode: TouchModePreference) {
+        touchModePreference = mode
+        setPreference("touchModePreference", mode.name)
+    }
+
+    fun cycleTouchModePreference() {
+        val next =
+            when (touchModePreference) {
+                TouchModePreference.AUTO -> TouchModePreference.TOUCH
+                TouchModePreference.TOUCH -> TouchModePreference.COMPACT
+                TouchModePreference.COMPACT -> TouchModePreference.AUTO
+            }
+        updateTouchModePreference(next)
+    }
+
+    fun resolveTouchComfort(viewportClass: StudioViewportClass): Boolean =
+        when (touchModePreference) {
+            TouchModePreference.COMPACT -> false
+            TouchModePreference.TOUCH -> true
+            TouchModePreference.AUTO -> viewportClass == StudioViewportClass.COMPACT
+        }
+
+    // Cross-platform Light/Dark Theme & System Accent Preferences
+    var themeModePreference by mutableStateOf(
+        getPreference("themeModePreference")
+            ?.let { raw -> runCatching { ThemeModePreference.valueOf(raw) }.getOrNull() }
+            ?: ThemeModePreference.SYSTEM,
+    )
+        private set
+
+    var accentColorPreset by mutableStateOf(
+        getPreference("accentColorPreset")
+            ?.let { raw -> runCatching { AccentColorPreset.valueOf(raw) }.getOrNull() }
+            ?: AccentColorPreset.SYSTEM,
+    )
+        private set
+
+    var detectedSystemDarkMode by mutableStateOf(platform.detectSystemDarkMode())
+        private set
+
+    var detectedSystemAccentArgb by mutableStateOf(platform.detectSystemAccentColorArgb())
+        private set
+
+    fun refreshSystemAppearance() {
+        detectedSystemDarkMode = platform.detectSystemDarkMode()
+        detectedSystemAccentArgb = platform.detectSystemAccentColorArgb()
+    }
+
+    fun updateThemeModePreference(mode: ThemeModePreference) {
+        themeModePreference = mode
+        setPreference("themeModePreference", mode.name)
+        if (mode == ThemeModePreference.SYSTEM) {
+            refreshSystemAppearance()
+        }
+    }
+
+    fun cycleThemeModePreference() {
+        val next =
+            when (themeModePreference) {
+                ThemeModePreference.SYSTEM -> ThemeModePreference.LIGHT
+                ThemeModePreference.LIGHT -> ThemeModePreference.DARK
+                ThemeModePreference.DARK -> ThemeModePreference.SYSTEM
+            }
+        updateThemeModePreference(next)
+    }
+
+    fun updateAccentColorPreset(preset: AccentColorPreset) {
+        accentColorPreset = preset
+        setPreference("accentColorPreset", preset.name)
+        if (preset == AccentColorPreset.SYSTEM) {
+            refreshSystemAppearance()
+        }
+    }
+
+    val effectiveIsDarkTheme: Boolean
+        get() =
+            when (themeModePreference) {
+                ThemeModePreference.DARK -> true
+                ThemeModePreference.LIGHT -> false
+                ThemeModePreference.SYSTEM -> detectedSystemDarkMode ?: true
+            }
+
+    val effectiveAccentArgb: Int
+        get() =
+            accentColorPreset.fallbackArgb
+                ?: detectedSystemAccentArgb
+                ?: StudioColors.DEFAULT_ACCENT_ARGB
+
+    val resolvedColors: StudioColors
+        get() = StudioColors.fromAppearance(isDark = effectiveIsDarkTheme, rawAccentArgb = effectiveAccentArgb)
+
+    // Adaptive dock & bottom-sheet visibility
+    var showLeftDock by mutableStateOf(true)
+    var showRightDock by mutableStateOf(true)
+    var showCompactBottomSheet by mutableStateOf(true)
 
     fun zoomInUi() {
         uiScaleMultiplier = (Math.round((uiScaleMultiplier + 0.1f) * 10f) / 10f).coerceAtMost(3.0f)
@@ -297,6 +410,14 @@ class StudioState(
     fun saveActiveSession(): Boolean = activeSession?.let { saveSession(it) } ?: false
 
     fun saveActiveSessionAs(): Boolean = activeSession?.let { saveSessionAs(it) } ?: false
+
+    fun undoActiveSession() {
+        activeSession?.undo()
+    }
+
+    fun redoActiveSession() {
+        activeSession?.redo()
+    }
 
     fun saveAllDirtySessions(): Boolean {
         for (session in _openSessions.filter { it.hasUnsavedChanges }) {

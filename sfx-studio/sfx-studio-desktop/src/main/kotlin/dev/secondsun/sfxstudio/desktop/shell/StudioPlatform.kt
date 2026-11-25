@@ -1,5 +1,6 @@
 package dev.secondsun.sfxstudio.desktop.shell
 
+import dev.secondsun.sfxstudio.desktop.ui.PlatformAppearance
 import java.awt.FileDialog
 import java.awt.Frame
 import java.awt.Toolkit
@@ -45,6 +46,16 @@ interface StudioPlatform {
         key: String,
         value: String,
     )
+
+    /**
+     * Queries the host OS for dark-mode preference (`true` = dark, `false` = light, `null` = unknown).
+     */
+    fun detectSystemDarkMode(): Boolean? = null
+
+    /**
+     * Queries the host OS for its active sRGB accent color (`0xFFRRGGBB`), or `null` if unavailable.
+     */
+    fun detectSystemAccentColorArgb(): Int? = null
 }
 
 class AwtStudioPlatform : StudioPlatform {
@@ -146,4 +157,8 @@ class AwtStudioPlatform : StudioPlatform {
         } catch (_: Throwable) {
         }
     }
+
+    override fun detectSystemDarkMode(): Boolean? = PlatformAppearance.detectSystemDarkMode()
+
+    override fun detectSystemAccentColorArgb(): Int? = PlatformAppearance.detectSystemAccentColorArgb()
 }

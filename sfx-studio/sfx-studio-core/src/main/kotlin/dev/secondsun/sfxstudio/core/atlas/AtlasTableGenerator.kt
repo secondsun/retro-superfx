@@ -14,7 +14,12 @@ internal object AtlasTableGenerator {
     const val MAGIC: Int = 0x5453 // 'S' (0x53), 'T' (0x54) little-endian
     const val HEADER_BYTES: Int = 8
     const val ENTRY_BYTES: Int = 8
-    const val MAX_ENTRIES: Int = 256
+
+    /**
+     * Maximum number of texture descriptors in `TEXTURE_TABLE` (`$00..$EF` = 240 slots).
+     * Texture IDs `$F0..$FF` (240..255) are reserved by IsoEngine for fixed solid palette colors.
+     */
+    const val MAX_ENTRIES: Int = 240
 
     fun generate(atlas: TextureAtlas): ByteArray = generate(DescriptorTable.buildFromAtlasOrThrow(atlas))
 

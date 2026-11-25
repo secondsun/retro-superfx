@@ -1,5 +1,6 @@
 package dev.secondsun.sfxstudio.core.atlas
 
+import dev.secondsun.sfxstudio.core.level.Ca65MapImporter
 import dev.secondsun.sfxstudio.core.level.EdgePanels
 import dev.secondsun.sfxstudio.core.level.IsoSoftwareRenderer
 import dev.secondsun.sfxstudio.core.level.LevelBinarySerializer
@@ -198,5 +199,116 @@ class DescriptorTableResolutionTest {
         assertEquals(0, missingTopBytes[10].toInt() and 0xFF)
         assertEquals(0, missingTopBytes[11].toInt() and 0xFF)
         assertFalse(missingTopVal.errors.isNotEmpty())
+    }
+
+    @Test
+    fun testSolidColorSpanLookupSerializationValidationRenderAndCa65Import() {
+        val (atlas, palette) = sampleAtlasAndPalette()
+        val table = atlas.descriptorTable().getOrThrow()
+
+        // 1. DescriptorTable lookup for all supported solid-color token formats
+        for (variant in listOf("COLOR_3", "color_3", "TEX_COLOR_3", "TEXTURE_ID_COLOR_3", "\$F3", "0xF3")) {
+            val res = table.lookup(variant)
+            assertEquals(DescriptorLookup.SolidColor(3), res, "Expected SolidColor(3) for '$variant'")
+            assertEquals(0xF3, (res as DescriptorLookup.SolidColor).texId)
+            assertEquals("COLOR_3", res.canonicalName)
+        }
+        assertEquals(
+            DescriptorLookup.SolidColor(14),
+            table.lookup("254", allowNumericIndex = true),
+            "Numeric index 254 (0xFE) must resolve to SolidColor(14)",
+        )
+        assertEquals(
+            DescriptorLookup.SolidColor(0),
+            table.lookup("\$F0", allowNumericIndex = true, zeroIsAbsent = true),
+            "\$F0 must resolve to SolidColor(0), not Absent",
+        )
+        assertTrue(table.lookup("COLOR_16") is DescriptorLookup.Unknown)
+        assertTrue(table.lookup("COLOR_-1") is DescriptorLookup.Unknown)
+        assertTrue(table.lookup("\$EF") is DescriptorLookup.Unknown)
+
+        // 2. Binary .map serialization & deserialization round-trip (including skirt inheriting solid topTex)
+        val solidGrid =
+            MapGrid.filled(
+                cols = 4,
+                rows = 4,
+                defaultCell =
+                    MapCell(
+                        baseHeight = 2,
+                        topTex = "TEXTURE_ID_COLOR_3",
+                        skirtTex = null, // inherits topTex -> 0xF3
+                        panelTex = "\$F4",
+                        panels = EdgePanels(south = true),
+                    ),
+            )
+        val mapBytes = LevelBinarySerializer.serialize(solidGrid, atlas)
+        assertEquals(0xF3, mapBytes[10].toInt() and 0xFF, "top_tex_id must encode COLOR_3 as \$F3")
+        assertEquals(0xF3, mapBytes[11].toInt() and 0xFF, "Absent skirtTex must inherit solid top_tex_id \$F3")
+        assertEquals(0xF4, mapBytes[12].toInt() and 0xFF, "panel_tex_id must encode \$F4")
+
+        val roundTripped = LevelBinarySerializer.deserialize(mapBytes, atlas)
+        assertEquals("COLOR_3", roundTripped.cellAt(0, 0).topTex)
+        assertEquals("COLOR_3", roundTripped.cellAt(0, 0).skirtTex)
+        assertEquals("COLOR_4", roundTripped.cellAt(0, 0).panelTex)
+
+        // 3. LevelValidator: solid colors 1..15 validate cleanly; COLOR_0 ($F0) emits TRANSPARENT_SOLID_COLOR warning
+        val validSolid = LevelValidator.validate(LevelDocument("solid", "a.sfxproj", solidGrid), atlas)
+        assertTrue(validSolid.valid)
+        assertTrue(validSolid.warnings.isEmpty(), "Solid colors 1..15 should not emit warnings: ${validSolid.warnings}")
+
+        val transparentGrid =
+            MapGrid.filled(
+                cols = 4,
+                rows = 4,
+                defaultCell = MapCell(baseHeight = 0, topTex = "COLOR_0", skirtTex = "COLOR_1"),
+            )
+        val transparentVal = LevelValidator.validate(LevelDocument("trans", "a.sfxproj", transparentGrid), atlas)
+        assertTrue(transparentVal.valid)
+        assertTrue(transparentVal.warnings.any { it.code == "TRANSPARENT_SOLID_COLOR" })
+
+        // 4. IsoSoftwareRenderer: solid COLOR_3 renders exact blue palette slot 3, and COLOR_0 renders transparent
+        val bgColor = 0xFF141820.toInt()
+        val solidRender = IsoSoftwareRenderer.render(solidGrid, atlas, palette, yawIndex = 15, backgroundArgb = bgColor)
+        val solidRgb = IntArray(solidRender.width * solidRender.height)
+        solidRender.image.getRGB(0, 0, solidRender.width, solidRender.height, solidRgb, 0, solidRender.width)
+        assertTrue(
+            solidRgb.any { it == palette[3].argb },
+            "Solid COLOR_3 surface must render pixels with palette slot 3 ARGB",
+        )
+        assertTrue(
+            solidRgb.any { it == palette[4].argb },
+            "Solid COLOR_4 edge panel must render pixels with palette slot 4 ARGB",
+        )
+
+        val transRender = IsoSoftwareRenderer.render(transparentGrid, atlas, palette, yawIndex = 15, backgroundArgb = bgColor)
+        val transRgb = IntArray(transRender.width * transRender.height)
+        transRender.image.getRGB(0, 0, transRender.width, transRender.height, transRgb, 0, transRender.width)
+        assertTrue(
+            transRgb.all { it == bgColor },
+            "Solid COLOR_0 (\$F0) at h=0 must skip plotting pixels and leave background untouched",
+        )
+
+        // 5. Ca65MapImporter: parses ($F0 | N), $FN, 0xFN, 240..255, and COLOR_N
+        val ca65Source =
+            buildString {
+                appendLine("MAP_COLS = 4")
+                appendLine("MAP_ROWS = 4")
+                repeat(16) { idx ->
+                    val topToken =
+                        when (idx % 4) {
+                            0 -> "(\$F0 | 1)"
+                            1 -> "\$F2"
+                            2 -> "0xF3"
+                            else -> "TEXTURE_ID_COLOR_4"
+                        }
+                    appendLine("    def_cell 1, PRIM_FLAT, $topToken, 245, 0, PANEL_NONE, 0, 0")
+                }
+            }
+        val imported = Ca65MapImporter.importSource(ca65Source, atlasPath = "a.sfxproj", atlas = atlas)
+        assertEquals("COLOR_1", imported.grid.cellAt(0, 0).topTex)
+        assertEquals("COLOR_2", imported.grid.cellAt(1, 0).topTex)
+        assertEquals("COLOR_3", imported.grid.cellAt(2, 0).topTex)
+        assertEquals("COLOR_4", imported.grid.cellAt(3, 0).topTex)
+        assertEquals("COLOR_5", imported.grid.cellAt(0, 0).skirtTex)
     }
 }

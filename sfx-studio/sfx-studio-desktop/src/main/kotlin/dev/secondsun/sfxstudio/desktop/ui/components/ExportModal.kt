@@ -4,26 +4,16 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.Button
-import androidx.compose.material.ButtonDefaults
-import androidx.compose.material.Checkbox
-import androidx.compose.material.CheckboxDefaults
-import androidx.compose.material.Divider
-import androidx.compose.material.MaterialTheme
-import androidx.compose.material.OutlinedTextField
-import androidx.compose.material.Surface
+import androidx.compose.material.Icon
 import androidx.compose.material.Text
-import androidx.compose.material.TextButton
-import androidx.compose.material.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -33,17 +23,28 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
+import dev.secondsun.sfxstudio.core.atlas.DescriptorTable
 import dev.secondsun.sfxstudio.core.atlas.SourceTexture
 import dev.secondsun.sfxstudio.desktop.atlas.AtlasEditorState
+import dev.secondsun.sfxstudio.desktop.ui.components.primitives.StudioBadge
+import dev.secondsun.sfxstudio.desktop.ui.components.primitives.StudioButton
+import dev.secondsun.sfxstudio.desktop.ui.components.primitives.StudioButtonVariant
+import dev.secondsun.sfxstudio.desktop.ui.components.primitives.StudioModalDialog
+import dev.secondsun.sfxstudio.desktop.ui.components.primitives.StudioSectionHeader
+import dev.secondsun.sfxstudio.desktop.ui.components.primitives.StudioTextField
+import dev.secondsun.sfxstudio.desktop.ui.icons.StudioIcons
+import dev.secondsun.sfxstudio.desktop.ui.theme.StudioTheme
 import java.io.File
 
 @Composable
 fun ExportModal(state: AtlasEditorState) {
     if (!state.showExportModal) return
+
+    val colors = StudioTheme.colors
+    val metrics = StudioTheme.metrics
+    val typography = StudioTheme.typography
 
     val defaultDir =
         remember {
@@ -67,179 +68,164 @@ fun ExportModal(state: AtlasEditorState) {
             SourceTexture.sanitizeToIdentifier(baseName.trim().ifEmpty { "TEXTURES" })
         }
 
-    Dialog(onDismissRequest = { state.showExportModal = false }) {
-        Surface(
-            modifier = Modifier.width(620.dp).wrapContentHeight(),
-            shape = RoundedCornerShape(8.dp),
-            color = Color(0xFF22242B),
-        ) {
-            Column(modifier = Modifier.padding(20.dp)) {
-                Text(
-                    text = "Export Texture Assets",
-                    style = MaterialTheme.typography.h6,
-                    color = Color.White,
-                )
-                Text(
-                    text = "Export production binaries, ca65 assembly descriptor index, and layout PNG",
-                    color = Color(0xFF94A3B8),
-                    fontSize = 12.sp,
-                )
+    val totalDescriptors = state.atlas.textures.size + state.atlas.slices.size + state.atlas.aliases.size
+    val tabBytes = DescriptorTable.TAB_HEADER_BYTES + totalDescriptors * DescriptorTable.TAB_ENTRY_BYTES
+    val runtimePayloadBytes =
+        (if (incGraphics) state.atlas.sizeBytes else 0) +
+            (if (incPalette) 32 else 0) +
+            (if (incTable) tabBytes else 0)
 
-                Spacer(modifier = Modifier.height(16.dp))
+    val payloadLabel =
+        if (runtimePayloadBytes >= 1024) {
+            String.format("Runtime payload: %.1f KB", runtimePayloadBytes / 1024f)
+        } else {
+            "Runtime payload: $runtimePayloadBytes B"
+        }
 
-                Text("Export Directory:", color = Color.White, fontSize = 12.sp)
-                Spacer(modifier = Modifier.height(4.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    OutlinedTextField(
-                        value = exportDir,
-                        onValueChange = { exportDir = it },
-                        singleLine = true,
-                        colors =
-                            TextFieldDefaults.outlinedTextFieldColors(
-                                textColor = Color.White,
-                                cursorColor = Color.White,
-                                focusedBorderColor = Color(0xFF3B82F6),
-                                unfocusedBorderColor = Color(0xFF4B5563),
-                            ),
-                        modifier = Modifier.weight(1f).height(48.dp),
-                    )
+    val canExport = (incGraphics || incPalette || incTable || incIndex || incPng) && exportDir.isNotBlank()
 
-                    Button(
-                        onClick = {
-                            state.chooseExportDirectory(exportDir)?.let { chosen ->
-                                exportDir = chosen.absolutePath
-                            }
-                        },
-                        colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFF3B82F6)),
-                        modifier = Modifier.height(48.dp),
-                    ) {
-                        Text("Browse...", color = Color.White, fontSize = 12.sp)
+    StudioModalDialog(
+        onDismissRequest = { state.showExportModal = false },
+        title = "Export Texture Assets",
+        subtitle = "Write runtime binaries, ca65 header, and preview sheet",
+        preferredWidth = 580.dp,
+        footerLeading = {
+            Text(
+                text = payloadLabel,
+                style = typography.monoCaption,
+                color = colors.textMuted,
+            )
+        },
+        footerActions = {
+            StudioButton(
+                label = "Cancel",
+                variant = StudioButtonVariant.Ghost,
+                onClick = { state.showExportModal = false },
+            )
+            StudioButton(
+                label = "Export Selected",
+                variant = StudioButtonVariant.Primary,
+                icon = StudioIcons.Export,
+                enabled = canExport,
+                onClick = {
+                    val targetDir = File(exportDir.trim())
+                    val ok =
+                        state.exportAllAssets(
+                            destinationDir = targetDir,
+                            baseName = cleanBase,
+                            graphicsBinFileName = "$cleanBase.bin",
+                            paletteBinFileName = "$cleanBase.pal",
+                            tableBinFileName = "$cleanBase.tab",
+                            indexFileName = "$cleanBase.i",
+                            pngFileName = "${cleanBase}_atlas.png",
+                            includeGraphicsBin = incGraphics,
+                            includePaletteBin = incPalette,
+                            includeTableBin = incTable,
+                            includeIndexFile = incIndex,
+                            includePng = incPng,
+                        )
+                    if (ok) {
+                        state.showExportModal = false
                     }
-                }
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                Text("Base Name:", color = Color.White, fontSize = 12.sp)
-                Spacer(modifier = Modifier.height(4.dp))
-                OutlinedTextField(
-                    value = baseName,
-                    onValueChange = { baseName = it },
-                    singleLine = true,
-                    colors =
-                        TextFieldDefaults.outlinedTextFieldColors(
-                            textColor = Color.White,
-                            cursorColor = Color.White,
-                            focusedBorderColor = Color(0xFF3B82F6),
-                            unfocusedBorderColor = Color(0xFF4B5563),
-                        ),
-                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                },
+            )
+        },
+    ) {
+        // 1. Export Directory (StudioTextField — zero glyph clipping)
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("Export Directory", style = typography.bodyMedium, color = colors.textSecondary)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                StudioTextField(
+                    value = exportDir,
+                    onValueChange = { exportDir = it },
+                    monospace = true,
+                    placeholder = "/path/to/export",
+                    modifier = Modifier.weight(1f),
                 )
+                StudioButton(
+                    label = "Browse...",
+                    variant = StudioButtonVariant.Secondary,
+                    icon = StudioIcons.FolderOpen,
+                    onClick = {
+                        state.chooseExportDirectory(exportDir)?.let { chosen ->
+                            exportDir = chosen.absolutePath
+                        }
+                    },
+                )
+            }
+        }
 
-                Spacer(modifier = Modifier.height(16.dp))
+        // 2. Base Symbol / Filename Prefix
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("Base Name", style = typography.bodyMedium, color = colors.textSecondary)
+            StudioTextField(
+                value = baseName,
+                onValueChange = { baseName = it },
+                monospace = true,
+                placeholder = "TEXTURES",
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
 
-                Text("Files to Generate:", color = Color.White, fontSize = 12.sp)
-                Spacer(modifier = Modifier.height(6.dp))
+        // 3. Companion Files Checklist
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            StudioSectionHeader(
+                title = "Files to Generate",
+                badge = "$cleanBase.*",
+            )
 
-                Column(
-                    modifier =
-                        Modifier
-                            .fillMaxWidth()
-                            .background(Color(0xFF1E2026), RoundedCornerShape(6.dp))
-                            .border(1.dp, Color(0xFF33363D), RoundedCornerShape(6.dp))
-                            .padding(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    ExportFileRow(
-                        checked = incGraphics,
-                        onCheckedChange = { incGraphics = it },
-                        fileName = "$cleanBase.bin",
-                        description = "Packed texture atlas binary (${state.atlas.sizeBytes} bytes, 1 byte/texel)",
-                    )
-
-                    Divider(color = Color(0xFF2A2D34))
-
-                    ExportFileRow(
-                        checked = incPalette,
-                        onCheckedChange = { incPalette = it },
-                        fileName = "$cleanBase.pal",
-                        description = "SNES BGR555 palette binary (32 bytes, 16 words)",
-                    )
-
-                    Divider(color = Color(0xFF2A2D34))
-
-                    ExportFileRow(
-                        checked = incTable,
-                        onCheckedChange = { incTable = it },
-                        fileName = "$cleanBase.tab",
-                        description = "Relocatable runtime Texture Table for Bank \$71 staging",
-                    )
-
-                    Divider(color = Color(0xFF2A2D34))
-
-                    ExportFileRow(
-                        checked = incIndex,
-                        onCheckedChange = { incIndex = it },
-                        fileName = "$cleanBase.i",
-                        description = "ca65 assembly header with dimensions, bitmasks, and TEXTURE_TABLE",
-                    )
-
-                    Divider(color = Color(0xFF2A2D34))
-
-                    ExportFileRow(
-                        checked = incPng,
-                        onCheckedChange = { incPng = it },
-                        fileName = "${cleanBase}_atlas.png",
-                        description =
-                            "Laid out atlas image (${state.atlas.width}x${state.atlas.height} ARGB PNG with transparent slot 0)",
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(20.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    TextButton(onClick = { state.showExportModal = false }) {
-                        Text("Cancel", color = Color(0xFF94A3B8))
-                    }
-
-                    Spacer(modifier = Modifier.width(8.dp))
-
-                    val canExport = (incGraphics || incPalette || incTable || incIndex || incPng) && exportDir.isNotBlank()
-                    Button(
-                        onClick = {
-                            val targetDir = File(exportDir)
-                            val ok =
-                                state.exportAllAssets(
-                                    destinationDir = targetDir,
-                                    baseName = cleanBase,
-                                    graphicsBinFileName = "$cleanBase.bin",
-                                    paletteBinFileName = "$cleanBase.pal",
-                                    tableBinFileName = "$cleanBase.tab",
-                                    indexFileName = "$cleanBase.i",
-                                    pngFileName = "${cleanBase}_atlas.png",
-                                    includeGraphicsBin = incGraphics,
-                                    includePaletteBin = incPalette,
-                                    includeTableBin = incTable,
-                                    includeIndexFile = incIndex,
-                                    includePng = incPng,
-                                )
-                            if (ok) {
-                                state.showExportModal = false
-                            }
-                        },
-                        enabled = canExport,
-                        colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFF059669)),
-                    ) {
-                        Text("Export Selected", color = Color.White)
-                    }
-                }
+            Column(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(metrics.radiusSM))
+                        .background(colors.surface0)
+                        .border(1.dp, colors.borderSubtle, RoundedCornerShape(metrics.radiusSM)),
+            ) {
+                ExportFileRow(
+                    checked = incGraphics,
+                    onCheckedChange = { incGraphics = it },
+                    fileName = "$cleanBase.bin",
+                    roleBadge = "GSU RAM",
+                    description = "Packed texture atlas binary (${state.atlas.sizeBytes} bytes, 1 byte/texel)",
+                    showBottomDivider = true,
+                )
+                ExportFileRow(
+                    checked = incPalette,
+                    onCheckedChange = { incPalette = it },
+                    fileName = "$cleanBase.pal",
+                    roleBadge = "CGRAM",
+                    description = "SNES BGR555 palette binary (32 bytes, 16 words)",
+                    showBottomDivider = true,
+                )
+                ExportFileRow(
+                    checked = incTable,
+                    onCheckedChange = { incTable = it },
+                    fileName = "$cleanBase.tab",
+                    roleBadge = "Bank $71",
+                    description = "Relocatable runtime Texture Table ($tabBytes bytes, $totalDescriptors entries)",
+                    showBottomDivider = true,
+                )
+                ExportFileRow(
+                    checked = incIndex,
+                    onCheckedChange = { incIndex = it },
+                    fileName = "$cleanBase.i",
+                    roleBadge = "ca65",
+                    description = "Assembly header with stride shifts, bitmasks, and TEXTURE_TABLE",
+                    showBottomDivider = true,
+                )
+                ExportFileRow(
+                    checked = incPng,
+                    onCheckedChange = { incPng = it },
+                    fileName = "${cleanBase}_atlas.png",
+                    roleBadge = "Preview",
+                    description = "ARGB layout sheet (${state.atlas.width}x${state.atlas.height}, transparent Slot 0)",
+                    showBottomDivider = false,
+                )
             }
         }
     }
@@ -250,41 +236,84 @@ private fun ExportFileRow(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
     fileName: String,
+    roleBadge: String,
     description: String,
+    showBottomDivider: Boolean,
 ) {
-    Row(
-        modifier =
-            Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(4.dp))
-                .clickable { onCheckedChange(!checked) }
-                .padding(horizontal = 6.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Checkbox(
-            checked = checked,
-            onCheckedChange = onCheckedChange,
-            colors =
-                CheckboxDefaults.colors(
-                    checkedColor = Color(0xFF3B82F6),
-                    uncheckedColor = Color(0xFF64748B),
-                    checkmarkColor = Color.White,
-                ),
-        )
+    val colors = StudioTheme.colors
+    val metrics = StudioTheme.metrics
+    val typography = StudioTheme.typography
 
-        Spacer(modifier = Modifier.width(6.dp))
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .clickable { onCheckedChange(!checked) }
+                    .padding(horizontal = 12.dp, vertical = 9.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            val boxShape = RoundedCornerShape(metrics.radiusXS)
+            Box(
+                modifier =
+                    Modifier
+                        .size(18.dp)
+                        .clip(boxShape)
+                        .background(if (checked) colors.accentPrimary else colors.surface1, boxShape)
+                        .border(
+                            1.dp,
+                            if (checked) colors.accentHover else colors.borderStrong,
+                            boxShape,
+                        ),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (checked) {
+                    Icon(
+                        imageVector = StudioIcons.Check,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(12.dp),
+                    )
+                }
+            }
 
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = fileName,
-                color = if (checked) Color(0xFF67E8F9) else Color(0xFF64748B),
-                fontFamily = FontFamily.Monospace,
-                fontSize = 12.sp,
-            )
-            Text(
-                text = description,
-                color = if (checked) Color(0xFF94A3B8) else Color(0xFF475569),
-                fontSize = 11.sp,
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        text = fileName,
+                        style = typography.monoBody,
+                        color = if (checked) colors.sliceCyan else colors.textMuted,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    StudioBadge(
+                        text = roleBadge,
+                        textColor = if (checked) colors.textSecondary else colors.textMuted,
+                        backgroundColor = colors.surface2,
+                    )
+                }
+                Text(
+                    text = description,
+                    style = typography.caption,
+                    color = if (checked) colors.textSecondary else colors.textMuted,
+                )
+            }
+        }
+
+        if (showBottomDivider) {
+            Box(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .height(1.dp)
+                        .background(colors.borderSubtle),
             )
         }
     }

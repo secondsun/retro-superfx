@@ -59,6 +59,17 @@ internal object AtlasIndexGenerator {
         sb.appendLine("TEXTURE_TABLE_ENTRY_COUNT = ${descriptors.size}")
         sb.appendLine("TEXTURE_TABLE_SIZE_BYTES  = ${descriptors.size * 8}")
         sb.appendLine()
+        sb.appendLine(";; ==============================================================================")
+        sb.appendLine(";; Fixed Solid-Color Fast-Fill Span (\$F0..\$FF)")
+        sb.appendLine(";; ==============================================================================")
+        sb.appendLine(";; Texture IDs \$F0..\$FF bypass atlas sampling in IsoEngine and fill spans with")
+        sb.appendLine(";; solid SNES palette color (tex_id & \$0F) via draw_flat_trap_batch.")
+        sb.appendLine("TEXTURE_ID_SOLID_COLOR_BASE = \$F0")
+        for (slot in 0..15) {
+            val hex = String.format("\$%02X", DescriptorTable.solidColorId(slot))
+            sb.appendLine("TEXTURE_ID_COLOR_$slot = $hex")
+        }
+        sb.appendLine()
 
         sb.appendLine(";; ==============================================================================")
         sb.appendLine(";; Per-Texture Symbolic Constants")

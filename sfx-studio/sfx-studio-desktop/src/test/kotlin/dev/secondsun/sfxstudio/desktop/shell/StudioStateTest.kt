@@ -238,6 +238,51 @@ class StudioStateTest {
     }
 
     @Test
+    fun testPolymorphicUndoRedoAcrossAtlasAndLevelSessions() {
+        val studio = StudioState(platform = FakeStudioPlatform())
+        val atlasSession = studio.activeSession as AtlasEditorState
+        atlasSession.projectName = "RENAMED_ATLAS"
+        assertTrue(atlasSession.canUndo)
+
+        val levelSession = studio.newLevelSession(name = "arena", cols = 6, rows = 6)
+        levelSession.stepSelectedHeight(3)
+        assertEquals(
+            3,
+            levelSession.document.grid
+                .cellAt(0, 0)
+                .baseHeight,
+        )
+        assertTrue(levelSession.canUndo)
+
+        // Undo/Redo targets active level session
+        studio.undoActiveSession()
+        assertEquals(
+            0,
+            levelSession.document.grid
+                .cellAt(0, 0)
+                .baseHeight,
+        )
+        assertFalse(levelSession.hasUnsavedChanges)
+        studio.redoActiveSession()
+        assertEquals(
+            3,
+            levelSession.document.grid
+                .cellAt(0, 0)
+                .baseHeight,
+        )
+        assertTrue(levelSession.hasUnsavedChanges)
+
+        // Switch back to atlas session and undo/redo via StudioState
+        studio.selectSession(0)
+        studio.undoActiveSession()
+        assertEquals("TEXTURES", atlasSession.projectName)
+        assertFalse(atlasSession.hasUnsavedChanges)
+        studio.redoActiveSession()
+        assertEquals("RENAMED_ATLAS", atlasSession.projectName)
+        assertTrue(atlasSession.hasUnsavedChanges)
+    }
+
+    @Test
     fun testConstructorWithInitialFiles(
         @TempDir tempDir: File,
     ) {

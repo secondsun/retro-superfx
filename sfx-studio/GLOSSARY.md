@@ -11,8 +11,12 @@ The immutable authoring specification (`AtlasDocument`, persisted as `.sfxproj` 
 _Avoid_: Project file, texture project, atlas manifest
 
 **Level Document**:
-The authoring specification (`LevelDocument`, persisted as `.sfxlevel`) for a single Level, pairing its visual Map Grid and shared Atlas Document reference (`atlasPath`) with optional cell-aligned gameplay layers.
+The authoring specification (`LevelDocument`, persisted as `.sfxlevel`) for a single Level, pairing its visual Map Grid and shared Atlas Document reference (`atlasPath`) with an optional Gameplay Layer.
 _Avoid_: Map project, stage file, scene file
+
+**Gameplay Layer**:
+The optional tactical metadata authored within a Level Document specifying per-cell walkability and movement costs, the player spawn point, NPC spawns and patrol routes, and interactive objects, exported as a companion `.gmap` binary and assembly header alongside the visual `.map`.
+_Avoid_: Entity map, collision file, ad-hoc trigger list
 
 ### Texture Authoring & Descriptor Resolution
 
@@ -53,6 +57,10 @@ _Avoid_: Descriptor binary, texture LUT, slot file
 **Cell Patch**:
 A declarative single-cell or rectangular-region mutation (`CellPatch`) applied to a `MapGrid`, distinguishing omitted texture slots (preserved) from explicit `"NONE"` / `null` clears (`DescriptorLookup.Absent`).
 _Avoid_: Ad-hoc cell map, raw JSON patch
+
+**Brush Layer Mask**:
+The channel filter applied during interactive Level painting and stamping that selects which cell attributes (height, shape and rotation, top texture, skirt texture, or edge panels) are overwritten while preserving unselected channels on target cells.
+_Avoid_: Partial cell copy, channel lock
 
 **Studio Operations**:
 The pure, stdio-quiet orchestration facade (`StudioOperations`) in `sfx-studio-core` shared by both the CLI (`CliMain`) and MCP server (`StudioMcpServer`) for validating, importing, patching, and atomically exporting Atlas and Level Documents.

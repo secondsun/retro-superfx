@@ -3,10 +3,12 @@ package dev.secondsun.sfxstudio.desktop.atlas
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.geometry.Offset
 import dev.secondsun.sfxstudio.core.atlas.AtlasDocument
 import dev.secondsun.sfxstudio.core.atlas.AtlasExportSpec
 import dev.secondsun.sfxstudio.core.atlas.AtlasImportOutcome
 import dev.secondsun.sfxstudio.core.atlas.AtlasValidationResult
+import dev.secondsun.sfxstudio.core.atlas.DescriptorAlias
 import dev.secondsun.sfxstudio.core.atlas.PendingTextureImport
 import dev.secondsun.sfxstudio.core.atlas.PlacementPolicy
 import dev.secondsun.sfxstudio.core.atlas.SFX_PROJ_EXTENSION
@@ -14,6 +16,7 @@ import dev.secondsun.sfxstudio.core.atlas.SnesColor
 import dev.secondsun.sfxstudio.core.atlas.SnesPalette
 import dev.secondsun.sfxstudio.core.atlas.SourceTexture
 import dev.secondsun.sfxstudio.core.atlas.TextureAtlas
+import dev.secondsun.sfxstudio.core.atlas.VirtualSlice
 import dev.secondsun.sfxstudio.desktop.shell.AwtStudioPlatform
 import dev.secondsun.sfxstudio.desktop.shell.EditorSession
 import dev.secondsun.sfxstudio.desktop.shell.StudioPlatform
@@ -27,6 +30,31 @@ enum class AtlasEditorTab {
     HEX_PREVIEW,
     INDEX_PREVIEW,
 }
+
+enum class AtlasCatalogTab {
+    TEXTURES,
+    DESCRIPTORS,
+    PALETTE,
+}
+
+enum class AtlasCanvasTool {
+    MOVE,
+    PAN,
+}
+
+enum class CascadeTargetKind {
+    TEXTURE,
+    SLICE,
+    ALIAS,
+}
+
+data class PendingCascadeDelete(
+    val kind: CascadeTargetKind,
+    val index: Int,
+    val targetName: String,
+    val dependentSlices: List<String>,
+    val dependentAliases: List<String>,
+)
 
 class AtlasEditorState(
     val studio: StudioState? = null,
@@ -43,46 +71,144 @@ class AtlasEditorState(
     var document by mutableStateOf(AtlasDocument())
         private set
 
+    // Undo / Redo history
+    private val undoStack = ArrayDeque<AtlasDocument>()
+    private val redoStack = ArrayDeque<AtlasDocument>()
+    private var batchSnapshot: AtlasDocument? = null
+    private var savedDocument: AtlasDocument = document
+    private var historyRevision by mutableStateOf(0)
+
+    override val canUndo: Boolean
+        get() {
+            historyRevision
+            return undoStack.isNotEmpty()
+        }
+
+    override val canRedo: Boolean
+        get() {
+            historyRevision
+            return redoStack.isNotEmpty()
+        }
+
+    private fun pushUndo(snapshot: AtlasDocument) {
+        if (undoStack.lastOrNull() == snapshot) return
+        if (undoStack.size >= MAX_HISTORY) {
+            undoStack.removeFirst()
+        }
+        undoStack.addLast(snapshot)
+        redoStack.clear()
+        historyRevision++
+    }
+
+    private fun commitDocumentChange(
+        next: AtlasDocument,
+        recordUndo: Boolean = batchSnapshot == null,
+    ): Boolean {
+        val before = document
+        if (next == before) return false
+        if (recordUndo) {
+            pushUndo(before)
+        }
+        document = next
+        hasUnsavedChanges = (document != savedDocument)
+        return true
+    }
+
+    fun beginEditBatch() {
+        if (batchSnapshot == null) {
+            batchSnapshot = document
+        }
+    }
+
+    fun endEditBatch() {
+        val start = batchSnapshot
+        batchSnapshot = null
+        if (start != null && start != document) {
+            pushUndo(start)
+        }
+    }
+
+    private fun clampSelections() {
+        val idx = selectedTextureIndex
+        if (idx != null) {
+            selectedTextureIndex =
+                if (atlas.textures.isEmpty()) {
+                    null
+                } else {
+                    idx.coerceIn(0, atlas.textures.lastIndex)
+                }
+        }
+        val sliceName = selectedSliceName
+        if (sliceName != null && atlas.slices.none { it.name.equals(sliceName, ignoreCase = true) }) {
+            selectedSliceName = null
+        }
+    }
+
+    override fun undo() {
+        endEditBatch()
+        val prev = undoStack.removeLastOrNull() ?: return
+        if (redoStack.size >= MAX_HISTORY) {
+            redoStack.removeFirst()
+        }
+        redoStack.addLast(document)
+        document = prev
+        clampSelections()
+        hasUnsavedChanges = (document != savedDocument)
+        historyRevision++
+        statusMessage = "Undo"
+    }
+
+    override fun redo() {
+        endEditBatch()
+        val next = redoStack.removeLastOrNull() ?: return
+        if (undoStack.size >= MAX_HISTORY) {
+            undoStack.removeFirst()
+        }
+        undoStack.addLast(document)
+        document = next
+        clampSelections()
+        hasUnsavedChanges = (document != savedDocument)
+        historyRevision++
+        statusMessage = "Redo"
+    }
+
     var atlas: TextureAtlas
         get() = document.atlas
         set(value) {
-            if (document.atlas != value) {
-                document = document.copy(atlas = value)
-                hasUnsavedChanges = true
-            }
+            commitDocumentChange(document.copy(atlas = value))
+            clampSelections()
         }
 
     var palette: SnesPalette
         get() = document.palette
         set(value) {
-            if (document.palette != value) {
-                document = document.copy(palette = value)
-                hasUnsavedChanges = true
-            }
+            commitDocumentChange(document.copy(palette = value))
         }
 
     var gridSnap: Int
         get() = document.gridSnap
         set(value) {
-            if (document.gridSnap != value) {
-                document = document.withGridSnap(value)
-                hasUnsavedChanges = true
-            }
+            commitDocumentChange(document.withGridSnap(value))
         }
 
     var projectName: String
         get() = document.name
         set(value) {
-            if (document.name != value) {
-                document = document.copy(name = value)
-                hasUnsavedChanges = true
-            }
+            commitDocumentChange(document.copy(name = value))
         }
 
     var selectedTextureIndex by mutableStateOf<Int?>(null)
+    var selectedSliceName by mutableStateOf<String?>(null)
+    var selectedDescriptorName by mutableStateOf<String?>(null)
     var selectedPaletteSlot by mutableStateOf(1)
     var zoom by mutableStateOf(2f)
     var activeTab by mutableStateOf(AtlasEditorTab.LAYOUT)
+
+    // Adaptive dock & canvas interaction state
+    var catalogTab by mutableStateOf(AtlasCatalogTab.TEXTURES)
+    var canvasTool by mutableStateOf(AtlasCanvasTool.MOVE)
+    var canvasPanOffset by mutableStateOf(Offset.Zero)
+    var activeDiagnosticIndex by mutableStateOf(0)
 
     var currentProjectFile by mutableStateOf<File?>(null)
     override val documentFile: File? get() = currentProjectFile
@@ -92,9 +218,12 @@ class AtlasEditorState(
     override var hasUnsavedChanges by mutableStateOf(false)
 
     override val statusSummary: String
-        get() =
-            "Atlas: ${atlas.width}x${atlas.height} | Textures: ${atlas.textures.size} | " +
-                "Palette: ${palette.assignedCount}/15 assigned"
+        get() {
+            val kb = atlas.sizeBytes / 1024
+            val sizeLabel = if (kb > 0) "$kb KB" else "${atlas.sizeBytes} B"
+            return "Atlas: ${atlas.width}x${atlas.height} ($sizeLabel) | " +
+                "${atlas.textures.size} Tex | Palette: ${palette.assignedCount}/15"
+        }
 
     // Standalone directory state when running without StudioState
     private var localLastImportDir by mutableStateOf<String?>(null)
@@ -133,6 +262,17 @@ class AtlasEditorState(
     var editingTextureIndex by mutableStateOf<Int?>(null)
     var pendingImport by mutableStateOf<PendingTextureImport?>(null)
     var unassignPromptSlot by mutableStateOf<Int?>(null)
+
+    // Slice, Alias & Cascade Delete modal state
+    var showSliceModal by mutableStateOf(false)
+    var editingSliceIndex by mutableStateOf<Int?>(null)
+    var sliceParentTextureHint by mutableStateOf<String?>(null)
+
+    var showAliasModal by mutableStateOf(false)
+    var editingAliasIndex by mutableStateOf<Int?>(null)
+
+    var pendingCascadeDelete by mutableStateOf<PendingCascadeDelete?>(null)
+
     var lastError by mutableStateOf<String?>(null)
         private set
 
@@ -146,24 +286,93 @@ class AtlasEditorState(
 
     fun currentValidation(): AtlasValidationResult = document.validate(warnBank71Overflow = true)
 
+    fun openNewSliceModal(parentTextureName: String? = selectedTexture?.name ?: atlas.textures.firstOrNull()?.name) {
+        if (atlas.textures.isEmpty()) {
+            reportError("Import at least one Source Texture before creating a Virtual Slice.")
+            return
+        }
+        editingSliceIndex = null
+        sliceParentTextureHint = parentTextureName
+        showSliceModal = true
+    }
+
+    fun openEditSliceModal(index: Int) {
+        if (index !in atlas.slices.indices) return
+        editingSliceIndex = index
+        sliceParentTextureHint = atlas.slices[index].sourceTexture
+        showSliceModal = true
+    }
+
+    fun closeSliceModal() {
+        showSliceModal = false
+        editingSliceIndex = null
+        sliceParentTextureHint = null
+    }
+
+    fun openNewAliasModal() {
+        val total = atlas.textures.size + atlas.slices.size + atlas.aliases.size
+        if (total == 0) {
+            reportError("Add at least one Source Texture before creating a Descriptor Alias.")
+            return
+        }
+        editingAliasIndex = null
+        showAliasModal = true
+    }
+
+    fun openEditAliasModal(index: Int) {
+        if (index !in atlas.aliases.indices) return
+        editingAliasIndex = index
+        showAliasModal = true
+    }
+
+    fun closeAliasModal() {
+        showAliasModal = false
+        editingAliasIndex = null
+    }
+
     fun newProject() {
-        document = AtlasDocument()
+        val fresh = AtlasDocument()
+        undoStack.clear()
+        redoStack.clear()
+        batchSnapshot = null
+        document = fresh
+        savedDocument = fresh
         selectedTextureIndex = null
+        selectedSliceName = null
+        selectedDescriptorName = null
         selectedPaletteSlot = 1
+        canvasPanOffset = Offset.Zero
+        activeDiagnosticIndex = 0
+        closeSliceModal()
+        closeAliasModal()
+        pendingCascadeDelete = null
         currentProjectFile = null
         hasUnsavedChanges = false
         lastError = null
+        historyRevision++
         statusMessage = "Created new project"
     }
 
     fun openProject(file: File): Boolean =
         try {
             val loaded = AtlasDocument.load(file)
+            undoStack.clear()
+            redoStack.clear()
+            batchSnapshot = null
             document = loaded
+            savedDocument = loaded
             currentProjectFile = file
             selectedTextureIndex = if (loaded.atlas.textures.isNotEmpty()) 0 else null
+            selectedSliceName = null
+            selectedDescriptorName = null
+            canvasPanOffset = Offset.Zero
+            activeDiagnosticIndex = 0
+            closeSliceModal()
+            closeAliasModal()
+            pendingCascadeDelete = null
             hasUnsavedChanges = false
             lastError = null
+            historyRevision++
             statusMessage = "Loaded project '${file.name}'"
             true
         } catch (e: Exception) {
@@ -182,6 +391,7 @@ class AtlasEditorState(
                 }
             targetDoc.saveAndExport(documentFile = file)
             document = targetDoc
+            savedDocument = targetDoc
             currentProjectFile = file
             hasUnsavedChanges = false
             lastError = null
@@ -404,10 +614,10 @@ class AtlasEditorState(
         placed: SourceTexture,
         actionVerb: String,
     ) {
-        document = nextDoc
-        hasUnsavedChanges = true
+        commitDocumentChange(nextDoc)
         lastError = null
         selectedTextureIndex = nextDoc.atlas.textures.lastIndex
+        selectedSliceName = null
         val bank71Warn =
             nextDoc
                 .validate(warnBank71Overflow = true)
@@ -426,9 +636,7 @@ class AtlasEditorState(
      */
     fun quantizePalette() {
         val quantized = document.quantizePalette()
-        if (quantized != document) {
-            document = quantized
-            hasUnsavedChanges = true
+        if (commitDocumentChange(quantized)) {
             lastError = null
             statusMessage = "Quantized palette to 15 colors across ${atlas.textures.size} texture(s)"
         }
@@ -444,10 +652,7 @@ class AtlasEditorState(
         val snappedY = (targetY / gridSnap) * gridSnap
         return document.moveTexture(index, snappedX, snappedY).fold(
             onSuccess = { nextDoc ->
-                if (nextDoc != document) {
-                    document = nextDoc
-                    hasUnsavedChanges = true
-                }
+                commitDocumentChange(nextDoc)
                 true
             },
             onFailure = { false },
@@ -462,8 +667,7 @@ class AtlasEditorState(
         val name = atlas.textures[index].name
         return document.removeTexture(index, cascadeDependents = cascadeDependents).fold(
             onSuccess = { nextDoc ->
-                document = nextDoc
-                hasUnsavedChanges = true
+                commitDocumentChange(nextDoc)
                 lastError = null
                 selectedTextureIndex =
                     if (nextDoc.atlas.textures.isEmpty()) {
@@ -471,6 +675,7 @@ class AtlasEditorState(
                     } else {
                         minOf(index, nextDoc.atlas.textures.lastIndex)
                     }
+                clampSelections()
                 statusMessage = "Deleted texture '$name'"
                 true
             },
@@ -481,22 +686,273 @@ class AtlasEditorState(
         )
     }
 
-    fun autoFit() {
-        val fitted = document.autoFit()
-        if (fitted != document) {
-            document = fitted
-            hasUnsavedChanges = true
+    fun addSlice(slice: VirtualSlice): Boolean =
+        document.addSlice(slice).fold(
+            onSuccess = { nextDoc ->
+                commitDocumentChange(nextDoc)
+                lastError = null
+                selectedSliceName = slice.name
+                selectedDescriptorName = slice.name
+                closeSliceModal()
+                statusMessage = "Added virtual slice '${slice.name}'"
+                true
+            },
+            onFailure = { err ->
+                reportError(err.message ?: "Failed to add virtual slice '${slice.name}'")
+                false
+            },
+        )
+
+    fun updateSlice(
+        index: Int,
+        slice: VirtualSlice,
+    ): Boolean {
+        if (index !in atlas.slices.indices) return false
+        val oldName = atlas.slices[index].name
+        return document.updateSlice(index, slice).fold(
+            onSuccess = { nextDoc ->
+                commitDocumentChange(nextDoc)
+                lastError = null
+                val cleanName = slice.name.trim()
+                if (selectedSliceName.equals(oldName, ignoreCase = true) || selectedSliceName == null) {
+                    selectedSliceName = cleanName
+                }
+                selectedDescriptorName = cleanName
+                closeSliceModal()
+                statusMessage = "Updated virtual slice '$cleanName'"
+                true
+            },
+            onFailure = { err ->
+                reportError(err.message ?: "Failed to update virtual slice '${slice.name}'")
+                false
+            },
+        )
+    }
+
+    fun deleteSlice(
+        index: Int,
+        cascadeDependents: Boolean = false,
+    ): Boolean {
+        if (index !in atlas.slices.indices) return false
+        val name = atlas.slices[index].name
+        return document.removeSlice(index, cascadeDependents = cascadeDependents).fold(
+            onSuccess = { nextDoc ->
+                commitDocumentChange(nextDoc)
+                lastError = null
+                if (selectedSliceName.equals(name, ignoreCase = true)) {
+                    selectedSliceName = null
+                }
+                statusMessage = "Deleted virtual slice '$name'"
+                true
+            },
+            onFailure = { err ->
+                reportError(err.message ?: "Cannot delete slice '$name'")
+                false
+            },
+        )
+    }
+
+    fun addAlias(alias: DescriptorAlias): Boolean =
+        document.addAlias(alias).fold(
+            onSuccess = { nextDoc ->
+                commitDocumentChange(nextDoc)
+                lastError = null
+                selectedDescriptorName = alias.name
+                closeAliasModal()
+                statusMessage = "Added descriptor alias '${alias.name}' -> '${alias.target}'"
+                true
+            },
+            onFailure = { err ->
+                reportError(err.message ?: "Failed to add alias '${alias.name}'")
+                false
+            },
+        )
+
+    fun updateAlias(
+        index: Int,
+        alias: DescriptorAlias,
+    ): Boolean {
+        if (index !in atlas.aliases.indices) return false
+        return document.updateAlias(index, alias).fold(
+            onSuccess = { nextDoc ->
+                commitDocumentChange(nextDoc)
+                lastError = null
+                selectedDescriptorName = alias.name.trim()
+                closeAliasModal()
+                statusMessage = "Updated descriptor alias '${alias.name.trim()}'"
+                true
+            },
+            onFailure = { err ->
+                reportError(err.message ?: "Failed to update alias '${alias.name}'")
+                false
+            },
+        )
+    }
+
+    fun deleteAlias(
+        index: Int,
+        cascadeDependents: Boolean = false,
+    ): Boolean {
+        if (index !in atlas.aliases.indices) return false
+        val name = atlas.aliases[index].name
+        return document.removeAlias(index, cascadeDependents = cascadeDependents).fold(
+            onSuccess = { nextDoc ->
+                commitDocumentChange(nextDoc)
+                lastError = null
+                statusMessage = "Deleted descriptor alias '$name'"
+                true
+            },
+            onFailure = { err ->
+                reportError(err.message ?: "Cannot delete alias '$name'")
+                false
+            },
+        )
+    }
+
+    fun pinDescriptorOrder(): Boolean =
+        document.pinCurrentDescriptorOrder().fold(
+            onSuccess = { nextDoc ->
+                commitDocumentChange(nextDoc)
+                lastError = null
+                statusMessage = "Pinned descriptor order (${nextDoc.atlas.descriptorOrder?.size ?: 0} entries)"
+                true
+            },
+            onFailure = { err ->
+                reportError(err.message ?: "Failed to pin descriptor order")
+                false
+            },
+        )
+
+    fun clearDescriptorOrder(): Boolean =
+        document.withDescriptorOrder(null).fold(
+            onSuccess = { nextDoc ->
+                commitDocumentChange(nextDoc)
+                lastError = null
+                statusMessage = "Reset descriptor order to automatic"
+                true
+            },
+            onFailure = { err ->
+                reportError(err.message ?: "Failed to reset descriptor order")
+                false
+            },
+        )
+
+    fun moveDescriptorInOrder(
+        fromIndex: Int,
+        toIndex: Int,
+    ): Boolean =
+        document.moveDescriptorInOrder(fromIndex, toIndex).fold(
+            onSuccess = { nextDoc ->
+                commitDocumentChange(nextDoc)
+                lastError = null
+                statusMessage = String.format("Moved descriptor to slot $%02X", toIndex)
+                true
+            },
+            onFailure = { err ->
+                reportError(err.message ?: "Failed to reorder descriptor")
+                false
+            },
+        )
+
+    private fun collectTransitiveDependentAliases(rootNames: Collection<String>): List<String> {
+        val removedUpper = LinkedHashSet<String>()
+        for (name in rootNames) {
+            removedUpper.add(name.uppercase())
         }
+        val dependentAliases = mutableListOf<String>()
+        var changed = true
+        while (changed) {
+            changed = false
+            for (alias in atlas.aliases) {
+                val aliasUpper = alias.name.uppercase()
+                if (aliasUpper !in removedUpper && alias.target.uppercase() in removedUpper) {
+                    removedUpper.add(aliasUpper)
+                    dependentAliases.add(alias.name)
+                    changed = true
+                }
+            }
+        }
+        return dependentAliases
+    }
+
+    fun requestDeleteTexture(index: Int) {
+        if (index !in atlas.textures.indices) return
+        val tex = atlas.textures[index]
+        val depSlices = atlas.slices.filter { it.sourceTexture.equals(tex.name, ignoreCase = true) }.map { it.name }
+        val depAliases = collectTransitiveDependentAliases(listOf(tex.name) + depSlices)
+        if (depSlices.isEmpty() && depAliases.isEmpty()) {
+            deleteTexture(index, cascadeDependents = false)
+        } else {
+            pendingCascadeDelete =
+                PendingCascadeDelete(
+                    kind = CascadeTargetKind.TEXTURE,
+                    index = index,
+                    targetName = tex.name,
+                    dependentSlices = depSlices,
+                    dependentAliases = depAliases,
+                )
+        }
+    }
+
+    fun requestDeleteSlice(index: Int) {
+        if (index !in atlas.slices.indices) return
+        val slice = atlas.slices[index]
+        val depAliases = collectTransitiveDependentAliases(listOf(slice.name))
+        if (depAliases.isEmpty()) {
+            deleteSlice(index, cascadeDependents = false)
+        } else {
+            pendingCascadeDelete =
+                PendingCascadeDelete(
+                    kind = CascadeTargetKind.SLICE,
+                    index = index,
+                    targetName = slice.name,
+                    dependentSlices = emptyList(),
+                    dependentAliases = depAliases,
+                )
+        }
+    }
+
+    fun requestDeleteAlias(index: Int) {
+        if (index !in atlas.aliases.indices) return
+        val alias = atlas.aliases[index]
+        val depAliases = collectTransitiveDependentAliases(listOf(alias.name))
+        if (depAliases.isEmpty()) {
+            deleteAlias(index, cascadeDependents = false)
+        } else {
+            pendingCascadeDelete =
+                PendingCascadeDelete(
+                    kind = CascadeTargetKind.ALIAS,
+                    index = index,
+                    targetName = alias.name,
+                    dependentSlices = emptyList(),
+                    dependentAliases = depAliases,
+                )
+        }
+    }
+
+    fun confirmCascadeDelete(): Boolean {
+        val pending = pendingCascadeDelete ?: return false
+        pendingCascadeDelete = null
+        return when (pending.kind) {
+            CascadeTargetKind.TEXTURE -> deleteTexture(pending.index, cascadeDependents = true)
+            CascadeTargetKind.SLICE -> deleteSlice(pending.index, cascadeDependents = true)
+            CascadeTargetKind.ALIAS -> deleteAlias(pending.index, cascadeDependents = true)
+        }
+    }
+
+    fun cancelCascadeDelete() {
+        pendingCascadeDelete = null
+    }
+
+    fun autoFit() {
+        commitDocumentChange(document.autoFit())
         statusMessage = "Auto-fitted atlas dimensions to ${atlas.width}x${atlas.height}"
     }
 
     fun autoPack() {
         document.autoPack().fold(
             onSuccess = { packedDoc ->
-                if (packedDoc != document) {
-                    document = packedDoc
-                    hasUnsavedChanges = true
-                }
+                commitDocumentChange(packedDoc)
                 statusMessage = "Auto-packed textures with ${gridSnap}px grid"
             },
             onFailure = {
@@ -514,8 +970,7 @@ class AtlasEditorState(
                 val candidateAtlas = atlas.copy(width = newW, height = newH)
                 val packed = candidateAtlas.autoPack(gridSnap)
                 return if (packed != null) {
-                    document = document.copy(atlas = packed)
-                    hasUnsavedChanges = true
+                    commitDocumentChange(document.copy(atlas = packed))
                     statusMessage = "Resized atlas to ${newW}x$newH and auto-repacked"
                     true
                 } else {
@@ -527,8 +982,7 @@ class AtlasEditorState(
             }
         }
         if (atlas.width != newW || atlas.height != newH) {
-            document = document.copy(atlas = atlas.copy(width = newW, height = newH))
-            hasUnsavedChanges = true
+            commitDocumentChange(document.copy(atlas = atlas.copy(width = newW, height = newH)))
         }
         statusMessage = "Resized atlas to ${newW}x$newH"
         return true
@@ -539,11 +993,7 @@ class AtlasEditorState(
         color: SnesColor,
     ) {
         if (slot in 1..15) {
-            val next = document.withPaletteColor(slot, color, assigned = true)
-            if (next != document) {
-                document = next
-                hasUnsavedChanges = true
-            }
+            commitDocumentChange(document.withPaletteColor(slot, color, assigned = true))
         }
     }
 
@@ -553,11 +1003,7 @@ class AtlasEditorState(
         if (inUseBy.isNotEmpty()) {
             unassignPromptSlot = slot
         } else {
-            val next = document.unassignPaletteSlot(slot)
-            if (next != document) {
-                document = next
-                hasUnsavedChanges = true
-            }
+            commitDocumentChange(document.unassignPaletteSlot(slot))
             statusMessage = "Unassigned palette slot $slot"
         }
     }
@@ -574,12 +1020,12 @@ class AtlasEditorState(
                     tex
                 }
             }
-        document =
+        commitDocumentChange(
             document.copy(
                 atlas = atlas.copy(textures = updatedTextures),
                 palette = palette.unassignSlot(slot),
-            )
-        hasUnsavedChanges = true
+            ),
+        )
         unassignPromptSlot = null
         statusMessage = "Unassigned slot $slot (remapped texels to slot $remapToSlot)"
     }
@@ -605,10 +1051,7 @@ class AtlasEditorState(
                 reportError(err.message ?: "Failed to update texture pixels")
                 return false
             }
-        if (afterPixels != document) {
-            document = afterPixels
-            hasUnsavedChanges = true
-        }
+        commitDocumentChange(afterPixels)
         editingTextureIndex = null
         lastError = null
         statusMessage = "Updated texture '${updatedName.trim()}'"
@@ -619,4 +1062,8 @@ class AtlasEditorState(
         index: Int,
         updated: SourceTexture,
     ): Boolean = applyTextureEdit(index, updated.name, updated.indexedPixels)
+
+    companion object {
+        private const val MAX_HISTORY = 100
+    }
 }

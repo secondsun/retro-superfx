@@ -234,6 +234,16 @@ object IsoSoftwareRenderer {
         val vQ8: Int,
     )
 
+    private sealed interface SurfaceFill {
+        data class Textured(
+            val descriptor: TextureDescriptorInfo,
+        ) : SurfaceFill
+
+        data class Solid(
+            val paletteSlot: Int,
+        ) : SurfaceFill
+    }
+
     private data class CompiledTrap(
         val dyStart: Int,
         val lineCount: Int,
@@ -496,30 +506,34 @@ object IsoSoftwareRenderer {
                 val baseAnchorY = (originZQ5 + col * sxYQ5 + row * szYQ5 + 16) shr 5
                 val cellAnchorY = baseAnchorY - cell.baseHeight * STEP_1H_PIXELS
 
-                val topDesc =
+                val topFill: SurfaceFill? =
                     descriptorTable?.let { table ->
                         when (val res = table.lookup(cell.topTex)) {
-                            DescriptorLookup.Absent -> table.entries.firstOrNull()
-                            is DescriptorLookup.Found -> res.descriptor
+                            DescriptorLookup.Absent -> table.entries.firstOrNull()?.let { SurfaceFill.Textured(it) }
+                            is DescriptorLookup.Found -> SurfaceFill.Textured(res.descriptor)
+                            is DescriptorLookup.SolidColor -> SurfaceFill.Solid(res.paletteSlot)
                             is DescriptorLookup.Unknown -> null
                         }
-                    }
-                val skirtDesc =
+                    } ?: cell.topTex?.let { DescriptorTable.parseSolidColorSlot(it)?.let { slot -> SurfaceFill.Solid(slot) } }
+                val skirtFill: SurfaceFill? =
                     descriptorTable?.let { table ->
                         when (val res = table.lookup(cell.skirtTex)) {
-                            DescriptorLookup.Absent -> topDesc
-                            is DescriptorLookup.Found -> res.descriptor
+                            DescriptorLookup.Absent -> topFill
+                            is DescriptorLookup.Found -> SurfaceFill.Textured(res.descriptor)
+                            is DescriptorLookup.SolidColor -> SurfaceFill.Solid(res.paletteSlot)
                             is DescriptorLookup.Unknown -> null
                         }
-                    }
-                val panelDesc =
+                    } ?: cell.skirtTex?.let { DescriptorTable.parseSolidColorSlot(it)?.let { slot -> SurfaceFill.Solid(slot) } }
+                        ?: topFill
+                val panelFill: SurfaceFill? =
                     descriptorTable?.let { table ->
                         when (val res = table.lookup(cell.panelTex)) {
                             DescriptorLookup.Absent -> null
-                            is DescriptorLookup.Found -> res.descriptor
+                            is DescriptorLookup.Found -> SurfaceFill.Textured(res.descriptor)
+                            is DescriptorLookup.SolidColor -> SurfaceFill.Solid(res.paletteSlot)
                             is DescriptorLookup.Unknown -> null
                         }
-                    }
+                    } ?: cell.panelTex?.let { DescriptorTable.parseSolidColorSlot(it)?.let { slot -> SurfaceFill.Solid(slot) } }
 
                 // Render-time skirt drops against camera-facing neighbors
                 val neighborNsRow = if (cos >= 0) row + 1 else row - 1
@@ -531,18 +545,19 @@ object IsoSoftwareRenderer {
                 val vBaseWorld = row * 32
 
                 // Step 1: Cell Skirts
-                if (skirtDesc != null) {
+                if (skirtFill != null) {
+                    val skirtDesc = (skirtFill as? SurfaceFill.Textured)?.descriptor
                     for (s in 0 until dropNs) {
                         val stepY = cellAnchorY + s * STEP_1H_PIXELS
-                        val uOff = (uBaseWorld and skirtDesc.uMask) shl 8
-                        val vOff = ((s * 16) and skirtDesc.vMask) shl 8
+                        val uOff = if (skirtDesc != null) (uBaseWorld and skirtDesc.uMask) shl 8 else 0
+                        val vOff = if (skirtDesc != null) ((s * 16) and skirtDesc.vMask) shl 8 else 0
                         drawTraps(
                             skirtNsTraps,
                             anchorX,
                             stepY,
                             uOff,
                             vOff,
-                            skirtDesc,
+                            skirtFill,
                             atlas.width,
                             atlasBin,
                             paletteArgb,
@@ -555,15 +570,15 @@ object IsoSoftwareRenderer {
                     }
                     for (s in 0 until dropEw) {
                         val stepY = cellAnchorY + s * STEP_1H_PIXELS
-                        val uOff = (vBaseWorld and skirtDesc.uMask) shl 8
-                        val vOff = ((s * 16) and skirtDesc.vMask) shl 8
+                        val uOff = if (skirtDesc != null) (vBaseWorld and skirtDesc.uMask) shl 8 else 0
+                        val vOff = if (skirtDesc != null) ((s * 16) and skirtDesc.vMask) shl 8 else 0
                         drawTraps(
                             skirtEwTraps,
                             anchorX,
                             stepY,
                             uOff,
                             vOff,
-                            skirtDesc,
+                            skirtFill,
                             atlas.width,
                             atlasBin,
                             paletteArgb,
@@ -577,7 +592,7 @@ object IsoSoftwareRenderer {
                 }
 
                 // Step 2: Back Edge Panels
-                if (cell.panels.hasAny && panelDesc != null) {
+                if (cell.panels.hasAny && panelFill != null) {
                     val is2h = if (cell.panels.tall2h) 1 else 0
                     if (hasEdgePanel(cell.panels, backNsEdge)) {
                         drawTraps(
@@ -586,7 +601,7 @@ object IsoSoftwareRenderer {
                             cellAnchorY,
                             0,
                             0,
-                            panelDesc,
+                            panelFill,
                             atlas.width,
                             atlasBin,
                             paletteArgb,
@@ -604,7 +619,7 @@ object IsoSoftwareRenderer {
                             cellAnchorY,
                             0,
                             0,
-                            panelDesc,
+                            panelFill,
                             atlas.width,
                             atlasBin,
                             paletteArgb,
@@ -621,22 +636,23 @@ object IsoSoftwareRenderer {
                 val archKey = (cell.archetype.id shl 2) or cell.rotation.index
                 val traps = archTable[archKey]
                 for (trap in traps) {
-                    val desc =
+                    val fill =
                         when (trap.texSlot) {
-                            SLOT_TOP -> topDesc
-                            SLOT_SKIRT -> skirtDesc
-                            SLOT_PANEL -> panelDesc
-                            else -> topDesc
+                            SLOT_TOP -> topFill
+                            SLOT_SKIRT -> skirtFill
+                            SLOT_PANEL -> panelFill
+                            else -> topFill
                         } ?: continue
-                    val uOff = if (trap.texSlot == SLOT_PANEL) 0 else ((uBaseWorld and desc.uMask) shl 8)
-                    val vOff = if (trap.texSlot == SLOT_PANEL) 0 else ((vBaseWorld and desc.vMask) shl 8)
+                    val desc = (fill as? SurfaceFill.Textured)?.descriptor
+                    val uOff = if (trap.texSlot == SLOT_PANEL || desc == null) 0 else ((uBaseWorld and desc.uMask) shl 8)
+                    val vOff = if (trap.texSlot == SLOT_PANEL || desc == null) 0 else ((vBaseWorld and desc.vMask) shl 8)
                     drawSingleTrap(
                         trap,
                         anchorX,
                         cellAnchorY,
                         uOff,
                         vOff,
-                        desc,
+                        fill,
                         atlas.width,
                         atlasBin,
                         paletteArgb,
@@ -649,7 +665,7 @@ object IsoSoftwareRenderer {
                 }
 
                 // Step 5: Front Edge Panels
-                if (cell.panels.hasAny && panelDesc != null) {
+                if (cell.panels.hasAny && panelFill != null) {
                     val is2h = if (cell.panels.tall2h) 1 else 0
                     if (hasEdgePanel(cell.panels, frontNsEdge)) {
                         drawTraps(
@@ -658,7 +674,7 @@ object IsoSoftwareRenderer {
                             cellAnchorY,
                             0,
                             0,
-                            panelDesc,
+                            panelFill,
                             atlas.width,
                             atlasBin,
                             paletteArgb,
@@ -676,7 +692,7 @@ object IsoSoftwareRenderer {
                             cellAnchorY,
                             0,
                             0,
-                            panelDesc,
+                            panelFill,
                             atlas.width,
                             atlasBin,
                             paletteArgb,
@@ -1074,7 +1090,7 @@ object IsoSoftwareRenderer {
         anchorY: Int,
         uOffQ8: Int,
         vOffQ8: Int,
-        desc: TextureDescriptorInfo,
+        fill: SurfaceFill,
         atlasWidth: Int,
         atlasBin: ByteArray,
         paletteArgb: IntArray,
@@ -1091,7 +1107,7 @@ object IsoSoftwareRenderer {
                 anchorY,
                 uOffQ8,
                 vOffQ8,
-                desc,
+                fill,
                 atlasWidth,
                 atlasBin,
                 paletteArgb,
@@ -1110,7 +1126,7 @@ object IsoSoftwareRenderer {
         anchorY: Int,
         uOffQ8: Int,
         vOffQ8: Int,
-        desc: TextureDescriptorInfo,
+        fill: SurfaceFill,
         atlasWidth: Int,
         atlasBin: ByteArray,
         paletteArgb: IntArray,
@@ -1120,6 +1136,10 @@ object IsoSoftwareRenderer {
         screenH: Int,
         cellIdx: Int,
     ) {
+        if (fill is SurfaceFill.Solid && fill.paletteSlot == 0) {
+            return
+        }
+
         var y = anchorY + trap.dyStart
         var lines = trap.lineCount
         var xLQ8 = (anchorX shl 8) + trap.xLStartQ8
@@ -1142,49 +1162,71 @@ object IsoSoftwareRenderer {
             if (lines <= 0) return
         }
 
-        val uMask = desc.uMask
-        val vMask = desc.vMask
-        val baseOffset = desc.romOffset
-
-        repeat(lines) {
-            var xStart = xLQ8 shr 8
-            var xEnd = xRQ8 shr 8
-            var uCur = uLQ8
-            var vCur = vLQ8
-
-            if (xStart < 0) {
-                val clipX = -xStart
-                uCur += trap.duDxQ8 * clipX
-                vCur += trap.dvDxQ8 * clipX
-                xStart = 0
-            }
-            if (xEnd > screenW) {
-                xEnd = screenW
-            }
-
-            if (xStart < xEnd) {
-                val rowBase = y * screenW
-                for (px in xStart until xEnd) {
-                    val uTex = (uCur shr 8) and uMask
-                    val vTex = (vCur shr 8) and vMask
-                    val texelIdx = baseOffset + vTex * atlasWidth + uTex
-                    if (texelIdx in atlasBin.indices) {
-                        val colorIdx = atlasBin[texelIdx].toInt() and 0x0F
-                        if (colorIdx != 0) {
-                            argbPixels[rowBase + px] = paletteArgb[colorIdx]
+        when (fill) {
+            is SurfaceFill.Solid -> {
+                val solidArgb = paletteArgb[fill.paletteSlot]
+                repeat(lines) {
+                    val xStart = (xLQ8 shr 8).coerceAtLeast(0)
+                    val xEnd = (xRQ8 shr 8).coerceAtMost(screenW)
+                    if (xStart < xEnd) {
+                        val rowBase = y * screenW
+                        for (px in xStart until xEnd) {
+                            argbPixels[rowBase + px] = solidArgb
                             pickBuffer[rowBase + px] = cellIdx
                         }
                     }
-                    uCur += trap.duDxQ8
-                    vCur += trap.dvDxQ8
+                    y++
+                    xLQ8 += trap.dxLDyQ8
+                    xRQ8 += trap.dxRDyQ8
                 }
             }
+            is SurfaceFill.Textured -> {
+                val desc = fill.descriptor
+                val uMask = desc.uMask
+                val vMask = desc.vMask
+                val baseOffset = desc.romOffset
 
-            y++
-            xLQ8 += trap.dxLDyQ8
-            xRQ8 += trap.dxRDyQ8
-            uLQ8 += trap.duDyQ8
-            vLQ8 += trap.dvDyQ8
+                repeat(lines) {
+                    var xStart = xLQ8 shr 8
+                    var xEnd = xRQ8 shr 8
+                    var uCur = uLQ8
+                    var vCur = vLQ8
+
+                    if (xStart < 0) {
+                        val clipX = -xStart
+                        uCur += trap.duDxQ8 * clipX
+                        vCur += trap.dvDxQ8 * clipX
+                        xStart = 0
+                    }
+                    if (xEnd > screenW) {
+                        xEnd = screenW
+                    }
+
+                    if (xStart < xEnd) {
+                        val rowBase = y * screenW
+                        for (px in xStart until xEnd) {
+                            val uTex = (uCur shr 8) and uMask
+                            val vTex = (vCur shr 8) and vMask
+                            val texelIdx = baseOffset + vTex * atlasWidth + uTex
+                            if (texelIdx in atlasBin.indices) {
+                                val colorIdx = atlasBin[texelIdx].toInt() and 0x0F
+                                if (colorIdx != 0) {
+                                    argbPixels[rowBase + px] = paletteArgb[colorIdx]
+                                    pickBuffer[rowBase + px] = cellIdx
+                                }
+                            }
+                            uCur += trap.duDxQ8
+                            vCur += trap.dvDxQ8
+                        }
+                    }
+
+                    y++
+                    xLQ8 += trap.dxLDyQ8
+                    xRQ8 += trap.dxRDyQ8
+                    uLQ8 += trap.duDyQ8
+                    vLQ8 += trap.dvDyQ8
+                }
+            }
         }
     }
 }

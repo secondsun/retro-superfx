@@ -3,31 +3,25 @@ package dev.secondsun.sfxstudio.desktop.ui.components
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.Button
-import androidx.compose.material.ButtonDefaults
 import androidx.compose.material.DropdownMenu
-import androidx.compose.material.DropdownMenuItem
-import androidx.compose.material.MaterialTheme
-import androidx.compose.material.Surface
+import androidx.compose.material.Icon
 import androidx.compose.material.Text
-import androidx.compose.material.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
@@ -38,18 +32,30 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
 import dev.secondsun.sfxstudio.core.atlas.SnesColor
 import dev.secondsun.sfxstudio.desktop.atlas.AtlasEditorState
 import dev.secondsun.sfxstudio.desktop.ui.TextureComposeRenderer
+import dev.secondsun.sfxstudio.desktop.ui.components.primitives.StudioBadge
+import dev.secondsun.sfxstudio.desktop.ui.components.primitives.StudioButton
+import dev.secondsun.sfxstudio.desktop.ui.components.primitives.StudioButtonVariant
+import dev.secondsun.sfxstudio.desktop.ui.components.primitives.StudioModalDialog
+import dev.secondsun.sfxstudio.desktop.ui.components.primitives.StudioSectionHeader
+import dev.secondsun.sfxstudio.desktop.ui.icons.StudioIcons
+import dev.secondsun.sfxstudio.desktop.ui.theme.HairlineEdge
+import dev.secondsun.sfxstudio.desktop.ui.theme.StudioTheme
+import dev.secondsun.sfxstudio.desktop.ui.theme.checkerboardBackground
+import dev.secondsun.sfxstudio.desktop.ui.theme.drawEdgeHairline
 
 @Composable
 fun PaletteRemappingModal(state: AtlasEditorState) {
     val pending = state.pendingImport ?: return
+    val colors = StudioTheme.colors
+    val metrics = StudioTheme.metrics
+    val typography = StudioTheme.typography
 
-    // Manual slot mapping per incoming color initialized from PendingTextureImport
     val manualMapping =
         remember(pending) {
             mutableStateMapOf<SnesColor, Int>().apply {
@@ -63,226 +69,475 @@ fun PaletteRemappingModal(state: AtlasEditorState) {
             pending.previewTexture(currentMappingSnapshot, state.palette)
         }
 
-    Dialog(onDismissRequest = { state.pendingImport = null }) {
-        Surface(
-            modifier = Modifier.width(720.dp).height(580.dp),
-            shape = RoundedCornerShape(8.dp),
-            color = Color(0xFF22242B),
+    StudioModalDialog(
+        onDismissRequest = { state.pendingImport = null },
+        title = "Resolve Palette Conflict",
+        subtitle = "Importing '${pending.suggestedName}' (${pending.width}x${pending.height})",
+        preferredWidth = 680.dp,
+        footerLeading = {
+            Text(
+                text = "Palette: ${state.palette.assignedCount}/15 assigned",
+                style = typography.monoCaption,
+                color = colors.textMuted,
+            )
+        },
+        footerActions = {
+            StudioButton(
+                label = "Cancel",
+                variant = StudioButtonVariant.Ghost,
+                onClick = { state.pendingImport = null },
+            )
+            StudioButton(
+                label = "Apply Mapping",
+                variant = StudioButtonVariant.Primary,
+                onClick = { state.commitManualImport(manualMapping.toMap()) },
+            )
+        },
+    ) {
+        // 1. Conflict Warning Callout
+        Row(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(metrics.radiusSM))
+                    .background(colors.semanticWarningSubtle)
+                    .drawEdgeHairline(HairlineEdge.LEFT, colors.semanticWarning, strokeDp = 3.dp)
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-                Text(
-                    text = "Palette Conflict & Color Remapping",
-                    style = MaterialTheme.typography.h6,
-                    color = Color.White,
-                )
+            Icon(
+                imageVector = StudioIcons.StatusWarn,
+                contentDescription = null,
+                tint = colors.semanticWarning,
+                modifier = Modifier.size(16.dp),
+            )
+            Text(
+                text =
+                    if (pending.unmappedColors.isNotEmpty()) {
+                        "${pending.unmappedColors.size} incoming color(s) exceed open slots in the 15-color opaque SNES palette."
+                    } else {
+                        "Review incoming BGR555 color-to-slot assignments for '${pending.suggestedName}'."
+                    },
+                style = typography.bodyRegular,
+                color = colors.semanticWarningText,
+            )
+        }
 
-                Text(
-                    text =
-                        if (pending.unmappedColors.isNotEmpty()) {
-                            "Importing '${pending.suggestedName}' (${pending.width}x${pending.height}) requires " +
-                                "${pending.unmappedColors.size} more colors than available in the 16-color palette."
-                        } else {
-                            "Review color palette mapping for '${pending.suggestedName}'."
-                        },
-                    color = Color(0xFFFBBF24),
-                    fontSize = 12.sp,
-                )
+        // 2. Unclipped Live Comparison Strip (106dp tall so labels never clip descenders)
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            StudioSectionHeader(
+                title = "Live Preview & Existing Atlas Tiles",
+                badge = "${state.atlas.textures.size + 1}",
+            )
 
-                Spacer(modifier = Modifier.height(12.dp))
-
-                Text(
-                    text = "Incoming & Existing Textures Preview:",
-                    style = MaterialTheme.typography.subtitle2,
-                    color = Color.White,
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                LazyRow(
-                    modifier =
-                        Modifier
-                            .fillMaxWidth()
-                            .height(90.dp)
-                            .background(Color(0xFF16181D), RoundedCornerShape(4.dp))
-                            .padding(8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    item {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            val bitmap = TextureComposeRenderer.renderToImageBitmap(incomingPreview, state.palette)
-                            Image(
-                                bitmap = bitmap,
-                                contentDescription = incomingPreview.name,
-                                modifier =
-                                    Modifier
-                                        .size(56.dp)
-                                        .border(1.5.dp, Color(0xFF38BDF8), RoundedCornerShape(2.dp)),
-                            )
-                            Text("${incomingPreview.name} (new)", color = Color(0xFF38BDF8), fontSize = 10.sp)
+            LazyRow(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .height(106.dp)
+                        .clip(RoundedCornerShape(metrics.radiusSM))
+                        .background(colors.surface0)
+                        .border(1.dp, colors.borderSubtle, RoundedCornerShape(metrics.radiusSM))
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                item {
+                    val incomingBitmap =
+                        remember(incomingPreview, state.palette) {
+                            TextureComposeRenderer.renderToImageBitmap(incomingPreview, state.palette)
                         }
-                    }
-                    items(state.atlas.textures) { tex ->
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            val bitmap = TextureComposeRenderer.renderToImageBitmap(tex, state.palette)
-                            Image(
-                                bitmap = bitmap,
-                                contentDescription = tex.name,
-                                modifier =
-                                    Modifier
-                                        .size(56.dp)
-                                        .border(1.dp, Color.Gray, RoundedCornerShape(2.dp)),
-                            )
-                            Text(tex.name, color = Color.White, fontSize = 10.sp)
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                // Automation Row
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Button(
-                        onClick = { state.commitSnapImport() },
-                        colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFF2563EB)),
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                        Text("Auto-Snap to Existing Palette", color = Color.White, fontSize = 12.sp)
-                    }
-
-                    Button(
-                        onClick = { state.commitGlobalQuantizeImport() },
-                        colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFF7C3AED)),
-                    ) {
-                        Text("Global 15-Color Auto-Quantize", color = Color.White, fontSize = 12.sp)
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                Text(
-                    text = "Manual Incoming Color Mapping:",
-                    style = MaterialTheme.typography.subtitle2,
-                    color = Color.White,
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-
-                Column(
-                    modifier =
-                        Modifier
-                            .weight(1f)
-                            .fillMaxWidth()
-                            .background(Color(0xFF1E2026), RoundedCornerShape(4.dp))
-                            .padding(8.dp)
-                            .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    pending.uniqueColors.forEach { color ->
-                        val targetSlot = manualMapping[color] ?: 1
-
-                        Row(
-                            modifier =
-                                Modifier
-                                    .fillMaxWidth()
-                                    .background(Color(0xFF2A2D34), RoundedCornerShape(4.dp))
-                                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically,
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(5.dp),
                         ) {
                             Box(
                                 modifier =
                                     Modifier
-                                        .size(24.dp)
-                                        .clip(RoundedCornerShape(2.dp))
-                                        .background(Color(color.rgb888 or (0xFF shl 24)))
-                                        .border(1.dp, Color.White, RoundedCornerShape(2.dp)),
-                            )
-
-                            Spacer(modifier = Modifier.width(8.dp))
-
-                            Text(
-                                text = "Color ${color.hexString}",
-                                color = Color.White,
-                                fontSize = 12.sp,
-                                modifier = Modifier.width(120.dp),
-                            )
-
-                            Text("→ Map to Slot:", color = Color.LightGray, fontSize = 12.sp)
-
-                            Spacer(modifier = Modifier.width(8.dp))
-
-                            var dropdownExpanded by remember { mutableStateOf(false) }
-                            Box {
-                                Button(
-                                    onClick = { dropdownExpanded = true },
-                                    colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFF374151)),
-                                    modifier = Modifier.height(26.dp),
-                                    contentPadding = PaddingValues(horizontal = 6.dp),
-                                ) {
-                                    Text("Slot $targetSlot", color = Color.White, fontSize = 11.sp)
-                                }
-
-                                DropdownMenu(
-                                    expanded = dropdownExpanded,
-                                    onDismissRequest = { dropdownExpanded = false },
-                                    modifier = Modifier.background(Color(0xFF2A2D34)),
-                                ) {
-                                    for (slot in 0..15) {
-                                        DropdownMenuItem(
-                                            onClick = {
-                                                manualMapping[color] = slot
-                                                dropdownExpanded = false
-                                            },
-                                        ) {
-                                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                                Box(
-                                                    modifier =
-                                                        Modifier
-                                                            .size(16.dp)
-                                                            .background(
-                                                                if (slot == 0) {
-                                                                    Color.Transparent
-                                                                } else {
-                                                                    Color(state.palette[slot].argb)
-                                                                },
-                                                            ).border(1.dp, Color.Gray),
-                                                )
-                                                Spacer(modifier = Modifier.width(6.dp))
-                                                Text(
-                                                    if (slot == 0) {
-                                                        "Slot 0 (Transparent)"
-                                                    } else {
-                                                        "Slot $slot (${state.palette[slot].hexString})"
-                                                    },
-                                                    color = Color.White,
-                                                    fontSize = 11.sp,
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
+                                        .size(56.dp)
+                                        .clip(RoundedCornerShape(metrics.radiusXS))
+                                        .checkerboardBackground(4.dp, colors.checkerDark, colors.checkerLight)
+                                        .border(1.5.dp, colors.accentHover, RoundedCornerShape(metrics.radiusXS)),
+                            ) {
+                                Image(
+                                    bitmap = incomingBitmap,
+                                    contentDescription = incomingPreview.name,
+                                    filterQuality = FilterQuality.None,
+                                    modifier = Modifier.fillMaxSize(),
+                                )
                             }
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                StudioBadge(
+                                    text = "NEW",
+                                    textColor = colors.onAccent,
+                                    backgroundColor = colors.accentPrimary,
+                                )
+                                Text(
+                                    text = incomingPreview.name,
+                                    style = typography.caption,
+                                    color = colors.accentHover,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.widthIn(max = 96.dp),
+                                )
+                            }
+                        }
+
+                        if (state.atlas.textures.isNotEmpty()) {
+                            Box(
+                                modifier =
+                                    Modifier
+                                        .width(1.dp)
+                                        .height(72.dp)
+                                        .background(colors.borderSubtle),
+                            )
                         }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(12.dp))
+                items(state.atlas.textures) { tex ->
+                    val bitmap =
+                        remember(tex, state.palette) {
+                            TextureComposeRenderer.renderToImageBitmap(tex, state.palette)
+                        }
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(5.dp),
+                    ) {
+                        Box(
+                            modifier =
+                                Modifier
+                                    .size(56.dp)
+                                    .clip(RoundedCornerShape(metrics.radiusXS))
+                                    .checkerboardBackground(4.dp, colors.checkerDark, colors.checkerLight)
+                                    .border(1.dp, colors.borderSubtle, RoundedCornerShape(metrics.radiusXS)),
+                        ) {
+                            Image(
+                                bitmap = bitmap,
+                                contentDescription = tex.name,
+                                filterQuality = FilterQuality.None,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
+                        Text(
+                            text = tex.name,
+                            style = typography.caption,
+                            color = colors.textSecondary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.widthIn(max = 84.dp),
+                        )
+                    }
+                }
+            }
+        }
 
+        // 3. Neutral Secondary Quick Resolution Action Cards
+        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+            val sideBySide = maxWidth >= 480.dp
+            if (sideBySide) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
-                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    TextButton(onClick = { state.pendingImport = null }) {
-                        Text("Cancel", color = Color.LightGray)
-                    }
+                    QuickResolutionCard(
+                        title = "Auto-Snap to Existing Palette",
+                        description = "Keep existing palette untouched; map new pixels to nearest BGR555 slot.",
+                        buttonLabel = "Auto-Snap & Import",
+                        onClick = { state.commitSnapImport() },
+                        modifier = Modifier.weight(1f),
+                    )
+                    QuickResolutionCard(
+                        title = "Global 15-Color Re-Quantize",
+                        description = "Recompute optimal 15-color Median-Cut across all textures + new image.",
+                        buttonLabel = "Re-Quantize All & Import",
+                        onClick = { state.commitGlobalQuantizeImport() },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            } else {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    QuickResolutionCard(
+                        title = "Auto-Snap to Existing Palette",
+                        description = "Keep existing palette untouched; map new pixels to nearest BGR555 slot.",
+                        buttonLabel = "Auto-Snap & Import",
+                        onClick = { state.commitSnapImport() },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    QuickResolutionCard(
+                        title = "Global 15-Color Re-Quantize",
+                        description = "Recompute optimal 15-color Median-Cut across all textures + new image.",
+                        buttonLabel = "Re-Quantize All & Import",
+                        onClick = { state.commitGlobalQuantizeImport() },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
+        }
 
-                    Spacer(modifier = Modifier.width(8.dp))
+        // 4. Manual Incoming Color-to-Slot Mapping List with 4x4 Visual Swatch Grid Popover
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            StudioSectionHeader(
+                title = "Manual Incoming Color Mapping",
+                badge = "${pending.uniqueColors.size}",
+            )
 
-                    Button(
-                        onClick = { state.commitManualImport(manualMapping.toMap()) },
-                        colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFF10B981)),
+            Column(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(metrics.radiusSM))
+                        .background(colors.surface0)
+                        .border(1.dp, colors.borderSubtle, RoundedCornerShape(metrics.radiusSM))
+                        .padding(6.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                for (color in pending.uniqueColors) {
+                    val targetSlot = manualMapping[color] ?: 1
+                    val isUnmapped = color in pending.unmappedColors
+
+                    ManualColorMapRow(
+                        incomingColor = color,
+                        isUnmapped = isUnmapped,
+                        targetSlot = targetSlot,
+                        state = state,
+                        onSelectSlot = { newSlot -> manualMapping[color] = newSlot },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun QuickResolutionCard(
+    title: String,
+    description: String,
+    buttonLabel: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = StudioTheme.colors
+    val metrics = StudioTheme.metrics
+    val typography = StudioTheme.typography
+    val cardShape = RoundedCornerShape(metrics.radiusSM)
+
+    Column(
+        modifier =
+            modifier
+                .clip(cardShape)
+                .background(colors.surface2, cardShape)
+                .border(1.dp, colors.borderSubtle, cardShape)
+                .padding(10.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(
+            text = title,
+            style = typography.bodyMedium,
+            color = colors.textPrimary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            text = description,
+            style = typography.caption,
+            color = colors.textSecondary,
+        )
+        StudioButton(
+            label = buttonLabel,
+            variant = StudioButtonVariant.Secondary,
+            compact = true,
+            onClick = onClick,
+        )
+    }
+}
+
+@Composable
+private fun ManualColorMapRow(
+    incomingColor: SnesColor,
+    isUnmapped: Boolean,
+    targetSlot: Int,
+    state: AtlasEditorState,
+    onSelectSlot: (Int) -> Unit,
+) {
+    val colors = StudioTheme.colors
+    val metrics = StudioTheme.metrics
+    val typography = StudioTheme.typography
+    var pickerOpen by remember { mutableStateOf(false) }
+
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(metrics.radiusXS))
+                .background(colors.surface1)
+                .padding(horizontal = 8.dp, vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Box(
+                modifier =
+                    Modifier
+                        .size(22.dp)
+                        .clip(RoundedCornerShape(metrics.radiusXS))
+                        .background(Color(incomingColor.argb))
+                        .border(1.dp, colors.swatchInnerRim, RoundedCornerShape(metrics.radiusXS)),
+            )
+            Text(
+                text = incomingColor.hexString,
+                style = typography.monoBody,
+                color = colors.textPrimary,
+            )
+            if (isUnmapped) {
+                StudioBadge(
+                    text = "OVERFLOW",
+                    textColor = colors.semanticWarningText,
+                    backgroundColor = colors.semanticWarningSubtle,
+                )
+            }
+        }
+
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Icon(
+                imageVector = StudioIcons.ArrowRight,
+                contentDescription = null,
+                tint = colors.textMuted,
+                modifier = Modifier.size(13.dp),
+            )
+
+            Box {
+                val slotColor = state.palette[targetSlot]
+                val btnShape = RoundedCornerShape(metrics.radiusSM)
+                Row(
+                    modifier =
+                        Modifier
+                            .height(metrics.controlHeightSM)
+                            .clip(btnShape)
+                            .background(colors.surface2, btnShape)
+                            .border(1.dp, colors.borderSubtle, btnShape)
+                            .clickable { pickerOpen = true }
+                            .padding(horizontal = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Box(
+                        modifier =
+                            Modifier
+                                .size(14.dp)
+                                .clip(RoundedCornerShape(3.dp))
+                                .let { mod ->
+                                    if (targetSlot == 0) {
+                                        mod.checkerboardBackground(3.dp, colors.checkerDark, colors.checkerLight)
+                                    } else {
+                                        mod.background(Color(slotColor.argb))
+                                    }
+                                }.border(1.dp, colors.swatchInnerRim, RoundedCornerShape(3.dp)),
+                    )
+                    Text(
+                        text =
+                            if (targetSlot == 0) {
+                                "Slot 0 ($0000)"
+                            } else {
+                                "Slot $targetSlot (${slotColor.hexString})"
+                            },
+                        style = typography.monoCaption,
+                        color = colors.textPrimary,
+                    )
+                    Icon(
+                        imageVector = StudioIcons.ChevronDown,
+                        contentDescription = null,
+                        tint = colors.textMuted,
+                        modifier = Modifier.size(12.dp),
+                    )
+                }
+
+                // 4x4 Visual Swatch Grid Popover
+                DropdownMenu(
+                    expanded = pickerOpen,
+                    onDismissRequest = { pickerOpen = false },
+                    modifier = Modifier.background(colors.surface2),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
-                        Text("Apply Mapping", color = Color.White)
+                        Text(
+                            text = "Select Target Palette Slot",
+                            style = typography.caption,
+                            color = colors.textSecondary,
+                        )
+                        for (r in 0..3) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                for (c in 0..3) {
+                                    val s = r * 4 + c
+                                    val sCol = state.palette[s]
+                                    val selected = s == targetSlot
+                                    val cellShape = RoundedCornerShape(metrics.radiusXS)
+                                    Column(
+                                        modifier =
+                                            Modifier
+                                                .width(54.dp)
+                                                .clip(cellShape)
+                                                .background(
+                                                    if (selected) colors.accentSubtle else colors.surface1,
+                                                    cellShape,
+                                                ).border(
+                                                    width = if (selected) 1.5.dp else 1.dp,
+                                                    color = if (selected) colors.accentHover else colors.borderSubtle,
+                                                    shape = cellShape,
+                                                ).clickable {
+                                                    onSelectSlot(s)
+                                                    pickerOpen = false
+                                                }.padding(4.dp),
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                                    ) {
+                                        Box(
+                                            modifier =
+                                                Modifier
+                                                    .fillMaxWidth()
+                                                    .height(18.dp)
+                                                    .clip(RoundedCornerShape(2.dp))
+                                                    .let { mod ->
+                                                        if (s == 0) {
+                                                            mod.checkerboardBackground(
+                                                                3.dp,
+                                                                colors.checkerDark,
+                                                                colors.checkerLight,
+                                                            )
+                                                        } else {
+                                                            mod.background(Color(sCol.argb))
+                                                        }
+                                                    }.border(1.dp, colors.swatchInnerRim, RoundedCornerShape(2.dp)),
+                                        )
+                                        Text(
+                                            text = if (s == 0) "0 Trans" else "#$s",
+                                            style = typography.microBadge,
+                                            color = colors.textPrimary,
+                                            maxLines = 1,
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }

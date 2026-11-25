@@ -9,6 +9,7 @@ import dev.secondsun.sfxstudio.desktop.shell.FakeStudioPlatform
 import dev.secondsun.sfxstudio.desktop.shell.StudioState
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -265,5 +266,221 @@ class AtlasEditorStateTest {
 
         state.autoFit()
         assertTrue(state.statusMessage.contains("Auto-fitted"))
+    }
+
+    @Test
+    fun testUndoRedoAndBatchedPaletteEdits() {
+        val state = AtlasEditorState(standalonePlatform = FakeStudioPlatform())
+        assertFalse(state.canUndo)
+        assertFalse(state.canRedo)
+        assertFalse(state.hasUnsavedChanges)
+
+        val tex = SourceTexture("tile", 16, 16, 0, 0, ByteArray(256) { 1 })
+        state.atlas = state.atlas.withTexture(tex)
+        assertTrue(state.canUndo)
+        assertFalse(state.canRedo)
+        assertTrue(state.hasUnsavedChanges)
+
+        // Move texture
+        assertTrue(state.moveTexture(0, 16, 16))
+        assertEquals(16, state.atlas.textures[0].x)
+
+        // Batched RGB slider edits collapse into a single undo entry
+        state.beginEditBatch()
+        state.updatePaletteSlot(1, SnesColor(5, 0, 0))
+        state.updatePaletteSlot(1, SnesColor(15, 0, 0))
+        state.updatePaletteSlot(1, SnesColor(31, 0, 0))
+        state.endEditBatch()
+        assertEquals(SnesColor(31, 0, 0), state.palette[1])
+
+        // Undo 1: reverts entire batched palette drag in one step
+        state.undo()
+        assertNotEquals(SnesColor(31, 0, 0), state.palette[1])
+        assertEquals(16, state.atlas.textures[0].x)
+        assertTrue(state.canRedo)
+
+        // Undo 2: reverts moveTexture
+        state.undo()
+        assertEquals(0, state.atlas.textures[0].x)
+
+        // Undo 3: reverts adding texture and restores clean (unsaved=false) state
+        state.undo()
+        assertTrue(state.atlas.textures.isEmpty())
+        assertFalse(state.canUndo)
+        assertFalse(state.hasUnsavedChanges)
+
+        // Redo restores all 3 steps
+        state.redo()
+        assertEquals(1, state.atlas.textures.size)
+        state.redo()
+        assertEquals(16, state.atlas.textures[0].x)
+        state.redo()
+        assertEquals(SnesColor(31, 0, 0), state.palette[1])
+        assertFalse(state.canRedo)
+
+        // newProject clears undo/redo history
+        state.newProject()
+        assertFalse(state.canUndo)
+        assertFalse(state.canRedo)
+    }
+
+    @Test
+    fun testSliceCrudCascadingRenameAndUndoRedo() {
+        val state = AtlasEditorState(standalonePlatform = FakeStudioPlatform())
+        val roofPixels = ByteArray(32 * 32) { 2 }
+        state.atlas =
+            TextureAtlas(
+                width = 64,
+                height = 64,
+                textures = listOf(SourceTexture("roof", 32, 32, 0, 0, roofPixels)),
+            )
+
+        // Add slice inside "roof"
+        val slice = VirtualSlice("roof_top_half", "roof", 0, 0, 16, 16)
+        assertTrue(state.addSlice(slice))
+        assertEquals(1, state.atlas.slices.size)
+        assertEquals("roof_top_half", state.selectedSliceName)
+        assertTrue(state.currentValidation().valid)
+
+        // Out-of-bounds slice is rejected cleanly
+        assertFalse(state.addSlice(VirtualSlice("bad_slice", "roof", 24, 0, 16, 16)))
+        assertEquals(1, state.atlas.slices.size)
+        assertNotNull(state.lastError)
+
+        // Add an alias targeting the slice and pin order
+        assertTrue(state.addAlias(DescriptorAlias("hero_trim", "roof_top_half")))
+        assertTrue(state.pinDescriptorOrder())
+        assertEquals(listOf("roof", "hero_trim", "roof_top_half"), state.atlas.descriptorOrder)
+
+        // Update slice name & offset -> cascades into alias target and pinned descriptorOrder
+        assertTrue(
+            state.updateSlice(
+                0,
+                VirtualSlice("roof_ridge", "roof", 16, 0, 16, 16),
+            ),
+        )
+        assertEquals("roof_ridge", state.atlas.slices[0].name)
+        assertEquals(16, state.atlas.slices[0].x)
+        assertEquals("roof_ridge", state.atlas.aliases[0].target)
+        assertEquals(listOf("roof", "hero_trim", "roof_ridge"), state.atlas.descriptorOrder)
+        assertEquals("roof_ridge", state.selectedSliceName)
+
+        // Non-cascading deleteSlice rejects when alias depends on it
+        assertFalse(state.deleteSlice(0, cascadeDependents = false))
+        assertEquals(1, state.atlas.slices.size)
+        assertNotNull(state.lastError)
+
+        // Cascading deleteSlice removes slice + dependent alias and prunes descriptorOrder
+        assertTrue(state.deleteSlice(0, cascadeDependents = true))
+        assertTrue(state.atlas.slices.isEmpty())
+        assertTrue(state.atlas.aliases.isEmpty())
+        assertEquals(listOf("roof"), state.atlas.descriptorOrder)
+        assertNull(state.selectedSliceName)
+
+        // Undo restores slice, alias, and pinned order; Redo re-applies deletion
+        state.undo()
+        assertEquals(1, state.atlas.slices.size)
+        assertEquals("roof_ridge", state.atlas.slices[0].name)
+        assertEquals(1, state.atlas.aliases.size)
+        assertEquals(listOf("roof", "hero_trim", "roof_ridge"), state.atlas.descriptorOrder)
+
+        state.redo()
+        assertTrue(state.atlas.slices.isEmpty())
+        assertTrue(state.atlas.aliases.isEmpty())
+    }
+
+    @Test
+    fun testAliasCrudCycleRejectionAndCascadeModalWorkflow() {
+        val state = AtlasEditorState(standalonePlatform = FakeStudioPlatform())
+        state.atlas =
+            TextureAtlas(
+                width = 64,
+                height = 64,
+                textures =
+                    listOf(
+                        SourceTexture("stone", 16, 16, 0, 0, ByteArray(256) { 1 }),
+                        SourceTexture("wood", 16, 16, 16, 0, ByteArray(256) { 2 }),
+                    ),
+            )
+
+        assertTrue(state.addAlias(DescriptorAlias("floor_main", "stone")))
+        assertTrue(state.addAlias(DescriptorAlias("floor_alt", "floor_main")))
+        assertEquals(2, state.atlas.aliases.size)
+
+        // Reject cyclic alias update (floor_main -> floor_alt -> floor_main)
+        assertFalse(state.updateAlias(0, DescriptorAlias("floor_main", "floor_alt")))
+        assertEquals("stone", state.atlas.aliases[0].target)
+        assertNotNull(state.lastError)
+
+        // Valid rename cascades to downstream alias
+        assertTrue(state.updateAlias(0, DescriptorAlias("floor_primary", "wood")))
+        assertEquals("floor_primary", state.atlas.aliases[0].name)
+        assertEquals("wood", state.atlas.aliases[0].target)
+        assertEquals("floor_primary", state.atlas.aliases[1].target)
+
+        // UI requestDeleteAlias opens PendingCascadeDelete without mutating until confirmed
+        state.requestDeleteAlias(0)
+        val pending = state.pendingCascadeDelete
+        assertNotNull(pending)
+        assertEquals(CascadeTargetKind.ALIAS, pending!!.kind)
+        assertEquals(listOf("floor_alt"), pending.dependentAliases)
+        assertEquals(2, state.atlas.aliases.size)
+
+        state.cancelCascadeDelete()
+        assertNull(state.pendingCascadeDelete)
+        assertEquals(2, state.atlas.aliases.size)
+
+        state.requestDeleteAlias(0)
+        assertTrue(state.confirmCascadeDelete())
+        assertNull(state.pendingCascadeDelete)
+        assertTrue(state.atlas.aliases.isEmpty())
+
+        // Undo restores both aliases
+        state.undo()
+        assertEquals(2, state.atlas.aliases.size)
+    }
+
+    @Test
+    fun testPinMoveAndClearDescriptorOrderWithUndoRedo() {
+        val state = AtlasEditorState(standalonePlatform = FakeStudioPlatform())
+        state.atlas =
+            TextureAtlas(
+                width = 64,
+                height = 64,
+                textures =
+                    listOf(
+                        SourceTexture("alpha", 16, 16, 0, 0, ByteArray(256) { 1 }),
+                        SourceTexture("beta", 16, 16, 16, 0, ByteArray(256) { 2 }),
+                    ),
+                slices = listOf(VirtualSlice("alpha_sub", "alpha", 0, 0, 16, 16)),
+            )
+
+        assertNull(state.atlas.descriptorOrder)
+        assertTrue(state.pinDescriptorOrder())
+        assertEquals(listOf("alpha", "beta", "alpha_sub"), state.atlas.descriptorOrder)
+
+        // Move "alpha_sub" ($02) up to slot $00
+        assertTrue(state.moveDescriptorInOrder(2, 0))
+        assertEquals(listOf("alpha_sub", "alpha", "beta"), state.atlas.descriptorOrder)
+        assertEquals(
+            listOf("alpha_sub", "alpha", "beta"),
+            state.document
+                .descriptorTable()
+                .getOrThrow()
+                .entries
+                .map { it.name },
+        )
+
+        // Undo reverts moveDescriptorInOrder
+        state.undo()
+        assertEquals(listOf("alpha", "beta", "alpha_sub"), state.atlas.descriptorOrder)
+
+        // Redo re-applies moveDescriptorInOrder
+        state.redo()
+        assertEquals(listOf("alpha_sub", "alpha", "beta"), state.atlas.descriptorOrder)
+
+        // Clear pinned order resets to null (automatic)
+        assertTrue(state.clearDescriptorOrder())
+        assertNull(state.atlas.descriptorOrder)
     }
 }

@@ -446,7 +446,7 @@ data class AtlasDocument(
             }
         }
 
-        // 7. Total descriptor count <= 256 (.tab / u8 .map limit)
+        // 7. Total descriptor count <= 240 (.tab / u8 .map limit; $F0..$FF reserved for solid colors)
         val totalDescriptors = atlas.textures.size + atlas.slices.size + atlas.aliases.size
         if (totalDescriptors > DescriptorTable.MAX_ENTRIES) {
             errors.add(
@@ -732,6 +732,230 @@ data class AtlasDocument(
             DescriptorTable.buildFromAtlasOrThrow(candidate.atlas)
             candidate
         }
+
+    /**
+     * Updates `atlas.slices[index]` to [updated], validating parent bounds and case-insensitive
+     * identifier uniqueness, and cascading any slice rename across dependent [DescriptorAlias]es
+     * and [TextureAtlas.descriptorOrder].
+     */
+    fun updateSlice(
+        index: Int,
+        updated: VirtualSlice,
+    ): Result<AtlasDocument> =
+        runCatching {
+            require(index in atlas.slices.indices) { "Invalid slice index $index" }
+            val oldSlice = atlas.slices[index]
+            val trimmedName = updated.name.trim()
+            val conflict = findCaseInsensitiveConflict(trimmedName, excludeSliceIndex = index)
+            require(conflict == null) {
+                "Descriptor identifier '$trimmedName' collides with existing '$conflict' (ca65 identifiers are case-insensitive)"
+            }
+            val parent =
+                atlas.textures.find { it.name.equals(updated.sourceTexture, ignoreCase = true) }
+                    ?: error("Source texture '${updated.sourceTexture}' does not exist in atlas")
+            require(
+                updated.x >= 0 &&
+                    updated.y >= 0 &&
+                    updated.x + updated.width <= parent.width &&
+                    updated.y + updated.height <= parent.height,
+            ) {
+                "Virtual slice '$trimmedName' is out of bounds of '${parent.name}' (${parent.width}x${parent.height})"
+            }
+            val canonical = updated.copy(name = trimmedName, sourceTexture = parent.name)
+            val nextSlices = atlas.slices.toMutableList().apply { set(index, canonical) }
+            val nextAliases =
+                if (!oldSlice.name.equals(trimmedName, ignoreCase = true)) {
+                    atlas.aliases.map { alias ->
+                        if (alias.target.equals(oldSlice.name, ignoreCase = true)) {
+                            alias.copy(target = trimmedName)
+                        } else {
+                            alias
+                        }
+                    }
+                } else {
+                    atlas.aliases
+                }
+            val nextOrder =
+                atlas.descriptorOrder?.map { entry ->
+                    if (entry.equals(oldSlice.name, ignoreCase = true)) trimmedName else entry
+                }
+            copy(
+                atlas =
+                    atlas.copy(
+                        slices = nextSlices,
+                        aliases = nextAliases,
+                        descriptorOrder = nextOrder,
+                    ),
+            )
+        }
+
+    /**
+     * Removes `atlas.slices[index]`, rejecting removal when dependent [DescriptorAlias]es exist
+     * unless [cascadeDependents] is `true`, and pruning [TextureAtlas.descriptorOrder].
+     */
+    fun removeSlice(
+        index: Int,
+        cascadeDependents: Boolean = false,
+    ): Result<AtlasDocument> =
+        runCatching {
+            require(index in atlas.slices.indices) { "Invalid slice index $index" }
+            val targetSlice = atlas.slices[index]
+            val removedUpper = LinkedHashSet<String>().apply { add(targetSlice.name.uppercase()) }
+            val dependentAliases = collectTransitiveDependentAliases(removedUpper)
+            if (dependentAliases.isNotEmpty() && !cascadeDependents) {
+                val refs = dependentAliases.joinToString(", ") { "alias '${it.name}'" }
+                error(
+                    "Cannot delete slice '${targetSlice.name}' because it is referenced by: $refs. Remove dependent aliases first.",
+                )
+            }
+            val nextSlices = atlas.slices.filterIndexed { i, _ -> i != index }
+            val nextAliases = atlas.aliases.filter { it.name.uppercase() !in removedUpper }
+            val nextOrder = atlas.descriptorOrder?.filter { it.uppercase() !in removedUpper }
+            copy(
+                atlas =
+                    atlas.copy(
+                        slices = nextSlices,
+                        aliases = nextAliases,
+                        descriptorOrder = nextOrder,
+                    ),
+            )
+        }
+
+    /**
+     * Updates `atlas.aliases[index]` to [updated], validating non-cyclic target resolution and
+     * cascading any alias rename across dependent [DescriptorAlias]es and [TextureAtlas.descriptorOrder].
+     */
+    fun updateAlias(
+        index: Int,
+        updated: DescriptorAlias,
+    ): Result<AtlasDocument> =
+        runCatching {
+            require(index in atlas.aliases.indices) { "Invalid alias index $index" }
+            val oldAlias = atlas.aliases[index]
+            val trimmedName = updated.name.trim()
+            val trimmedTarget = updated.target.trim()
+            val conflict = findCaseInsensitiveConflict(trimmedName, excludeAliasIndex = index)
+            require(conflict == null) {
+                "Descriptor identifier '$trimmedName' collides with existing '$conflict' (ca65 identifiers are case-insensitive)"
+            }
+            val canonical = DescriptorAlias(name = trimmedName, target = trimmedTarget)
+            val nextAliases =
+                atlas.aliases.mapIndexed { idx, existing ->
+                    when {
+                        idx == index -> canonical
+                        !oldAlias.name.equals(trimmedName, ignoreCase = true) &&
+                            existing.target.equals(oldAlias.name, ignoreCase = true) ->
+                            existing.copy(target = trimmedName)
+                        else -> existing
+                    }
+                }
+            val nextOrder =
+                atlas.descriptorOrder?.map { entry ->
+                    if (entry.equals(oldAlias.name, ignoreCase = true)) trimmedName else entry
+                }
+            val candidate = copy(atlas = atlas.copy(aliases = nextAliases, descriptorOrder = nextOrder))
+            val validation = candidate.validate(warnBank71Overflow = false)
+            require(validation.valid) {
+                validation.errors.joinToString("; ") { it.message }
+            }
+            DescriptorTable.buildFromAtlasOrThrow(candidate.atlas)
+            candidate
+        }
+
+    /**
+     * Removes `atlas.aliases[index]`, rejecting removal when other [DescriptorAlias]es reference it
+     * unless [cascadeDependents] is `true`, and pruning [TextureAtlas.descriptorOrder].
+     */
+    fun removeAlias(
+        index: Int,
+        cascadeDependents: Boolean = false,
+    ): Result<AtlasDocument> =
+        runCatching {
+            require(index in atlas.aliases.indices) { "Invalid alias index $index" }
+            val targetAlias = atlas.aliases[index]
+            val removedUpper = LinkedHashSet<String>().apply { add(targetAlias.name.uppercase()) }
+            val dependentAliases = collectTransitiveDependentAliases(removedUpper)
+            if (dependentAliases.isNotEmpty() && !cascadeDependents) {
+                val refs = dependentAliases.joinToString(", ") { "alias '${it.name}'" }
+                error(
+                    "Cannot delete alias '${targetAlias.name}' because it is referenced by: $refs. Remove dependent aliases first.",
+                )
+            }
+            val nextAliases = atlas.aliases.filter { it.name.uppercase() !in removedUpper }
+            val nextOrder = atlas.descriptorOrder?.filter { it.uppercase() !in removedUpper }
+            copy(
+                atlas =
+                    atlas.copy(
+                        aliases = nextAliases,
+                        descriptorOrder = nextOrder,
+                    ),
+            )
+        }
+
+    /**
+     * Sets or clears explicit [TextureAtlas.descriptorOrder], validating completeness and uniqueness.
+     */
+    fun withDescriptorOrder(order: List<String>?): Result<AtlasDocument> =
+        runCatching {
+            val candidate = copy(atlas = atlas.copy(descriptorOrder = order))
+            val validation = candidate.validate(warnBank71Overflow = false)
+            require(validation.valid) {
+                validation.errors.joinToString("; ") { it.message }
+            }
+            candidate
+        }
+
+    /**
+     * Pins [TextureAtlas.descriptorOrder] to the current resolved [DescriptorTable] sequence so
+     * future texture/slice additions append at the end without shifting existing `.map` u8 slot IDs.
+     */
+    fun pinCurrentDescriptorOrder(): Result<AtlasDocument> =
+        descriptorTable().map { table ->
+            copy(atlas = atlas.copy(descriptorOrder = table.entries.map { it.name }))
+        }
+
+    /**
+     * Moves a descriptor from [fromIndex] to [toIndex] in the resolved [DescriptorTable] sequence
+     * and persists the resulting explicit [TextureAtlas.descriptorOrder].
+     */
+    fun moveDescriptorInOrder(
+        fromIndex: Int,
+        toIndex: Int,
+    ): Result<AtlasDocument> =
+        runCatching {
+            val entries =
+                descriptorTable()
+                    .getOrThrow()
+                    .entries
+                    .map { it.name }
+                    .toMutableList()
+            require(fromIndex in entries.indices && toIndex in entries.indices) {
+                "Descriptor order indices ($fromIndex -> $toIndex) out of bounds (0..${entries.lastIndex})"
+            }
+            if (fromIndex == toIndex) {
+                return@runCatching copy(atlas = atlas.copy(descriptorOrder = entries))
+            }
+            val item = entries.removeAt(fromIndex)
+            entries.add(toIndex, item)
+            withDescriptorOrder(entries).getOrThrow()
+        }
+
+    private fun collectTransitiveDependentAliases(removedUpper: LinkedHashSet<String>): List<DescriptorAlias> {
+        val dependents = mutableListOf<DescriptorAlias>()
+        var changed = true
+        while (changed) {
+            changed = false
+            for (alias in atlas.aliases) {
+                val aliasUpper = alias.name.uppercase()
+                if (aliasUpper !in removedUpper && alias.target.uppercase() in removedUpper) {
+                    removedUpper.add(aliasUpper)
+                    dependents.add(alias)
+                    changed = true
+                }
+            }
+        }
+        return dependents
+    }
 
     /**
      * Places [texture] into the atlas according to [policy], preserving existing texture coordinates
@@ -1044,13 +1268,21 @@ data class AtlasDocument(
     private fun findCaseInsensitiveConflict(
         candidateName: String,
         excludeTextureIndex: Int = -1,
+        excludeSliceIndex: Int = -1,
+        excludeAliasIndex: Int = -1,
     ): String? {
         for ((idx, tex) in atlas.textures.withIndex()) {
             if (idx == excludeTextureIndex) continue
             if (tex.name.equals(candidateName, ignoreCase = true)) return tex.name
         }
-        atlas.slices.find { it.name.equals(candidateName, ignoreCase = true) }?.let { return it.name }
-        atlas.aliases.find { it.name.equals(candidateName, ignoreCase = true) }?.let { return it.name }
+        for ((idx, slice) in atlas.slices.withIndex()) {
+            if (idx == excludeSliceIndex) continue
+            if (slice.name.equals(candidateName, ignoreCase = true)) return slice.name
+        }
+        for ((idx, alias) in atlas.aliases.withIndex()) {
+            if (idx == excludeAliasIndex) continue
+            if (alias.name.equals(candidateName, ignoreCase = true)) return alias.name
+        }
         return null
     }
 

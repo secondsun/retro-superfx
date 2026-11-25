@@ -3,6 +3,7 @@ package dev.secondsun.sfxstudio.desktop.level
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.geometry.Offset
 import dev.secondsun.sfxstudio.core.atlas.AtlasDocument
 import dev.secondsun.sfxstudio.core.atlas.DescriptorTable
 import dev.secondsun.sfxstudio.core.atlas.SFX_ATLAS_EXTENSION
@@ -15,6 +16,13 @@ import dev.secondsun.sfxstudio.core.level.Ca65MapImporter
 import dev.secondsun.sfxstudio.core.level.CellRotation
 import dev.secondsun.sfxstudio.core.level.DiagnosticSeverity
 import dev.secondsun.sfxstudio.core.level.EdgePanels
+import dev.secondsun.sfxstudio.core.level.FacingDirection
+import dev.secondsun.sfxstudio.core.level.GameplayBinarySerializer
+import dev.secondsun.sfxstudio.core.level.GameplayLayer
+import dev.secondsun.sfxstudio.core.level.GridCoord
+import dev.secondsun.sfxstudio.core.level.IntPoint
+import dev.secondsun.sfxstudio.core.level.InteractableKind
+import dev.secondsun.sfxstudio.core.level.InteractableSpawn
 import dev.secondsun.sfxstudio.core.level.IsoSoftwareRenderer
 import dev.secondsun.sfxstudio.core.level.LevelDiagnostic
 import dev.secondsun.sfxstudio.core.level.LevelDocument
@@ -23,19 +31,36 @@ import dev.secondsun.sfxstudio.core.level.LevelValidationResult
 import dev.secondsun.sfxstudio.core.level.LevelValidator
 import dev.secondsun.sfxstudio.core.level.MapCell
 import dev.secondsun.sfxstudio.core.level.MapGrid
+import dev.secondsun.sfxstudio.core.level.NpcAiType
+import dev.secondsun.sfxstudio.core.level.NpcSpawn
+import dev.secondsun.sfxstudio.core.level.PlayerSpawn
 import dev.secondsun.sfxstudio.core.level.SFX_LEVEL_EXTENSION
 import dev.secondsun.sfxstudio.core.level.ShapeArchetype
+import dev.secondsun.sfxstudio.core.level.WalkabilityOverride
 import dev.secondsun.sfxstudio.desktop.shell.AwtStudioPlatform
-import dev.secondsun.sfxstudio.desktop.shell.EditorSession
+import dev.secondsun.sfxstudio.desktop.shell.LevelCommandBarSession
+import dev.secondsun.sfxstudio.desktop.shell.LevelEditMode
 import dev.secondsun.sfxstudio.desktop.shell.StudioPlatform
 import dev.secondsun.sfxstudio.desktop.shell.StudioState
 import java.io.File
 import java.util.UUID
+import kotlin.math.floor
+import kotlin.math.roundToInt
 
 enum class LevelTool {
     SELECT,
     BRUSH,
     EYEDROPPER,
+    PAN,
+}
+
+enum class GameplayTool {
+    SELECT_ENTITY,
+    PAINT_WALKABILITY,
+    PLACE_PLAYER,
+    PLACE_NPC,
+    EDIT_WAYPOINTS,
+    PLACE_INTERACTABLE,
 }
 
 enum class LevelCenterViewMode {
@@ -50,13 +75,141 @@ enum class ActiveTextureSlot {
     PANEL,
 }
 
+enum class CompactInspectorTab {
+    TERRAIN,
+    TEXTURES,
+    GAMEPLAY,
+    ALERTS,
+}
+
 data class BrushLayerMask(
     val applyHeight: Boolean = true,
     val applyArchetypeAndRotation: Boolean = true,
     val applyTopTex: Boolean = true,
     val applySkirtTex: Boolean = true,
     val applyPanelTexAndFlags: Boolean = false,
+) {
+    val enabledCount: Int
+        get() {
+            var count = 0
+            if (applyHeight) count++
+            if (applyArchetypeAndRotation) count++
+            if (applyTopTex) count++
+            if (applySkirtTex) count++
+            if (applyPanelTexAndFlags) count++
+            return count
+        }
+}
+
+data class CameraRevealTarget(
+    val yaw: Int,
+    val panX: Int,
+    val panY: Int,
 )
+
+internal data class IsoViewportLayout(
+    val fitScale: Float,
+    val scale: Float,
+    val drawW: Int,
+    val drawH: Int,
+    val offX: Int,
+    val offY: Int,
+)
+
+internal fun computeIsoViewportLayout(
+    canvasW: Int,
+    canvasH: Int,
+    imgW: Int,
+    imgH: Int,
+    zoom: Float,
+): IsoViewportLayout {
+    val safeW = imgW.coerceAtLeast(1)
+    val safeH = imgH.coerceAtLeast(1)
+    val fitScale = minOf(canvasW.toFloat() / safeW, canvasH.toFloat() / safeH).coerceAtLeast(0.5f)
+    val effectiveScale = if (zoom <= 0f) fitScale else zoom.coerceIn(0.5f, 8f)
+    val drawW = (safeW * effectiveScale).roundToInt().coerceAtLeast(1)
+    val drawH = (safeH * effectiveScale).roundToInt().coerceAtLeast(1)
+    val offX = ((canvasW - drawW) / 2f).roundToInt()
+    val offY = ((canvasH - drawH) / 2f).roundToInt()
+    return IsoViewportLayout(
+        fitScale = fitScale,
+        scale = effectiveScale,
+        drawW = drawW,
+        drawH = drawH,
+        offX = offX,
+        offY = offY,
+    )
+}
+
+internal fun mapCanvasToRenderPixel(
+    pos: Offset,
+    canvasW: Int,
+    canvasH: Int,
+    imgW: Int,
+    imgH: Int,
+    zoom: Float,
+): Pair<Int, Int> {
+    val layout = computeIsoViewportLayout(canvasW, canvasH, imgW, imgH, zoom)
+    val px = floor((pos.x - layout.offX) / layout.scale).toInt()
+    val py = floor((pos.y - layout.offY) / layout.scale).toInt()
+    return px to py
+}
+
+internal data class GridViewportLayout(
+    val cellPix: Float,
+    val originX: Float,
+    val originY: Float,
+    val rulerLeft: Float,
+    val rulerTop: Float,
+    val totalW: Float,
+    val totalH: Float,
+)
+
+internal fun computeGridViewportLayout(
+    canvasW: Int,
+    canvasH: Int,
+    cols: Int,
+    rows: Int,
+    zoom: Float = 0f,
+    panOffset: Offset = Offset.Zero,
+    rulerLeft: Float = 20f,
+    rulerTop: Float = 16f,
+): GridViewportLayout {
+    val safeCols = cols.coerceAtLeast(1)
+    val safeRows = rows.coerceAtLeast(1)
+    val availW = (canvasW - rulerLeft - 8f).coerceAtLeast(48f)
+    val availH = (canvasH - rulerTop - 24f).coerceAtLeast(48f)
+    val fitCellPix = minOf(availW / safeCols, availH / safeRows).coerceAtLeast(12f)
+    val cellPix = if (zoom <= 0f) fitCellPix else (fitCellPix * zoom.coerceIn(0.5f, 6f)).coerceAtLeast(12f)
+    val totalW = cellPix * safeCols
+    val totalH = cellPix * safeRows
+    val centeredX = rulerLeft + (canvasW - rulerLeft - totalW) / 2f
+    val centeredY = rulerTop + 12f + (canvasH - rulerTop - 16f - totalH) / 2f
+    return GridViewportLayout(
+        cellPix = cellPix,
+        originX = centeredX + panOffset.x,
+        originY = centeredY + panOffset.y,
+        rulerLeft = rulerLeft,
+        rulerTop = rulerTop,
+        totalW = totalW,
+        totalH = totalH,
+    )
+}
+
+internal fun mapCanvasToGridCoord(
+    pos: Offset,
+    canvasW: Int,
+    canvasH: Int,
+    cols: Int,
+    rows: Int,
+    zoom: Float = 0f,
+    panOffset: Offset = Offset.Zero,
+): Pair<Int, Int>? {
+    val layout = computeGridViewportLayout(canvasW, canvasH, cols, rows, zoom, panOffset)
+    val c = floor((pos.x - layout.originX) / layout.cellPix).toInt()
+    val r = floor((pos.y - layout.originY) / layout.cellPix).toInt()
+    return if (c in 0 until cols && r in 0 until rows) c to r else null
+}
 
 /**
  * Stateful editing session for an isometric [LevelDocument] (`.sfxlevel`) in SuperFX Studio Desktop.
@@ -75,7 +228,7 @@ class LevelEditorState(
         ),
     initialAtlasFile: File? = null,
     private val standalonePlatform: StudioPlatform? = null,
-) : EditorSession {
+) : LevelCommandBarSession {
     override val sessionId: String = UUID.randomUUID().toString()
     override val defaultExtension: String = SFX_LEVEL_EXTENSION
     override val documentTypeLabel: String = "Level Document"
@@ -112,9 +265,56 @@ class LevelEditorState(
         studio?.reportError(message)
     }
 
+    // Authoring Mode & Gameplay Overlay (LevelCommandBarSession)
+    private var _editMode by mutableStateOf(LevelEditMode.TERRAIN)
+    override var editMode: LevelEditMode
+        get() = _editMode
+        set(value) {
+            _editMode = value
+            if (value == LevelEditMode.GAMEPLAY) {
+                showGameplayOverlay = true
+                compactInspectorTab = CompactInspectorTab.GAMEPLAY
+            } else {
+                gameplayPanActive = false
+                if (compactInspectorTab == CompactInspectorTab.GAMEPLAY) {
+                    compactInspectorTab = CompactInspectorTab.TERRAIN
+                }
+            }
+        }
+
+    override var showGameplayOverlay by mutableStateOf(initialDocument.gameplay != null)
+
+    override val hasGameplayLayer: Boolean
+        get() = document.gameplay != null
+
+    override val gameplayEntityCount: Int
+        get() {
+            val gp = document.gameplay ?: return 0
+            return 1 + gp.npcs.size + gp.interactables.size
+        }
+
     // Tooling & selection state
     var activeTool by mutableStateOf(LevelTool.SELECT)
+    var gameplayTool by mutableStateOf(GameplayTool.SELECT_ENTITY)
+    var gameplayPanActive by mutableStateOf(false)
+
+    val isPanToolActive: Boolean
+        get() =
+            if (editMode == LevelEditMode.TERRAIN) {
+                activeTool == LevelTool.PAN
+            } else {
+                gameplayPanActive
+            }
+
+    var selectedNpcIndex by mutableStateOf<Int?>(null)
+    var selectedInteractableIndex by mutableStateOf<Int?>(null)
+    var paintWalkable by mutableStateOf(true)
+    var paintMoveCost by mutableStateOf(1)
+    var paintWalkFlags by mutableStateOf(0)
+    var pendingInteractableKind by mutableStateOf(InteractableKind.CHEST)
+
     var activeTextureSlot by mutableStateOf(ActiveTextureSlot.TOP)
+    var expandedTextureSlots by mutableStateOf<Set<ActiveTextureSlot>>(emptySet())
     var brushCell by mutableStateOf(
         initialDocument.grid.cells.firstOrNull() ?: MapCell(),
     )
@@ -123,34 +323,85 @@ class LevelEditorState(
     var selectedCells by mutableStateOf<Set<Pair<Int, Int>>>(setOf(0 to 0))
     var hoveredCell by mutableStateOf<Pair<Int, Int>?>(null)
 
-    // Viewport state
+    // Viewport & responsive inspector state
     var centerViewMode by mutableStateOf(LevelCenterViewMode.SPLIT)
+    var compactInspectorTab by mutableStateOf(CompactInspectorTab.TERRAIN)
+    var activeDiagnosticIndex by mutableStateOf(0)
+
     var cameraYaw by mutableStateOf(15)
     var cameraPanX by mutableStateOf(0)
     var cameraPanY by mutableStateOf(0)
     private var camXQ6: Int = 0
     private var camZQ6: Int = 0
-    var isoZoom by mutableStateOf(2.0f)
+
+    /**
+     * 3D viewport zoom factor (`0f` = Fit to viewport, or explicit `1f..4f` scale).
+     */
+    var isoZoom by mutableStateOf(0f)
+
+    /**
+     * 2D top-down grid zoom factor (`0f` = Fit to viewport, or explicit `1f..4f` multiplier).
+     */
+    var gridZoom by mutableStateOf(0f)
+    var gridPanOffset by mutableStateOf(Offset.Zero)
+
+    var animateCameraReveal: Boolean = false
+    var cameraRevealTarget by mutableStateOf<CameraRevealTarget?>(null)
+        private set
 
     // Undo / Redo history
     private val undoStack = ArrayDeque<LevelDocument>()
     private val redoStack = ArrayDeque<LevelDocument>()
     private var strokeSnapshot: LevelDocument? = null
+    private var savedDocument: LevelDocument = initialDocument
+    private var historyRevision by mutableStateOf(0)
 
-    val canUndo: Boolean get() = undoStack.isNotEmpty()
-    val canRedo: Boolean get() = redoStack.isNotEmpty()
+    override val canUndo: Boolean
+        get() {
+            historyRevision
+            return undoStack.isNotEmpty()
+        }
+
+    override val canRedo: Boolean
+        get() {
+            historyRevision
+            return redoStack.isNotEmpty()
+        }
 
     // Local disk cache only when running standalone without StudioState
     private var standaloneDiskKey: Pair<String, Long>? = null
     private var standaloneDiskDoc: AtlasDocument? = null
 
+    init {
+        syncGameplayEntitySelectionForCell(0, 0)
+    }
+
     override val statusSummary: String
         get() {
             val g = document.grid
+            val gp = document.gameplay
+            val gmapPart =
+                if (gp != null) {
+                    " + ${GameplayBinarySerializer.byteSize(g, gp)} B .gmap"
+                } else {
+                    ""
+                }
             val valRes = currentValidation()
-            return "${g.cols}x${g.rows} (${g.byteSize} B) | Yaw $cameraYaw | " +
+            return "${g.cols}x${g.rows} (${g.byteSize} B$gmapPart) | Yaw ${cameraYaw * 3}° | " +
                 "${valRes.errors.size} err, ${valRes.warnings.size} warn"
         }
+
+    fun isLinkedAtlasOpenInTab(): Boolean {
+        val s = studio ?: return false
+        val targetFile = resolveAtlasFile()
+        if (targetFile == null) {
+            return s.openSessions.any { it.defaultExtension != SFX_LEVEL_EXTENSION }
+        }
+        val canonical = StudioState.canonicalOrAbsolute(targetFile)
+        return s.openSessions.any { session ->
+            session !== this && session.documentFile?.let { StudioState.canonicalOrAbsolute(it) == canonical } == true
+        }
+    }
 
     fun resolveAtlasFile(): File? {
         val levelFile = currentLevelFile
@@ -244,6 +495,7 @@ class LevelEditorState(
         }
         undoStack.addLast(snapshot)
         redoStack.clear()
+        historyRevision++
     }
 
     private fun mutateDocument(
@@ -258,13 +510,13 @@ class LevelEditorState(
             pushUndo(before)
         }
         document = after
-        hasUnsavedChanges = true
+        hasUnsavedChanges = (document != savedDocument)
         if (status != null) {
             statusMessage = status
         }
     }
 
-    fun undo() {
+    override fun undo() {
         val prev = undoStack.removeLastOrNull() ?: return
         if (redoStack.size >= MAX_HISTORY) {
             redoStack.removeFirst()
@@ -272,11 +524,12 @@ class LevelEditorState(
         redoStack.addLast(document)
         document = prev
         clampSelectionToBounds()
-        hasUnsavedChanges = true
+        hasUnsavedChanges = (document != savedDocument)
+        historyRevision++
         statusMessage = "Undo"
     }
 
-    fun redo() {
+    override fun redo() {
         val next = redoStack.removeLastOrNull() ?: return
         if (undoStack.size >= MAX_HISTORY) {
             undoStack.removeFirst()
@@ -284,7 +537,8 @@ class LevelEditorState(
         undoStack.addLast(document)
         document = next
         clampSelectionToBounds()
-        hasUnsavedChanges = true
+        hasUnsavedChanges = (document != savedDocument)
+        historyRevision++
         statusMessage = "Redo"
     }
 
@@ -302,6 +556,22 @@ class LevelEditorState(
         }
     }
 
+    private fun syncGameplayEntitySelectionForCell(
+        col: Int,
+        row: Int,
+    ) {
+        val gp = document.gameplay
+        if (gp == null) {
+            selectedNpcIndex = null
+            selectedInteractableIndex = null
+            return
+        }
+        val npcIdx = gp.npcs.indexOfFirst { it.col == col && it.row == row }.takeIf { it >= 0 }
+        val interIdx = gp.interactables.indexOfFirst { it.col == col && it.row == row }.takeIf { it >= 0 }
+        selectedNpcIndex = npcIdx
+        selectedInteractableIndex = if (npcIdx == null) interIdx else null
+    }
+
     fun selectSingleCell(
         col: Int,
         row: Int,
@@ -309,9 +579,10 @@ class LevelEditorState(
     ) {
         if (!document.grid.isInBounds(col, row)) return
         val coord = col to row
+        val wasRemoved = additive && coord in selectedCells && selectedCells.size > 1
         selectedCells =
             if (additive) {
-                if (coord in selectedCells && selectedCells.size > 1) {
+                if (wasRemoved) {
                     selectedCells - coord
                 } else {
                     selectedCells + coord
@@ -319,7 +590,48 @@ class LevelEditorState(
             } else {
                 setOf(coord)
             }
+        if (!wasRemoved) {
+            syncGameplayEntitySelectionForCell(col, row)
+            ensureCellVisibleInPreview(col, row)
+        }
         statusMessage = "Selected cell ($col, $row)"
+    }
+
+    fun selectPlayerSpawn() {
+        val gp = document.gameplay ?: return
+        val c = gp.playerSpawn.col
+        val r = gp.playerSpawn.row
+        if (document.grid.isInBounds(c, r)) {
+            selectedCells = setOf(c to r)
+            selectedNpcIndex = null
+            selectedInteractableIndex = null
+            ensureCellVisibleInPreview(c, r)
+            statusMessage = "Selected Player Spawn at ($c, $r)"
+        }
+    }
+
+    fun selectNpc(index: Int) {
+        val gp = document.gameplay ?: return
+        val npc = gp.npcs.getOrNull(index) ?: return
+        selectedNpcIndex = index
+        selectedInteractableIndex = null
+        if (document.grid.isInBounds(npc.col, npc.row)) {
+            selectedCells = setOf(npc.col to npc.row)
+            ensureCellVisibleInPreview(npc.col, npc.row)
+        }
+        statusMessage = "Selected NPC '${npc.id}' at (${npc.col}, ${npc.row})"
+    }
+
+    fun selectInteractable(index: Int) {
+        val gp = document.gameplay ?: return
+        val inter = gp.interactables.getOrNull(index) ?: return
+        selectedInteractableIndex = index
+        selectedNpcIndex = null
+        if (document.grid.isInBounds(inter.col, inter.row)) {
+            selectedCells = setOf(inter.col to inter.row)
+            ensureCellVisibleInPreview(inter.col, inter.row)
+        }
+        statusMessage = "Selected ${inter.kind.name.lowercase()} '${inter.id}' at (${inter.col}, ${inter.row})"
     }
 
     fun selectRect(
@@ -339,8 +651,198 @@ class LevelEditorState(
             }
         }
         selectedCells = next
+        ensureCellVisibleInPreview(
+            colB.coerceIn(0, document.grid.cols - 1),
+            rowB.coerceIn(0, document.grid.rows - 1),
+        )
         statusMessage = "Selected ${next.size} cell(s)"
     }
+
+    /**
+     * Ensures the cell at ([col], [row]) is both inside the `256x160` 3D software preview
+     * and unoccluded by foreground geometry.
+     *
+     * Invoked only when selecting a cell (or opening/importing a level), never when editing.
+     * If the cell is already in-frame and visible, the camera is left untouched; otherwise
+     * pans at the current yaw first, and if still occluded rotates to the nearest unobstructed yaw.
+     */
+    fun ensureCellVisibleInPreview(
+        col: Int,
+        row: Int,
+        animate: Boolean = animateCameraReveal,
+    ) {
+        val grid = document.grid
+        if (!grid.isInBounds(col, row)) return
+        val cellIdx = row * grid.cols + col
+        val width = IsoSoftwareRenderer.DEFAULT_WIDTH
+        val height = IsoSoftwareRenderer.DEFAULT_HEIGHT
+
+        fun applyCameraTarget(
+            targetYaw: Int,
+            targetPanX: Int,
+            targetPanY: Int,
+        ) {
+            val normYaw = ((targetYaw % 120) + 120) % 120
+            val clampedPanX = targetPanX.coerceIn(-MAX_PAN_PIXELS, MAX_PAN_PIXELS)
+            val clampedPanY = targetPanY.coerceIn(-MAX_PAN_PIXELS, MAX_PAN_PIXELS)
+            if (normYaw == cameraYaw && clampedPanX == cameraPanX && clampedPanY == cameraPanY) {
+                cameraRevealTarget = null
+                return
+            }
+            if (animate) {
+                cameraRevealTarget = CameraRevealTarget(normYaw, clampedPanX, clampedPanY)
+            } else {
+                cameraRevealTarget = null
+                setCameraImmediate(normYaw, clampedPanX, clampedPanY)
+            }
+        }
+
+        val atlasAndPalette = resolveAtlasAndPalette()
+        if (atlasAndPalette == null) {
+            val poly = computeCellFloorPolygon(grid, col, row, cameraYaw, cameraPanX, cameraPanY, width, height)
+            if (!isPolygonInBounds(poly, width, height)) {
+                val (panX, panY) = computePanToCenterCell(grid, col, row, cameraYaw, width, height)
+                applyCameraTarget(cameraYaw, panX, panY)
+            }
+            return
+        }
+
+        val (atlas, palette) = atlasAndPalette
+
+        fun evaluate(
+            yaw: Int,
+            panX: Int,
+            panY: Int,
+        ): Pair<Boolean, Int> {
+            val res =
+                IsoSoftwareRenderer.render(
+                    grid = grid,
+                    atlas = atlas,
+                    palette = palette,
+                    yawIndex = yaw,
+                    width = width,
+                    height = height,
+                    panX = panX,
+                    panY = panY,
+                )
+            val poly = res.cellFloorPolygons.getOrNull(cellIdx).orEmpty()
+            val inBounds = isPolygonInBounds(poly, width, height)
+            var visiblePixels = 0
+            for (p in res.cellPickBuffer) {
+                if (p == cellIdx) visiblePixels++
+            }
+            return inBounds to visiblePixels
+        }
+
+        // 1. Leave camera untouched if cell is already in-frame and unoccluded
+        val (curInBounds, curVisible) = evaluate(cameraYaw, cameraPanX, cameraPanY)
+        if (curInBounds && curVisible >= MIN_VISIBLE_PIXELS) {
+            cameraRevealTarget = null
+            return
+        }
+
+        // 2. Try panning at the current yaw first (avoid unnecessary rotation)
+        val (curCenterPanX, curCenterPanY) = computePanToCenterCell(grid, col, row, cameraYaw, width, height)
+        var bestYaw = cameraYaw
+        var bestPanX = curCenterPanX
+        var bestPanY = curCenterPanY
+        var (bestInBounds, bestVisible) = evaluate(cameraYaw, curCenterPanX, curCenterPanY)
+        if (bestInBounds && bestVisible >= MIN_VISIBLE_PIXELS) {
+            applyCameraTarget(bestYaw, bestPanX, bestPanY)
+            return
+        }
+
+        // 3. Cell is occluded at current yaw: search candidate yaws (90° turns first, then 45°/15°)
+        val candidateOffsets = listOf(30, -30, 60, 15, -15, 45, -45, 75, -75)
+        for (offset in candidateOffsets) {
+            val candYaw = (((cameraYaw + offset) % 120) + 120) % 120
+            val (candPanX, candPanY) = computePanToCenterCell(grid, col, row, candYaw, width, height)
+            val (candInBounds, candVisible) = evaluate(candYaw, candPanX, candPanY)
+            val isBetter =
+                (candInBounds && !bestInBounds) ||
+                    (candInBounds == bestInBounds && candVisible > bestVisible)
+            if (isBetter) {
+                bestYaw = candYaw
+                bestPanX = candPanX
+                bestPanY = candPanY
+                bestInBounds = candInBounds
+                bestVisible = candVisible
+                if (bestInBounds && bestVisible >= GOOD_VISIBLE_PIXELS) {
+                    break
+                }
+            }
+        }
+
+        applyCameraTarget(bestYaw, bestPanX, bestPanY)
+    }
+
+    internal fun setCameraImmediate(
+        yaw: Int,
+        panX: Int,
+        panY: Int,
+    ) {
+        cameraYaw = ((yaw % 120) + 120) % 120
+        cameraPanX = panX.coerceIn(-MAX_PAN_PIXELS, MAX_PAN_PIXELS)
+        cameraPanY = panY.coerceIn(-MAX_PAN_PIXELS, MAX_PAN_PIXELS)
+        syncScreenToCam()
+    }
+
+    internal fun clearCameraRevealTarget() {
+        cameraRevealTarget = null
+    }
+
+    private fun computeCellFloorPolygon(
+        grid: MapGrid,
+        col: Int,
+        row: Int,
+        yawIndex: Int,
+        panX: Int,
+        panY: Int,
+        width: Int,
+        height: Int,
+    ): List<IntPoint> {
+        val sin = IsoSoftwareRenderer.sinQ14(yawIndex)
+        val cos = IsoSoftwareRenderer.cosQ14(yawIndex)
+        val basis = IsoSoftwareRenderer.computeBasis(yawIndex)
+        val lat = IsoSoftwareRenderer.populateLattice(basis)
+        val centerYDefault = (height * 5) / 9
+        val origin = IsoSoftwareRenderer.computeCenteredOrigin(grid.cols, grid.rows, width / 2 + panX, centerYDefault + panY, yawIndex)
+        val sxXQ5 = cos shr 4
+        val sxYQ5 = sin shr 5
+        val szXQ5 = -(sin shr 4)
+        val szYQ5 = cos shr 5
+        val cell = grid.cellAt(col, row)
+        val anchorX = ((origin.x shl 5) + col * sxXQ5 + row * szXQ5 + 16) shr 5
+        val anchorY = (((origin.y shl 5) + col * sxYQ5 + row * szYQ5 + 16) shr 5) - cell.baseHeight * IsoSoftwareRenderer.STEP_1H_PIXELS
+        return listOf(
+            IntPoint(anchorX + lat[0].x, anchorY + lat[0].y),
+            IntPoint(anchorX + lat[1].x, anchorY + lat[1].y),
+            IntPoint(anchorX + lat[2].x, anchorY + lat[2].y),
+            IntPoint(anchorX + lat[3].x, anchorY + lat[3].y),
+        )
+    }
+
+    private fun computePanToCenterCell(
+        grid: MapGrid,
+        col: Int,
+        row: Int,
+        yawIndex: Int,
+        width: Int,
+        height: Int,
+    ): Pair<Int, Int> {
+        val poly0 = computeCellFloorPolygon(grid, col, row, yawIndex, 0, 0, width, height)
+        val cx0 = (poly0[0].x + poly0[2].x) / 2
+        val cy0 = (poly0[0].y + poly0[2].y) / 2
+        val panX = ((width / 2) - cx0).coerceIn(-MAX_PAN_PIXELS, MAX_PAN_PIXELS)
+        val panY = ((height / 2) - cy0).coerceIn(-MAX_PAN_PIXELS, MAX_PAN_PIXELS)
+        return panX to panY
+    }
+
+    private fun isPolygonInBounds(
+        poly: List<IntPoint>,
+        width: Int,
+        height: Int,
+    ): Boolean = poly.isNotEmpty() && poly.all { it.x in 0 until width && it.y in 0 until height }
 
     fun handleCellInteraction(
         col: Int,
@@ -349,6 +851,27 @@ class LevelEditorState(
         shiftHeld: Boolean = false,
     ) {
         if (!document.grid.isInBounds(col, row)) return
+        if (editMode == LevelEditMode.GAMEPLAY) {
+            if (gameplayPanActive) return
+            if (!isDragContinue) {
+                handleGameplayCellClick(col, row)
+            } else if (gameplayTool == GameplayTool.PAINT_WALKABILITY) {
+                if (document.gameplay == null) {
+                    enableGameplayLayer()
+                }
+                setCellWalkabilityOverride(
+                    col = col,
+                    row = row,
+                    walkable = paintWalkable,
+                    moveCost = if (paintWalkable) paintMoveCost else 0,
+                    flags = paintWalkFlags,
+                    recordImmediateUndo = strokeSnapshot == null,
+                )
+                selectedCells = setOf(col to row)
+            }
+            return
+        }
+
         when (activeTool) {
             LevelTool.SELECT -> {
                 if (!isDragContinue) {
@@ -361,8 +884,536 @@ class LevelEditorState(
             LevelTool.EYEDROPPER -> {
                 pickCellIntoBrush(col, row, switchBackToBrush = !shiftHeld)
             }
+            LevelTool.PAN -> {
+                // Safe navigation mode: never selects or paints cells
+            }
         }
     }
+
+    // --- Gameplay Layer Authoring Operations ---
+
+    private fun createDefaultGameplayLayer(grid: MapGrid): GameplayLayer {
+        val primary = selectedCells.firstOrNull()
+        val candidateCoords =
+            buildList {
+                if (primary != null && grid.isInBounds(primary.first, primary.second)) {
+                    add(primary)
+                }
+                for (r in 0 until grid.rows) {
+                    for (c in 0 until grid.cols) {
+                        add(c to r)
+                    }
+                }
+            }
+        val walkableCell =
+            candidateCoords.firstOrNull { (c, r) ->
+                GameplayBinarySerializer.defaultWalkableFor(grid.cellAt(c, r).archetype)
+            }
+        return if (walkableCell != null) {
+            GameplayLayer(
+                playerSpawn = PlayerSpawn(col = walkableCell.first, row = walkableCell.second, facing = FacingDirection.SOUTH),
+            )
+        } else {
+            GameplayLayer(
+                walkabilityOverrides = listOf(WalkabilityOverride(col = 0, row = 0, walkable = true, moveCost = 1)),
+                playerSpawn = PlayerSpawn(col = 0, row = 0, facing = FacingDirection.SOUTH),
+            )
+        }
+    }
+
+    fun enableGameplayLayer() {
+        showGameplayOverlay = true
+        if (document.gameplay != null) return
+        mutateDocument(status = "Enabled Gameplay Layer (.gmap)") { doc ->
+            doc.copy(gameplay = createDefaultGameplayLayer(doc.grid))
+        }
+        val spawn = document.gameplay?.playerSpawn
+        if (spawn != null) {
+            selectedCells = setOf(spawn.col to spawn.row)
+        }
+    }
+
+    fun removeGameplayLayer() {
+        if (document.gameplay == null) return
+        selectedNpcIndex = null
+        selectedInteractableIndex = null
+        mutateDocument(status = "Removed Gameplay Layer") { doc ->
+            doc.copy(gameplay = null)
+        }
+    }
+
+    fun walkabilityOverrideAt(
+        col: Int,
+        row: Int,
+    ): WalkabilityOverride? = document.gameplay?.walkabilityOverrides?.firstOrNull { it.col == col && it.row == row }
+
+    fun effectiveWalkabilityAt(
+        col: Int,
+        row: Int,
+    ): WalkabilityOverride {
+        val existing = walkabilityOverrideAt(col, row)
+        if (existing != null) return existing
+        val defaultWalk =
+            if (document.grid.isInBounds(col, row)) {
+                GameplayBinarySerializer.defaultWalkableFor(document.grid.cellAt(col, row).archetype)
+            } else {
+                true
+            }
+        return WalkabilityOverride(
+            col = col,
+            row = row,
+            walkable = defaultWalk,
+            moveCost = if (defaultWalk) 1 else 0,
+            flags = 0,
+        )
+    }
+
+    fun setCellWalkabilityOverride(
+        col: Int,
+        row: Int,
+        walkable: Boolean,
+        moveCost: Int = if (walkable) 1 else 0,
+        flags: Int = 0,
+        recordImmediateUndo: Boolean = true,
+    ) {
+        if (!document.grid.isInBounds(col, row)) return
+        val clampedCost = if (walkable) moveCost.coerceIn(0, 7) else 0
+        val clampedFlags = flags.coerceIn(0, 15)
+        showGameplayOverlay = true
+        mutateDocument(
+            recordUndo = recordImmediateUndo,
+            status = "Set walkability at ($col, $row): ${if (walkable) "walkable (cost $clampedCost)" else "blocked"}",
+        ) { doc ->
+            val gp = doc.gameplay ?: createDefaultGameplayLayer(doc.grid)
+            val filtered = gp.walkabilityOverrides.filterNot { it.col == col && it.row == row }
+            val updatedOv =
+                WalkabilityOverride(
+                    col = col,
+                    row = row,
+                    walkable = walkable,
+                    moveCost = clampedCost,
+                    flags = clampedFlags,
+                )
+            doc.copy(gameplay = gp.copy(walkabilityOverrides = filtered + updatedOv))
+        }
+    }
+
+    fun clearCellWalkabilityOverride(
+        col: Int,
+        row: Int,
+    ) {
+        val gp = document.gameplay ?: return
+        if (gp.walkabilityOverrides.none { it.col == col && it.row == row }) return
+        mutateDocument(status = "Cleared walkability override at ($col, $row)") { doc ->
+            val cur = doc.gameplay ?: return@mutateDocument doc
+            doc.copy(
+                gameplay =
+                    cur.copy(
+                        walkabilityOverrides = cur.walkabilityOverrides.filterNot { it.col == col && it.row == row },
+                    ),
+            )
+        }
+    }
+
+    fun setPlayerSpawn(
+        col: Int,
+        row: Int,
+        facing: FacingDirection = document.gameplay?.playerSpawn?.facing ?: FacingDirection.SOUTH,
+    ) {
+        if (!document.grid.isInBounds(col, row)) return
+        showGameplayOverlay = true
+        mutateDocument(status = "Set Player Spawn to ($col, $row) facing ${facing.name}") { doc ->
+            val gp = doc.gameplay ?: createDefaultGameplayLayer(doc.grid)
+            doc.copy(gameplay = gp.copy(playerSpawn = PlayerSpawn(col = col, row = row, facing = facing)))
+        }
+    }
+
+    private fun uniqueNpcId(
+        existing: List<NpcSpawn>,
+        requested: String?,
+        aiType: NpcAiType,
+    ): String {
+        val used = existing.map { it.id.lowercase() }.toSet()
+        val baseCandidate =
+            requested
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+                ?.let { SourceTexture.sanitizeToIdentifier(it).lowercase() }
+        if (baseCandidate != null && baseCandidate !in used) {
+            return baseCandidate
+        }
+        val prefix = baseCandidate ?: if (aiType == NpcAiType.PATROL) "patrol_npc" else "guard_npc"
+        var suffix = existing.size
+        while ("${prefix}_$suffix".lowercase() in used) {
+            suffix++
+        }
+        return "${prefix}_$suffix"
+    }
+
+    fun addNpc(
+        col: Int,
+        row: Int,
+        id: String? = null,
+        aiType: NpcAiType = NpcAiType.GUARD,
+    ): Int? {
+        if (!document.grid.isInBounds(col, row)) return null
+        val curCount = document.gameplay?.npcs?.size ?: 0
+        if (curCount >= 255) {
+            reportError("Maximum of 255 NPCs reached.")
+            return null
+        }
+        showGameplayOverlay = true
+        var addedIndex: Int? = null
+        mutateDocument(status = "Added NPC at ($col, $row)") { doc ->
+            val gp = doc.gameplay ?: createDefaultGameplayLayer(doc.grid)
+            val resolvedId = uniqueNpcId(gp.npcs, id, aiType)
+            val initialWaypoints =
+                if (aiType == NpcAiType.PATROL) {
+                    listOf(GridCoord(col, row))
+                } else {
+                    emptyList()
+                }
+            val newNpc =
+                NpcSpawn(
+                    id = resolvedId,
+                    col = col,
+                    row = row,
+                    aiType = aiType,
+                    patrolWaypoints = initialWaypoints,
+                )
+            val nextNpcs = gp.npcs + newNpc
+            addedIndex = nextNpcs.lastIndex
+            doc.copy(gameplay = gp.copy(npcs = nextNpcs))
+        }
+        if (addedIndex != null) {
+            selectedNpcIndex = addedIndex
+            selectedInteractableIndex = null
+            selectedCells = setOf(col to row)
+        }
+        return addedIndex
+    }
+
+    fun updateNpc(
+        index: Int,
+        updated: NpcSpawn,
+    ) {
+        val gp = document.gameplay ?: return
+        if (index !in gp.npcs.indices) return
+        val cols = document.grid.cols
+        val rows = document.grid.rows
+        val sanitized =
+            updated.copy(
+                id = updated.id.trim().ifBlank { gp.npcs[index].id },
+                col = updated.col.coerceIn(0, cols - 1),
+                row = updated.row.coerceIn(0, rows - 1),
+                spriteId = updated.spriteId.coerceIn(0, 255),
+                aggroRange = updated.aggroRange.coerceIn(0, 255),
+                patrolWaypoints =
+                    updated.patrolWaypoints
+                        .take(GameplayBinarySerializer.MAX_WAYPOINTS)
+                        .map { GridCoord(it.col.coerceIn(0, cols - 1), it.row.coerceIn(0, rows - 1)) },
+                hp = updated.hp.coerceIn(1, 255),
+                atk = updated.atk.coerceIn(0, 255),
+                def = updated.def.coerceIn(0, 255),
+                speed = updated.speed.coerceIn(0, 255),
+                movePoints = updated.movePoints.coerceIn(0, 255),
+            )
+        mutateDocument(status = "Updated NPC '${sanitized.id}'") { doc ->
+            val cur = doc.gameplay ?: return@mutateDocument doc
+            if (index !in cur.npcs.indices) return@mutateDocument doc
+            val list = cur.npcs.toMutableList()
+            list[index] = sanitized
+            doc.copy(gameplay = cur.copy(npcs = list))
+        }
+    }
+
+    fun removeNpc(index: Int) {
+        val gp = document.gameplay ?: return
+        if (index !in gp.npcs.indices) return
+        val removedId = gp.npcs[index].id
+        mutateDocument(status = "Removed NPC '$removedId'") { doc ->
+            val cur = doc.gameplay ?: return@mutateDocument doc
+            if (index !in cur.npcs.indices) return@mutateDocument doc
+            val list = cur.npcs.toMutableList()
+            list.removeAt(index)
+            doc.copy(gameplay = cur.copy(npcs = list))
+        }
+        val curSel = selectedNpcIndex
+        selectedNpcIndex =
+            when {
+                curSel == null -> null
+                curSel == index -> null
+                curSel > index -> curSel - 1
+                else -> curSel
+            }
+    }
+
+    fun toggleOrAppendNpcWaypoint(
+        npcIndex: Int,
+        col: Int,
+        row: Int,
+    ) {
+        val gp = document.gameplay ?: return
+        if (npcIndex !in gp.npcs.indices || !document.grid.isInBounds(col, row)) return
+        val npc = gp.npcs[npcIndex]
+        val coord = GridCoord(col, row)
+        if (coord in npc.patrolWaypoints) {
+            val nextWps = npc.patrolWaypoints.filterNot { it == coord }
+            updateNpc(npcIndex, npc.copy(patrolWaypoints = nextWps))
+            statusMessage = "Removed waypoint ($col, $row) from '${npc.id}'"
+            return
+        }
+        if (npc.patrolWaypoints.size >= GameplayBinarySerializer.MAX_WAYPOINTS) {
+            statusMessage =
+                "NPC '${npc.id}' already has maximum ${GameplayBinarySerializer.MAX_WAYPOINTS} patrol waypoints"
+            return
+        }
+        val nextWps = npc.patrolWaypoints + coord
+        val nextAi = if (npc.aiType == NpcAiType.GUARD) NpcAiType.PATROL else npc.aiType
+        updateNpc(npcIndex, npc.copy(aiType = nextAi, patrolWaypoints = nextWps))
+        statusMessage = "Added waypoint #${nextWps.size} ($col, $row) to '${npc.id}'"
+    }
+
+    fun removeNpcWaypoint(
+        npcIndex: Int,
+        waypointIndex: Int,
+    ) {
+        val gp = document.gameplay ?: return
+        val npc = gp.npcs.getOrNull(npcIndex) ?: return
+        if (waypointIndex !in npc.patrolWaypoints.indices) return
+        val nextWps = npc.patrolWaypoints.toMutableList().also { it.removeAt(waypointIndex) }
+        updateNpc(npcIndex, npc.copy(patrolWaypoints = nextWps))
+        statusMessage = "Removed waypoint #${waypointIndex + 1} from '${npc.id}'"
+    }
+
+    fun clearNpcWaypoints(npcIndex: Int) {
+        val gp = document.gameplay ?: return
+        val npc = gp.npcs.getOrNull(npcIndex) ?: return
+        if (npc.patrolWaypoints.isEmpty()) return
+        updateNpc(npcIndex, npc.copy(patrolWaypoints = emptyList()))
+        statusMessage = "Cleared patrol waypoints for '${npc.id}'"
+    }
+
+    private fun uniqueInteractableId(
+        existing: List<InteractableSpawn>,
+        requested: String?,
+        kind: InteractableKind,
+    ): String {
+        val used = existing.map { it.id.lowercase() }.toSet()
+        val baseCandidate =
+            requested
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+                ?.let { SourceTexture.sanitizeToIdentifier(it).lowercase() }
+        if (baseCandidate != null && baseCandidate !in used) {
+            return baseCandidate
+        }
+        val prefix = baseCandidate ?: kind.name.lowercase()
+        var suffix = existing.size
+        while ("${prefix}_$suffix".lowercase() in used) {
+            suffix++
+        }
+        return "${prefix}_$suffix"
+    }
+
+    fun addInteractable(
+        col: Int,
+        row: Int,
+        kind: InteractableKind = pendingInteractableKind,
+        id: String? = null,
+    ): Int? {
+        if (!document.grid.isInBounds(col, row)) return null
+        val curCount = document.gameplay?.interactables?.size ?: 0
+        if (curCount >= 255) {
+            reportError("Maximum of 255 interactables reached.")
+            return null
+        }
+        showGameplayOverlay = true
+        var addedIndex: Int? = null
+        mutateDocument(status = "Added ${kind.name.lowercase()} at ($col, $row)") { doc ->
+            val gp = doc.gameplay ?: createDefaultGameplayLayer(doc.grid)
+            val resolvedId = uniqueInteractableId(gp.interactables, id, kind)
+            val newInter =
+                InteractableSpawn(
+                    id = resolvedId,
+                    col = col,
+                    row = row,
+                    kind = kind,
+                )
+            val nextList = gp.interactables + newInter
+            addedIndex = nextList.lastIndex
+            doc.copy(gameplay = gp.copy(interactables = nextList))
+        }
+        if (addedIndex != null) {
+            selectedInteractableIndex = addedIndex
+            selectedNpcIndex = null
+            selectedCells = setOf(col to row)
+        }
+        return addedIndex
+    }
+
+    fun updateInteractable(
+        index: Int,
+        updated: InteractableSpawn,
+    ) {
+        val gp = document.gameplay ?: return
+        if (index !in gp.interactables.indices) return
+        val cols = document.grid.cols
+        val rows = document.grid.rows
+        val sanitized =
+            updated.copy(
+                id = updated.id.trim().ifBlank { gp.interactables[index].id },
+                col = updated.col.coerceIn(0, cols - 1),
+                row = updated.row.coerceIn(0, rows - 1),
+                closedSpriteId = updated.closedSpriteId.coerceIn(0, 255),
+                openSpriteId = updated.openSpriteId.coerceIn(0, 255),
+                rewardValue = updated.rewardValue.coerceIn(0, 255),
+                messageId = updated.messageId.coerceIn(0, 255),
+            )
+        mutateDocument(status = "Updated ${sanitized.kind.name.lowercase()} '${sanitized.id}'") { doc ->
+            val cur = doc.gameplay ?: return@mutateDocument doc
+            if (index !in cur.interactables.indices) return@mutateDocument doc
+            val list = cur.interactables.toMutableList()
+            list[index] = sanitized
+            doc.copy(gameplay = cur.copy(interactables = list))
+        }
+    }
+
+    fun removeInteractable(index: Int) {
+        val gp = document.gameplay ?: return
+        if (index !in gp.interactables.indices) return
+        val removedId = gp.interactables[index].id
+        mutateDocument(status = "Removed interactable '$removedId'") { doc ->
+            val cur = doc.gameplay ?: return@mutateDocument doc
+            if (index !in cur.interactables.indices) return@mutateDocument doc
+            val list = cur.interactables.toMutableList()
+            list.removeAt(index)
+            doc.copy(gameplay = cur.copy(interactables = list))
+        }
+        val curSel = selectedInteractableIndex
+        selectedInteractableIndex =
+            when {
+                curSel == null -> null
+                curSel == index -> null
+                curSel > index -> curSel - 1
+                else -> curSel
+            }
+    }
+
+    fun handleGameplayCellClick(
+        col: Int,
+        row: Int,
+    ) {
+        if (!document.grid.isInBounds(col, row)) return
+        when (gameplayTool) {
+            GameplayTool.SELECT_ENTITY -> {
+                selectSingleCell(col, row)
+            }
+            GameplayTool.PAINT_WALKABILITY -> {
+                if (document.gameplay == null) {
+                    enableGameplayLayer()
+                }
+                setCellWalkabilityOverride(
+                    col = col,
+                    row = row,
+                    walkable = paintWalkable,
+                    moveCost = if (paintWalkable) paintMoveCost else 0,
+                    flags = paintWalkFlags,
+                )
+                selectedCells = setOf(col to row)
+            }
+            GameplayTool.PLACE_PLAYER -> {
+                if (document.gameplay == null) {
+                    enableGameplayLayer()
+                }
+                val curSpawn = document.gameplay?.playerSpawn
+                val nextFacing =
+                    if (curSpawn != null && curSpawn.col == col && curSpawn.row == row) {
+                        FacingDirection.fromId((curSpawn.facing.id + 1) and 3)
+                    } else {
+                        curSpawn?.facing ?: FacingDirection.SOUTH
+                    }
+                setPlayerSpawn(col, row, nextFacing)
+                selectedNpcIndex = null
+                selectedInteractableIndex = null
+                selectedCells = setOf(col to row)
+            }
+            GameplayTool.PLACE_NPC -> {
+                if (document.gameplay == null) {
+                    enableGameplayLayer()
+                }
+                val existingNpcIdx =
+                    document.gameplay
+                        ?.npcs
+                        ?.indexOfFirst { it.col == col && it.row == row }
+                        ?.takeIf { it >= 0 }
+                if (existingNpcIdx != null) {
+                    selectNpc(existingNpcIdx)
+                } else {
+                    addNpc(col, row)
+                }
+            }
+            GameplayTool.EDIT_WAYPOINTS -> {
+                val activeNpcIdx = selectedNpcIndex
+                val gp = document.gameplay
+                if (activeNpcIdx != null && gp != null && activeNpcIdx in gp.npcs.indices) {
+                    toggleOrAppendNpcWaypoint(activeNpcIdx, col, row)
+                } else {
+                    val npcAtCell = gp?.npcs?.indexOfFirst { it.col == col && it.row == row }?.takeIf { it >= 0 }
+                    if (npcAtCell != null) {
+                        selectNpc(npcAtCell)
+                    } else {
+                        statusMessage = "Select an NPC first before placing patrol waypoints"
+                    }
+                }
+            }
+            GameplayTool.PLACE_INTERACTABLE -> {
+                if (document.gameplay == null) {
+                    enableGameplayLayer()
+                }
+                val existingInterIdx =
+                    document.gameplay
+                        ?.interactables
+                        ?.indexOfFirst { it.col == col && it.row == row }
+                        ?.takeIf { it >= 0 }
+                if (existingInterIdx != null) {
+                    selectInteractable(existingInterIdx)
+                } else {
+                    addInteractable(col, row, kind = pendingInteractableKind)
+                }
+            }
+        }
+    }
+
+    fun findNextFreeWalkableCell(): Pair<Int, Int> {
+        val grid = document.grid
+        val gp = document.gameplay
+        val occupied = mutableSetOf<Pair<Int, Int>>()
+        if (gp != null) {
+            occupied.add(gp.playerSpawn.col to gp.playerSpawn.row)
+            gp.npcs.forEach { occupied.add(it.col to it.row) }
+            gp.interactables.forEach { occupied.add(it.col to it.row) }
+        }
+        val primary = selectedCells.firstOrNull()
+        if (primary != null &&
+            grid.isInBounds(primary.first, primary.second) &&
+            primary !in occupied &&
+            effectiveWalkabilityAt(primary.first, primary.second).walkable
+        ) {
+            return primary
+        }
+        for (r in 0 until grid.rows) {
+            for (c in 0 until grid.cols) {
+                val pos = c to r
+                if (pos !in occupied && effectiveWalkabilityAt(c, r).walkable) {
+                    return pos
+                }
+            }
+        }
+        return primary ?: (0 to 0)
+    }
+
+    // --- Terrain Cell Authoring Operations ---
 
     fun pickCellIntoBrush(
         col: Int,
@@ -427,6 +1478,7 @@ class LevelEditorState(
     }
 
     fun stepSelectedHeight(delta: Int) {
+        if (delta == 0) return
         updateSelectedCells("Adjusted height by ${if (delta >= 0) "+$delta" else "$delta"}") { cell ->
             cell.copy(baseHeight = (cell.baseHeight + delta).coerceIn(0, LevelValidator.MAX_BASE_HEIGHT))
         }
@@ -464,21 +1516,44 @@ class LevelEditorState(
     }
 
     fun assignTextureToActiveSlot(texName: String?) {
+        assignTextureToSlot(activeTextureSlot, texName)
+    }
+
+    fun assignTextureToSlot(
+        slot: ActiveTextureSlot,
+        texName: String?,
+    ) {
+        activeTextureSlot = slot
         brushCell =
-            when (activeTextureSlot) {
+            when (slot) {
                 ActiveTextureSlot.TOP -> brushCell.copy(topTex = texName)
                 ActiveTextureSlot.SKIRT -> brushCell.copy(skirtTex = texName)
                 ActiveTextureSlot.PANEL -> brushCell.copy(panelTex = texName)
             }
         if (activeTool == LevelTool.SELECT && selectedCells.isNotEmpty()) {
-            updateSelectedCells("Assigned ${activeTextureSlot.name.lowercase()} texture '${texName ?: "none"}'") { cell ->
-                when (activeTextureSlot) {
+            updateSelectedCells("Assigned ${slot.name.lowercase()} texture '${texName ?: "none"}'") { cell ->
+                when (slot) {
                     ActiveTextureSlot.TOP -> cell.copy(topTex = texName)
                     ActiveTextureSlot.SKIRT -> cell.copy(skirtTex = texName)
                     ActiveTextureSlot.PANEL -> cell.copy(panelTex = texName)
                 }
             }
         }
+    }
+
+    fun expandTextureSlot(slot: ActiveTextureSlot) {
+        activeTextureSlot = slot
+        expandedTextureSlots = expandedTextureSlots + slot
+    }
+
+    fun toggleTextureSlotExpanded(slot: ActiveTextureSlot) {
+        activeTextureSlot = slot
+        expandedTextureSlots =
+            if (slot in expandedTextureSlots) {
+                expandedTextureSlots - slot
+            } else {
+                expandedTextureSlots + slot
+            }
     }
 
     fun updateSelectedPanels(transform: (EdgePanels) -> EdgePanels) {
@@ -516,7 +1591,14 @@ class LevelEditorState(
                         ?.skirtTex,
             )
         mutateDocument(status = "Resized grid to ${c}x$r") { doc ->
-            doc.copy(grid = doc.grid.resized(c, r, fill))
+            val resizedGrid = doc.grid.resized(c, r, fill)
+            val resizedGameplay =
+                doc.gameplay?.let { gp ->
+                    gp.copy(
+                        walkabilityOverrides = gp.walkabilityOverrides.filter { resizedGrid.isInBounds(it.col, it.row) },
+                    )
+                }
+            doc.copy(grid = resizedGrid, gameplay = resizedGameplay)
         }
         clampSelectionToBounds()
     }
@@ -568,12 +1650,16 @@ class LevelEditorState(
         }
     }
 
+    // --- Camera & Grid Viewport Navigation ---
+
     fun rotateCameraClockwise(steps: Int = 1) {
+        cameraRevealTarget = null
         cameraYaw = (((cameraYaw + steps) % 120) + 120) % 120
         syncCamToScreen()
     }
 
     fun rotateCameraCounterClockwise(steps: Int = 1) {
+        cameraRevealTarget = null
         cameraYaw = (((cameraYaw - steps) % 120) + 120) % 120
         syncCamToScreen()
     }
@@ -618,17 +1704,32 @@ class LevelEditorState(
         deltaPanX: Int,
         deltaPanY: Int,
     ) {
+        cameraRevealTarget = null
         cameraPanX = (cameraPanX + deltaPanX).coerceIn(-MAX_PAN_PIXELS, MAX_PAN_PIXELS)
         cameraPanY = (cameraPanY + deltaPanY).coerceIn(-MAX_PAN_PIXELS, MAX_PAN_PIXELS)
         syncScreenToCam()
     }
 
     fun resetCamera() {
+        cameraRevealTarget = null
         cameraYaw = 15
         cameraPanX = 0
         cameraPanY = 0
         camXQ6 = 0
         camZQ6 = 0
+    }
+
+    fun panGridBy(delta: Offset) {
+        gridPanOffset =
+            Offset(
+                x = (gridPanOffset.x + delta.x).coerceIn(-MAX_GRID_PAN_PX, MAX_GRID_PAN_PX),
+                y = (gridPanOffset.y + delta.y).coerceIn(-MAX_GRID_PAN_PX, MAX_GRID_PAN_PX),
+            )
+    }
+
+    fun resetGridView() {
+        gridZoom = 0f
+        gridPanOffset = Offset.Zero
     }
 
     private fun fmult(
@@ -668,6 +1769,20 @@ class LevelEditorState(
     private fun clampSelectionToBounds() {
         val valid = selectedCells.filter { (c, r) -> document.grid.isInBounds(c, r) }.toSet()
         selectedCells = if (valid.isNotEmpty()) valid else setOf(0 to 0)
+        val gp = document.gameplay
+        if (gp == null) {
+            selectedNpcIndex = null
+            selectedInteractableIndex = null
+        } else {
+            val npcSel = selectedNpcIndex
+            if (npcSel != null && npcSel !in gp.npcs.indices) {
+                selectedNpcIndex = gp.npcs.indices.lastOrNull()
+            }
+            val interSel = selectedInteractableIndex
+            if (interSel != null && interSel !in gp.interactables.indices) {
+                selectedInteractableIndex = gp.interactables.indices.lastOrNull()
+            }
+        }
     }
 
     fun primarySelectedCell(): MapCell? {
@@ -687,9 +1802,16 @@ class LevelEditorState(
             invalidateDiskAtlasCache()
             undoStack.clear()
             redoStack.clear()
+            strokeSnapshot = null
             document = loaded
+            savedDocument = loaded
+            historyRevision++
+            showGameplayOverlay = loaded.gameplay != null
+            activeDiagnosticIndex = 0
             brushCell = loaded.grid.cells.firstOrNull() ?: MapCell()
             selectedCells = setOf(0 to 0)
+            syncGameplayEntitySelectionForCell(0, 0)
+            ensureCellVisibleInPreview(0, 0, animate = false)
             hasUnsavedChanges = false
             lastError = null
             statusMessage = "Opened level '${file.name}'"
@@ -738,6 +1860,8 @@ class LevelEditorState(
             }
             brushCell = imported.grid.cells.firstOrNull() ?: MapCell()
             selectedCells = setOf(0 to 0)
+            syncGameplayEntitySelectionForCell(0, 0)
+            ensureCellVisibleInPreview(0, 0, animate = false)
             lastError = null
             true
         } catch (e: Exception) {
@@ -769,6 +1893,7 @@ class LevelEditorState(
             if (atlasDoc == null) {
                 LevelDocumentService.saveAuthoringJson(file, updatedDoc)
                 document = updatedDoc
+                savedDocument = updatedDoc
                 currentLevelFile = file
                 hasUnsavedChanges = false
                 reportError(
@@ -783,10 +1908,11 @@ class LevelEditorState(
                 val errSummary =
                     validation.errors
                         .take(3)
-                        .joinToString("\n") { "• [${it.code}] ${it.message}" }
+                        .joinToString("\n") { "- [${it.code}] ${it.message}" }
                 // Still save authoring .sfxlevel JSON so work is never lost, while reporting why .map export was skipped
                 LevelDocumentService.saveAuthoringJson(file, updatedDoc)
                 document = updatedDoc
+                savedDocument = updatedDoc
                 currentLevelFile = file
                 hasUnsavedChanges = false
                 reportError("Saved '${file.name}', but binary .map export was skipped due to validation errors:\n$errSummary")
@@ -800,6 +1926,7 @@ class LevelEditorState(
                     previewYaw = cameraYaw,
                 )
                 document = updatedDoc
+                savedDocument = updatedDoc
                 currentLevelFile = file
                 hasUnsavedChanges = false
                 lastError = null
@@ -809,7 +1936,13 @@ class LevelEditorState(
                     } else {
                         ""
                     }
-                statusMessage = "Saved and packed '${file.name}' (.map, .i, _preview.png)$warnSuffix"
+                val artifactsLabel =
+                    if (updatedDoc.gameplay != null) {
+                        ".map, .gmap, .i, _gameplay.i, _preview.png"
+                    } else {
+                        ".map, .i, _preview.png"
+                    }
+                statusMessage = "Saved and packed '${file.name}' ($artifactsLabel)$warnSuffix"
                 true
             }
         } catch (e: Exception) {
@@ -831,6 +1964,9 @@ class LevelEditorState(
         const val MAX_HISTORY = 50
         const val PAN_STEP_PIXELS = 2
         const val MAX_PAN_PIXELS = 128
+        private const val MAX_GRID_PAN_PX = 1600f
+        private const val MIN_VISIBLE_PIXELS = 48
+        private const val GOOD_VISIBLE_PIXELS = 120
 
         private fun computeRelativePath(
             levelFile: File,

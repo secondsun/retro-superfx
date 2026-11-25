@@ -4,6 +4,8 @@ import java.io.File
 
 class FakeStudioPlatform(
     override var isMacOs: Boolean = false,
+    var systemDarkMode: Boolean? = true,
+    var systemAccentColorArgb: Int? = null,
 ) : StudioPlatform {
     val openFileQueue = ArrayDeque<File?>()
     val saveFileQueue = ArrayDeque<File?>()
@@ -61,4 +63,8 @@ class FakeStudioPlatform(
     ) {
         preferences[key] = value
     }
+
+    override fun detectSystemDarkMode(): Boolean? = systemDarkMode
+
+    override fun detectSystemAccentColorArgb(): Int? = systemAccentColorArgb
 }

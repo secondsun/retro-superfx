@@ -393,6 +393,7 @@ object LevelBinarySerializer {
                 when (val res = table.lookup(cell.topTex)) {
                     DescriptorLookup.Absent -> 0
                     is DescriptorLookup.Found -> res.index
+                    is DescriptorLookup.SolidColor -> res.texId
                     is DescriptorLookup.Unknown ->
                         throw IllegalArgumentException(
                             "Unknown top texture symbol '${res.rawSymbol}' (available descriptors: ${availableNames.value})",
@@ -402,6 +403,7 @@ object LevelBinarySerializer {
                 when (val res = table.lookup(cell.skirtTex)) {
                     DescriptorLookup.Absent -> topId
                     is DescriptorLookup.Found -> res.index
+                    is DescriptorLookup.SolidColor -> res.texId
                     is DescriptorLookup.Unknown ->
                         throw IllegalArgumentException(
                             "Unknown skirt texture symbol '${res.rawSymbol}' (available descriptors: ${availableNames.value})",
@@ -411,6 +413,7 @@ object LevelBinarySerializer {
                 when (val res = table.lookup(cell.panelTex)) {
                     DescriptorLookup.Absent -> 0
                     is DescriptorLookup.Found -> res.index
+                    is DescriptorLookup.SolidColor -> res.texId
                     is DescriptorLookup.Unknown ->
                         throw IllegalArgumentException(
                             "Unknown panel texture symbol '${res.rawSymbol}' (available descriptors: ${availableNames.value})",
@@ -459,13 +462,20 @@ object LevelBinarySerializer {
                 val rotation = CellRotation.fromIndex((archByte ushr 6) and 0x03)
                 val panels = EdgePanels.fromFlagsByte(panelFlags)
 
-                val topName = descriptors.getOrNull(topId)?.name
-                val skirtName = descriptors.getOrNull(skirtId)?.name
+                fun resolveIdToName(id: Int): String? =
+                    if (DescriptorTable.isSolidColorId(id)) {
+                        DescriptorTable.solidColorSymbol(DescriptorTable.solidColorSlotFromId(id))
+                    } else {
+                        descriptors.getOrNull(id)?.name
+                    }
+
+                val topName = resolveIdToName(topId)
+                val skirtName = resolveIdToName(skirtId)
                 val panelName =
                     if (panelId == 0 && !panels.hasAny && archetype != ShapeArchetype.PRIM_FOLIAGE_CROSS) {
                         null
                     } else {
-                        descriptors.getOrNull(panelId)?.name
+                        resolveIdToName(panelId)
                     }
 
                 MapCell(

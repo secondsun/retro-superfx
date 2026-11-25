@@ -217,16 +217,42 @@ object Ca65MapImporter {
         return EdgePanels.fromFlagsByte(flags)
     }
 
+    private fun parseOptionalIntExpr(expr: String): Int? {
+        val clean = unwrapParens(expr).trim()
+        if (clean.isEmpty()) return null
+        val parts = clean.split('|').map { unwrapParens(it).trim() }
+        if (parts.any { it.isEmpty() }) return null
+        var acc = 0
+        for (part in parts) {
+            val value =
+                when {
+                    part.startsWith("$") -> part.substring(1).toIntOrNull(16)
+                    part.startsWith("0x", ignoreCase = true) -> part.substring(2).toIntOrNull(16)
+                    part.startsWith("%") -> part.substring(1).toIntOrNull(2)
+                    else -> part.toIntOrNull()
+                } ?: return null
+            acc = acc or value
+        }
+        return acc
+    }
+
     private fun resolveImportedTexture(
         expr: String,
         table: DescriptorTable?,
         zeroIsAbsent: Boolean = false,
     ): String? {
         val clean = unwrapParens(expr).trim()
+        val exprValue = parseOptionalIntExpr(clean)
+        if (exprValue != null && DescriptorTable.isSolidColorId(exprValue)) {
+            return DescriptorTable.solidColorSymbol(DescriptorTable.solidColorSlotFromId(exprValue))
+        }
+
         if (table != null) {
-            return when (val lookup = table.lookup(clean, allowNumericIndex = true, zeroIsAbsent = zeroIsAbsent)) {
+            val lookupToken = exprValue?.toString() ?: clean
+            return when (val lookup = table.lookup(lookupToken, allowNumericIndex = true, zeroIsAbsent = zeroIsAbsent)) {
                 DescriptorLookup.Absent -> null
                 is DescriptorLookup.Found -> lookup.descriptor.name
+                is DescriptorLookup.SolidColor -> lookup.canonicalName
                 is DescriptorLookup.Unknown ->
                     throw IllegalArgumentException("Unknown texture symbol '${lookup.rawSymbol}' in ca65 map")
             }
@@ -236,14 +262,12 @@ object Ca65MapImporter {
             return null
         }
 
-        val numericId =
-            when {
-                clean.startsWith("$") -> clean.substring(1).toIntOrNull(16)
-                clean.startsWith("0x", ignoreCase = true) -> clean.substring(2).toIntOrNull(16)
-                else -> clean.toIntOrNull()
-            }
-        if (numericId != null) {
-            return if (numericId == 0) null else numericId.toString()
+        DescriptorTable.parseSolidColorSlot(clean)?.let { slot ->
+            return DescriptorTable.solidColorSymbol(slot)
+        }
+
+        if (exprValue != null) {
+            return if (exprValue == 0) null else exprValue.toString()
         }
 
         return DescriptorTable.stripTexturePrefix(clean).lowercase()

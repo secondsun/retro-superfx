@@ -11,12 +11,29 @@ sealed interface DescriptorLookup {
     data object Absent : DescriptorLookup
 
     /**
-     * Resolved descriptor at 0-based `TEXTURE_TABLE` [index].
+     * Resolved descriptor at 0-based `TEXTURE_TABLE` [index] (`0..239`, `$00..$EF`).
      */
     data class Found(
         val index: Int,
         val descriptor: TextureDescriptorInfo,
     ) : DescriptorLookup
+
+    /**
+     * Fixed solid-color fast-fill reference (`tex_id` in `$F0..$FF`, SNES palette slot `0..15`).
+     */
+    data class SolidColor(
+        val paletteSlot: Int,
+    ) : DescriptorLookup {
+        init {
+            require(paletteSlot in 0..15) { "SolidColor paletteSlot must be in 0..15, got $paletteSlot" }
+        }
+
+        val texId: Int
+            get() = DescriptorTable.solidColorId(paletteSlot)
+
+        val canonicalName: String
+            get() = DescriptorTable.solidColorSymbol(paletteSlot)
+    }
 
     /**
      * Unrecognized texture symbol or out-of-range numeric index.
@@ -98,6 +115,9 @@ class DescriptorTable internal constructor(
         if (allowNumericIndex) {
             val numericId = parseOptionalIntLiteral(clean)
             if (numericId != null) {
+                if (isSolidColorId(numericId)) {
+                    return DescriptorLookup.SolidColor(solidColorSlotFromId(numericId))
+                }
                 if (numericId == 0 && zeroIsAbsent) {
                     return DescriptorLookup.Absent
                 }
@@ -116,7 +136,12 @@ class DescriptorTable internal constructor(
             return DescriptorLookup.Found(directIdx, entries[directIdx])
         }
 
-        // 2. Strip canonical ca65 prefixes (`TEXTURE_ID_` or `TEX_`) and match case-insensitively
+        // 2. Fixed solid palette color span ($F0..$FF, COLOR_0..COLOR_15, TEX_COLOR_*, TEXTURE_ID_COLOR_*)
+        parseSolidColorSlot(clean)?.let { slot ->
+            return DescriptorLookup.SolidColor(slot)
+        }
+
+        // 3. Strip canonical ca65 prefixes (`TEXTURE_ID_` or `TEX_`) and match case-insensitively
         val stripped = stripTexturePrefix(clean)
         if (stripped.isEmpty()) {
             return DescriptorLookup.Unknown(clean)
@@ -174,9 +199,73 @@ class DescriptorTable internal constructor(
 
     companion object {
         const val MAX_ENTRIES: Int = AtlasTableGenerator.MAX_ENTRIES
+        const val SOLID_COLOR_BASE_ID: Int = 0xF0
+        const val SOLID_COLOR_MAX_ID: Int = 0xFF
         const val TAB_MAGIC: Int = AtlasTableGenerator.MAGIC
         const val TAB_HEADER_BYTES: Int = AtlasTableGenerator.HEADER_BYTES
         const val TAB_ENTRY_BYTES: Int = AtlasTableGenerator.ENTRY_BYTES
+
+        /**
+         * Returns the canonical symbolic name (`"COLOR_0"`..`"COLOR_15"`) for a solid palette slot.
+         */
+        fun solidColorSymbol(paletteSlot: Int): String {
+            require(paletteSlot in 0..15) { "Solid palette slot must be in 0..15, got $paletteSlot" }
+            return "COLOR_$paletteSlot"
+        }
+
+        /**
+         * Returns the binary `.map` `tex_id` (`$F0..$FF`) for a solid palette slot (`0..15`).
+         */
+        fun solidColorId(paletteSlot: Int): Int {
+            require(paletteSlot in 0..15) { "Solid palette slot must be in 0..15, got $paletteSlot" }
+            return SOLID_COLOR_BASE_ID or paletteSlot
+        }
+
+        /**
+         * Returns `true` if [texId] falls in IsoEngine's fixed solid-color span (`$F0..$FF`).
+         */
+        fun isSolidColorId(texId: Int): Boolean = texId in SOLID_COLOR_BASE_ID..SOLID_COLOR_MAX_ID
+
+        /**
+         * Extracts the 4-bit SNES palette slot (`0..15`) from a solid-color `tex_id` (`$F0..$FF`).
+         */
+        fun solidColorSlotFromId(texId: Int): Int {
+            require(isSolidColorId(texId)) { "Expected solid-color tex_id in 0xF0..0xFF, got $texId" }
+            return texId and 0x0F
+        }
+
+        /**
+         * Parses a symbolic or hex solid-color reference (`"COLOR_0"`..`"COLOR_15"`,
+         * `"TEX_COLOR_0"`..`"TEX_COLOR_15"`, `"TEXTURE_ID_COLOR_0"`..`"TEXTURE_ID_COLOR_15"`,
+         * `"$F0"`..`"$FF"`, or `"0xF0"`..`"0xFF"`) into its 4-bit palette slot (`0..15`),
+         * or returns `null` if [raw] is not a solid-color token.
+         */
+        fun parseSolidColorSlot(raw: String): Int? {
+            val trimmed = raw.trim()
+            if (trimmed.isEmpty()) return null
+
+            val hexVal =
+                when {
+                    trimmed.startsWith("$") -> trimmed.substring(1).toIntOrNull(16)
+                    trimmed.startsWith("0x", ignoreCase = true) -> trimmed.substring(2).toIntOrNull(16)
+                    else -> null
+                }
+            if (hexVal != null) {
+                return if (isSolidColorId(hexVal)) solidColorSlotFromId(hexVal) else null
+            }
+
+            val stripped = stripTexturePrefix(trimmed)
+            if (stripped.startsWith("COLOR_", ignoreCase = true)) {
+                val suffix = stripped.substring("COLOR_".length)
+                if (suffix.isNotEmpty() && suffix.all { it.isDigit() }) {
+                    val slot = suffix.toIntOrNull()
+                    if (slot != null && slot in 0..15) {
+                        return slot
+                    }
+                }
+            }
+            return null
+        }
 
         /**
          * Strips a single leading `TEXTURE_ID_` or `TEX_` prefix (case-insensitively) from [raw].

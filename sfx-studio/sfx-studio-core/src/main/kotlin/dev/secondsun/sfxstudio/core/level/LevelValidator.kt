@@ -118,12 +118,42 @@ object LevelValidator {
                             ),
                         )
                     }
+                    is DescriptorLookup.SolidColor -> {
+                        if (topLookup.paletteSlot == 0) {
+                            warnings.add(
+                                LevelDiagnostic(
+                                    severity = DiagnosticSeverity.WARNING,
+                                    code = "TRANSPARENT_SOLID_COLOR",
+                                    message =
+                                        "Cell ($col, $row) topTex uses transparent solid color ${topLookup.canonicalName} (\$F0); " +
+                                            "SuperFX plot skips palette slot 0.",
+                                    col = col,
+                                    row = row,
+                                ),
+                            )
+                        }
+                    }
                     is DescriptorLookup.Found -> {}
                 }
 
                 // 2. Skirt texture: Absent inherits topTex cleanly; Unknown -> ERROR
                 when (val skirtLookup = table.lookup(cell.skirtTex)) {
                     DescriptorLookup.Absent, is DescriptorLookup.Found -> {}
+                    is DescriptorLookup.SolidColor -> {
+                        if (skirtLookup.paletteSlot == 0) {
+                            warnings.add(
+                                LevelDiagnostic(
+                                    severity = DiagnosticSeverity.WARNING,
+                                    code = "TRANSPARENT_SOLID_COLOR",
+                                    message =
+                                        "Cell ($col, $row) skirtTex uses transparent solid color ${skirtLookup.canonicalName} (\$F0); " +
+                                            "SuperFX plot skips palette slot 0.",
+                                    col = col,
+                                    row = row,
+                                ),
+                            )
+                        }
+                    }
                     is DescriptorLookup.Unknown -> {
                         errors.add(
                             LevelDiagnostic(
@@ -164,6 +194,24 @@ object LevelValidator {
                                     row = row,
                                 ),
                             )
+                            null
+                        }
+                        is DescriptorLookup.SolidColor -> {
+                            if (panelLookup.paletteSlot == 0 &&
+                                (cell.panels.hasAny || cell.archetype == ShapeArchetype.PRIM_FOLIAGE_CROSS)
+                            ) {
+                                warnings.add(
+                                    LevelDiagnostic(
+                                        severity = DiagnosticSeverity.WARNING,
+                                        code = "TRANSPARENT_SOLID_COLOR",
+                                        message =
+                                            "Cell ($col, $row) panelTex uses transparent solid color " +
+                                                "${panelLookup.canonicalName} (\$F0); SuperFX plot skips palette slot 0.",
+                                        col = col,
+                                        row = row,
+                                    ),
+                                )
+                            }
                             null
                         }
                         is DescriptorLookup.Found -> panelLookup.descriptor

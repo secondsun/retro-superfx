@@ -88,7 +88,7 @@ Always use the project Maven Wrapper (`./mvnw`):
 ## 4. Hardware & Format Invariants
 
 1. **Unpacked 1-Byte-Per-Texel**: Every texel in `.bin` is an unpacked single byte (`$00`–`$0F`) for zero-bit-unpacking `getc; plot` rasterization.
-2. **Power-of-Two Dimensions & `<= 256` Descriptors**: Atlas width/height and slice dimensions must each be powers of two in `[16, 32, 64, 128, 256]`. Total descriptors (`textures + slices + aliases`) must not exceed `256` (`u8` `.map` slot limit); atlases exceeding `32 KB` (`256x256`) emit an `ATLAS_EXCEEDS_BANK_71` warning when staged into Bank `$71`.
+2. **Power-of-Two Dimensions & `<= 240` Descriptors (`$F0..$FF` Solid-Color Span)**: Atlas width/height and slice dimensions must each be powers of two in `[16, 32, 64, 128, 256]`. Total descriptors (`textures + slices + aliases`) must not exceed `240` (`$00..$EF` in `.map` `u8` slots; `$F0..$FF` is reserved for IsoEngine fast solid-color fills `COLOR_0`..`COLOR_15`); atlases exceeding `32 KB` (`256x256`) emit an `ATLAS_EXCEEDS_BANK_71` warning when staged into Bank `$71`.
 3. **BGR555 Palette**: 16 little-endian words (32 bytes). Slot 0 is permanently transparent (`$0000`). Opaque black is clamped to `$0001` (`R=1, G=0, B=0`).
 4. **Canonical `Absent` Texture Resolution**: `null`, `""`, `"NONE"`, `"TEX_NONE"`, and `"TEXTURE_ID_NONE"` resolve to `DescriptorLookup.Absent`. `skirtTex = Absent` inherits `topTex` in both `IsoSoftwareRenderer` and `LevelBinarySerializer`; `panelTex = Absent` renders nothing and serializes `0`.
 5. **ca65 Symbol Rules**: Texture names, slices, and aliases must match valid ca65 identifiers (`[A-Za-z_][A-Za-z0-9_]*`) and be unique case-insensitively across the document.
@@ -98,6 +98,7 @@ Always use the project Maven Wrapper (`./mvnw`):
 ## 5. Domain Documentation & ADRs
 
 - Domain Glossary: [`GLOSSARY.md`](GLOSSARY.md)
+- Adaptive Desktop/Tablet UI & Scene Harness ADR: [`docs/adr/0001-adaptive-desktop-tablet-ui-and-headless-scene-harness.md`](docs/adr/0001-adaptive-desktop-tablet-ui-and-headless-scene-harness.md)
 - Monorepo Tracking ADR: [`../docs/adr/0005-umbrella-tracked-projects-toward-monorepo.md`](../docs/adr/0005-umbrella-tracked-projects-toward-monorepo.md)
 - Dedicated Studio MCP ADR: [`../docs/adr/0006-dedicated-studio-mcp-server-and-packaged-skills.md`](../docs/adr/0006-dedicated-studio-mcp-server-and-packaged-skills.md)
 - Bank `$71` Asset Staging & MSU-1 Seam ADR: [`../docs/adr/0007-bank-71-asset-staging-and-msu1-loader-seam.md`](../docs/adr/0007-bank-71-asset-staging-and-msu1-loader-seam.md)

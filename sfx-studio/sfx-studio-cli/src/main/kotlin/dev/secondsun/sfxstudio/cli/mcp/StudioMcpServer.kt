@@ -679,11 +679,11 @@ class StudioMcpServer(
     },
     "default_top_tex": {
       "type": "string",
-      "description": "Default symbolic top texture name for 'create'"
+      "description": "Default symbolic top texture name or solid palette color (COLOR_0..COLOR_15 / 0xF0..0xFF) for 'create'"
     },
     "default_skirt_tex": {
       "type": "string",
-      "description": "Default symbolic skirt texture name for 'create'"
+      "description": "Default symbolic skirt texture name or solid palette color (COLOR_0..COLOR_15 / 0xF0..0xFF) for 'create'"
     },
     "resize_cols": {
       "type": "integer",

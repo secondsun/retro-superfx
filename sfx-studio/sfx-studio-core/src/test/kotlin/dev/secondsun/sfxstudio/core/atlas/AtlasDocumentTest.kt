@@ -216,11 +216,21 @@ class AtlasDocumentTest {
         assertTrue(orderVal.errors.any { it.code == "UNKNOWN_DESCRIPTOR_ORDER_ENTRY" })
         assertTrue(orderVal.errors.any { it.code == "INCOMPLETE_DESCRIPTOR_ORDER" })
 
-        // 5. > 256 descriptors (u8 .map limit)
-        val aliases256 = (1..256).map { DescriptorAlias("alias_$it", "stone") }
+        // 5. > 240 descriptors ($00..$EF texture limit; $F0..$FF reserved for solid palette colors)
+        val aliases239 = (1..239).map { DescriptorAlias("alias_$it", "stone") }
+        val maxOkDoc =
+            AtlasDocument(
+                atlas = TextureAtlas(width = 64, height = 64, textures = listOf(baseTex), aliases = aliases239),
+            )
+        assertTrue(maxOkDoc.validate().valid, "Exactly 240 descriptors (\$00..\$EF) must validate cleanly")
+        val indexText = maxOkDoc.renderIndexPreview().getOrThrow()
+        assertTrue(indexText.contains("TEXTURE_ID_SOLID_COLOR_BASE = \$F0"))
+        assertTrue(indexText.contains("TEXTURE_ID_COLOR_15 = \$FF"))
+
+        val aliases240 = (1..240).map { DescriptorAlias("alias_$it", "stone") }
         val tooManyDoc =
             AtlasDocument(
-                atlas = TextureAtlas(width = 64, height = 64, textures = listOf(baseTex), aliases = aliases256),
+                atlas = TextureAtlas(width = 64, height = 64, textures = listOf(baseTex), aliases = aliases240),
             )
         assertTrue(tooManyDoc.validate().errors.any { it.code == "TOO_MANY_DESCRIPTORS" })
 
@@ -374,5 +384,58 @@ class AtlasDocumentTest {
         assertTrue(File(tempDir, "scene.tab").exists())
         val img = ImageIO.read(File(tempDir, "scene_atlas.png"))
         assertEquals(sampleDoc.atlas.width, img.width)
+    }
+
+    @Test
+    fun testSliceAliasAndDescriptorOrderCrudInvariants() {
+        val stone = SourceTexture("stone", 32, 32, 0, 0, ByteArray(32 * 32) { 1 })
+        val wood = SourceTexture("wood", 32, 32, 32, 0, ByteArray(32 * 32) { 2 })
+        var doc =
+            AtlasDocument(
+                atlas = TextureAtlas(width = 64, height = 64, textures = listOf(stone, wood)),
+            )
+
+        doc = doc.addSlice(VirtualSlice("stone_trim", "stone", 0, 16, 32, 16)).getOrThrow()
+        doc = doc.addAlias(DescriptorAlias("wall_cap", "stone_trim")).getOrThrow()
+        doc = doc.addAlias(DescriptorAlias("wall_cap_legacy", "wall_cap")).getOrThrow()
+        doc = doc.pinCurrentDescriptorOrder().getOrThrow()
+        // Implicit DescriptorTable order is textures -> aliases -> slices
+        assertEquals(
+            listOf("stone", "wood", "wall_cap", "wall_cap_legacy", "stone_trim"),
+            doc.atlas.descriptorOrder,
+        )
+
+        // Updating slice cascades rename to alias and descriptorOrder
+        doc = doc.updateSlice(0, VirtualSlice("stone_ledge", "stone", 0, 0, 16, 16)).getOrThrow()
+        assertEquals("stone_ledge", doc.atlas.slices[0].name)
+        assertEquals("stone_ledge", doc.atlas.aliases[0].target)
+        assertEquals(
+            listOf("stone", "wood", "wall_cap", "wall_cap_legacy", "stone_ledge"),
+            doc.atlas.descriptorOrder,
+        )
+
+        // Updating alias rejects cycles and cascades valid renames
+        assertTrue(doc.updateAlias(0, DescriptorAlias("wall_cap", "wall_cap_legacy")).isFailure)
+        doc = doc.updateAlias(0, DescriptorAlias("parapet_cap", "stone_ledge")).getOrThrow()
+        assertEquals("parapet_cap", doc.atlas.aliases[1].target)
+
+        // Reordering descriptors updates explicit order cleanly
+        doc = doc.moveDescriptorInOrder(4, 0).getOrThrow()
+        assertEquals(
+            listOf("stone_ledge", "stone", "wood", "parapet_cap", "wall_cap_legacy"),
+            doc
+                .descriptorTable()
+                .getOrThrow()
+                .entries
+                .map { it.name },
+        )
+
+        // Removing referenced slice fails without cascade, succeeds with cascade
+        assertTrue(doc.removeSlice(0, cascadeDependents = false).isFailure)
+        val cascaded = doc.removeSlice(0, cascadeDependents = true).getOrThrow()
+        assertTrue(cascaded.atlas.slices.isEmpty())
+        assertTrue(cascaded.atlas.aliases.isEmpty())
+        assertEquals(listOf("stone", "wood"), cascaded.atlas.descriptorOrder)
+        assertTrue(cascaded.validate().valid)
     }
 }

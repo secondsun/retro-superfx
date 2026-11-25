@@ -181,7 +181,7 @@ object CliMain {
                 colors to the SNES palette, places them (optionally growing up to 256x256), and saves.
 
               atlas validate [<project.sfxproj|.sfxatlas>] [--project <project>]
-                Validates dimensions, bounds, coordinate collisions, slices, aliases, and <=256 descriptors.
+                Validates dimensions, bounds, coordinate collisions, slices, aliases, and <=240 descriptors (0xF0..0xFF reserved for solid colors).
 
               level create [<level.sfxlevel>] [--project <level>] --atlas <atlas.sfxproj> [--cols <4..16>] [--rows <4..16>] [--top-tex <name>] [--skirt-tex <name>] [--height <0..31>] [--yaw <0..119>]
                 Creates a new isometric Level Document linked to an atlas and exports .map, .i, and _preview.png.
