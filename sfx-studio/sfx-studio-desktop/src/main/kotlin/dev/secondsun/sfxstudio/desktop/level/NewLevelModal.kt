@@ -144,14 +144,14 @@ fun NewLevelModal(studio: StudioState) {
                     variant = StudioButtonVariant.Secondary,
                     icon = StudioIcons.FolderOpen,
                     onClick = {
-                        val picked =
-                            studio.platform.chooseOpenFile(
-                                title = "Select Texture Atlas",
-                                initialDir = studio.lastImportDirectory ?: studio.lastExportDirectory,
-                                allowedExtensions = setOf(SFX_PROJ_EXTENSION, SFX_ATLAS_EXTENSION),
-                            )
-                        if (picked != null) {
-                            atlasPath = picked.absolutePath
+                        studio.platform.requestOpenFile(
+                            title = "Select Texture Atlas",
+                            initialDir = studio.lastImportDirectory ?: studio.lastExportDirectory,
+                            allowedExtensions = setOf(SFX_PROJ_EXTENSION, SFX_ATLAS_EXTENSION),
+                        ) { picked ->
+                            if (picked != null) {
+                                atlasPath = picked.absolutePath
+                            }
                         }
                     },
                 )

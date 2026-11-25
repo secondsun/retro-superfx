@@ -51,7 +51,6 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
-import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -85,6 +84,7 @@ import dev.secondsun.sfxstudio.core.level.InteractableKind
 import dev.secondsun.sfxstudio.core.level.IsoRenderResult
 import dev.secondsun.sfxstudio.core.level.IsoSoftwareRenderer
 import dev.secondsun.sfxstudio.core.level.LevelValidationResult
+import dev.secondsun.sfxstudio.desktop.awt.toStudioImageBitmap
 import dev.secondsun.sfxstudio.desktop.shell.LevelEditMode
 import dev.secondsun.sfxstudio.desktop.ui.components.primitives.SegmentItem
 import dev.secondsun.sfxstudio.desktop.ui.components.primitives.StudioBadge
@@ -1583,7 +1583,7 @@ private fun Iso3DViewport(
         }
     val composeBitmap =
         remember(renderResult) {
-            renderResult.image.toComposeImageBitmap()
+            renderResult.image.toStudioImageBitmap()
         }
 
     val panMode = state.isPanToolActive || spacePanHeld

@@ -2,12 +2,12 @@ package dev.secondsun.sfxstudio.core.atlas
 
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
+import dev.secondsun.sfxstudio.core.image.ArgbImage
+import dev.secondsun.sfxstudio.core.image.StudioImageCodec
 import dev.secondsun.sfxstudio.core.level.DiagnosticSeverity
-import java.awt.image.BufferedImage
 import java.io.File
 import java.io.InputStream
 import java.io.Reader
-import javax.imageio.ImageIO
 
 const val SFX_PROJ_EXTENSION = "sfxproj"
 const val SFX_ATLAS_EXTENSION = "sfxatlas"
@@ -141,7 +141,7 @@ sealed interface AtlasImportOutcome {
  * back to `(0, 0)` overlap placement.
  */
 class PendingTextureImport internal constructor(
-    private val rawImage: BufferedImage,
+    private val rawImage: ArgbImage,
     val suggestedName: String,
     val uniqueColors: List<SnesColor>,
     val unmappedColors: List<SnesColor>,
@@ -1028,7 +1028,7 @@ data class AtlasDocument(
     ): AtlasImportOutcome {
         val image =
             try {
-                ImageIO.read(file) ?: return AtlasImportOutcome.Invalid("Could not decode image from '${file.name}'")
+                StudioImageCodec.read(file) ?: return AtlasImportOutcome.Invalid("Could not decode image from '${file.name}'")
             } catch (e: Exception) {
                 return AtlasImportOutcome.Invalid("Failed to read image '${file.name}': ${e.message}")
             }
@@ -1037,7 +1037,7 @@ data class AtlasDocument(
     }
 
     fun beginImportImage(
-        image: BufferedImage,
+        image: ArgbImage,
         suggestedName: String,
         placementPolicy: PlacementPolicy = PlacementPolicy.AUTO_GROW_MAX_256,
     ): AtlasImportOutcome {

@@ -151,8 +151,10 @@ fun ExportModal(state: AtlasEditorState) {
                     variant = StudioButtonVariant.Secondary,
                     icon = StudioIcons.FolderOpen,
                     onClick = {
-                        state.chooseExportDirectory(exportDir)?.let { chosen ->
-                            exportDir = chosen.absolutePath
+                        state.requestExportDirectory(exportDir) { chosen ->
+                            if (chosen != null) {
+                                exportDir = chosen.absolutePath
+                            }
                         }
                     },
                 )

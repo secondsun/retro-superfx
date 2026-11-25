@@ -5,9 +5,9 @@ import dev.secondsun.sfxstudio.core.atlas.DescriptorTable
 import dev.secondsun.sfxstudio.core.atlas.SnesPalette
 import dev.secondsun.sfxstudio.core.atlas.TextureAtlas
 import dev.secondsun.sfxstudio.core.atlas.TextureDescriptorInfo
-import java.awt.image.BufferedImage
+import dev.secondsun.sfxstudio.core.image.ArgbImage
+import dev.secondsun.sfxstudio.core.image.StudioImageCodec
 import java.io.File
-import javax.imageio.ImageIO
 
 data class IntPoint(
     val x: Int,
@@ -22,7 +22,7 @@ data class IsoBasis(
 )
 
 data class IsoRenderResult(
-    val image: BufferedImage,
+    val image: ArgbImage,
     val cellPickBuffer: IntArray,
     val cellFloorPolygons: List<List<IntPoint>>,
     val width: Int,
@@ -405,8 +405,7 @@ object IsoSoftwareRenderer {
                 width = targetW,
                 height = targetH,
             )
-        destinationFile.parentFile?.mkdirs()
-        ImageIO.write(result.image, "PNG", destinationFile)
+        StudioImageCodec.writePng(result.image, destinationFile)
     }
 
     fun render(
@@ -420,7 +419,6 @@ object IsoSoftwareRenderer {
         panY: Int = 0,
         backgroundArgb: Int = 0xFF141820.toInt(),
     ): IsoRenderResult {
-        val image = BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB)
         val argbPixels = IntArray(width * height) { backgroundArgb }
         val pickBuffer = IntArray(width * height) { -1 }
 
@@ -707,9 +705,8 @@ object IsoSoftwareRenderer {
             }
         }
 
-        image.setRGB(0, 0, width, height, argbPixels, 0, width)
         return IsoRenderResult(
-            image = image,
+            image = ArgbImage(width = width, height = height, pixels = argbPixels),
             cellPickBuffer = pickBuffer,
             cellFloorPolygons = floorPolygons,
             width = width,

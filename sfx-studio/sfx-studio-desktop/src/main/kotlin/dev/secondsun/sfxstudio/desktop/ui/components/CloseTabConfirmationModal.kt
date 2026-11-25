@@ -40,8 +40,10 @@ fun CloseTabConfirmationModal(studioState: StudioState) {
                 variant = StudioButtonVariant.Primary,
                 icon = StudioIcons.Save,
                 onClick = {
-                    if (studioState.saveSession(session)) {
-                        studioState.closeSession(pendingIdx)
+                    studioState.requestSaveSession(session) { saved ->
+                        if (saved) {
+                            studioState.closeSession(pendingIdx)
+                        }
                     }
                 },
             )

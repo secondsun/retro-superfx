@@ -1,6 +1,4 @@
-target/
-**/target/
-**/dependency-reduced-pom.xml
-.idea/
-*.iml
-.DS_Store
+.gradle/
+.kotlin/
+**/build-gradle/
+local.properties

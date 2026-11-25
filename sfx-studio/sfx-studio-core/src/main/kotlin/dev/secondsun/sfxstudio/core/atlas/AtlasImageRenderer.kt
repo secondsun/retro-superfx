@@ -1,69 +1,57 @@
 package dev.secondsun.sfxstudio.core.atlas
 
-import java.awt.image.BufferedImage
+import dev.secondsun.sfxstudio.core.image.ArgbImage
+import dev.secondsun.sfxstudio.core.image.StudioImageCodec
 import java.io.File
-import javax.imageio.ImageIO
 
 object AtlasImageRenderer {
     /**
-     * Renders a SourceTexture into a BufferedImage using the specified palette.
-     * Slot 0 is rendered as ARGB transparent (0x00000000).
+     * Renders a [SourceTexture] into an [ArgbImage] using the specified palette.
+     * Slot 0 is rendered as ARGB transparent (`0x00000000`).
      */
-    fun renderToBufferedImage(
+    fun renderToArgbImage(
         texture: SourceTexture,
         palette: SnesPalette,
-    ): BufferedImage {
-        val image = BufferedImage(texture.width, texture.height, BufferedImage.TYPE_INT_ARGB)
+    ): ArgbImage {
+        val pixels = IntArray(texture.width * texture.height)
         for (v in 0 until texture.height) {
+            val rowOffset = v * texture.width
             for (u in 0 until texture.width) {
                 val slot = texture.getPixel(u, v)
-                val argb =
-                    if (slot == 0) {
-                        0x00000000 // Transparent
-                    } else {
-                        palette[slot].argb
-                    }
-                image.setRGB(u, v, argb)
+                pixels[rowOffset + u] = if (slot == 0) 0x00000000 else palette[slot].argb
             }
         }
-        return image
+        return ArgbImage(width = texture.width, height = texture.height, pixels = pixels)
     }
 
     /**
-     * Renders the entire TextureAtlas to a BufferedImage.
+     * Renders the entire [TextureAtlas] to an [ArgbImage].
      */
-    fun renderAtlasToBufferedImage(
+    fun renderAtlasToArgbImage(
         atlas: TextureAtlas,
         palette: SnesPalette,
-    ): BufferedImage {
-        val image = BufferedImage(atlas.width, atlas.height, BufferedImage.TYPE_INT_ARGB)
+    ): ArgbImage {
+        val pixels = IntArray(atlas.width * atlas.height)
         val binary = atlas.generateBinary()
         for (y in 0 until atlas.height) {
             val rowOffset = y * atlas.width
             for (x in 0 until atlas.width) {
                 val slot = binary[rowOffset + x].toInt() and 0x0F
-                val argb =
-                    if (slot == 0) {
-                        0x00000000 // Transparent
-                    } else {
-                        palette[slot].argb
-                    }
-                image.setRGB(x, y, argb)
+                pixels[rowOffset + x] = if (slot == 0) 0x00000000 else palette[slot].argb
             }
         }
-        return image
+        return ArgbImage(width = atlas.width, height = atlas.height, pixels = pixels)
     }
 
     /**
-     * Exports the entire TextureAtlas to a PNG file with transparency on slot 0.
+     * Exports the entire [TextureAtlas] to a PNG file with transparency on slot 0.
      */
     fun writeAtlasPng(
         atlas: TextureAtlas,
         palette: SnesPalette,
         destinationFile: File,
     ) {
-        val image = renderAtlasToBufferedImage(atlas, palette)
-        destinationFile.parentFile?.mkdirs()
-        ImageIO.write(image, "PNG", destinationFile)
+        val image = renderAtlasToArgbImage(atlas, palette)
+        StudioImageCodec.writePng(image, destinationFile)
     }
 }

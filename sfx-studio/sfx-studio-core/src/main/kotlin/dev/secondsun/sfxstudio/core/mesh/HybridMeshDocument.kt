@@ -3,11 +3,11 @@ package dev.secondsun.sfxstudio.core.mesh
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
 import dev.secondsun.sfxstudio.core.atlas.SnesColor
-import java.awt.image.BufferedImage
+import dev.secondsun.sfxstudio.core.image.ArgbImage
+import dev.secondsun.sfxstudio.core.image.StudioImageCodec
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import javax.imageio.ImageIO
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.max
@@ -196,12 +196,11 @@ data class HybridMeshDocument(
      * Renders a `512 x 320` 2x2 multi-angle hardware-accurate software preview using exact GSU
      * integer projection, CW backface culling, and 256-bucket depth ordering.
      */
-    fun renderPreviewContactSheet(heroSheet: ByteArray): BufferedImage {
+    fun renderPreviewContactSheet(heroSheet: ByteArray): ArgbImage {
         require(heroSheet.size == HERO_SHEET_BYTES) {
             "Expected $HERO_SHEET_BYTES-byte hero sheet, got ${heroSheet.size}"
         }
-        val sheetImg = BufferedImage(VIEW_WIDTH * 2, VIEW_HEIGHT * 2, BufferedImage.TYPE_INT_ARGB)
-        val g = sheetImg.createGraphics()
+        val sheetImg = ArgbImage(VIEW_WIDTH * 2, VIEW_HEIGHT * 2)
         val yaws =
             intArrayOf(
                 defaultYaw,
@@ -213,17 +212,16 @@ data class HybridMeshDocument(
             val sub = renderPreviewAngle(heroSheet, yaw)
             val ox = (idx % 2) * VIEW_WIDTH
             val oy = (idx / 2) * VIEW_HEIGHT
-            g.drawImage(sub, ox, oy, null)
+            sheetImg.blit(sub, ox, oy)
         }
-        g.dispose()
         return sheetImg
     }
 
     fun renderPreviewAngle(
         heroSheet: ByteArray,
         yaw: Int,
-    ): BufferedImage {
-        val img = BufferedImage(VIEW_WIDTH, VIEW_HEIGHT, BufferedImage.TYPE_INT_ARGB)
+    ): ArgbImage {
+        val img = ArgbImage(VIEW_WIDTH, VIEW_HEIGHT)
         val bgRgb = 0xFF10141C.toInt()
         for (y in 0 until VIEW_HEIGHT) {
             for (x in 0 until VIEW_WIDTH) {
@@ -304,7 +302,7 @@ data class HybridMeshDocument(
     }
 
     private fun rasterizeTri(
-        img: BufferedImage,
+        img: ArgbImage,
         px: IntArray,
         py: IntArray,
         a: Int,
@@ -384,8 +382,8 @@ data class HybridMeshDocument(
         binFile.writeBytes(heroSheet)
         tabFile.writeBytes(packSingleSheetTabBinary())
         palFile.writeBytes(packPaletteBinary())
-        ImageIO.write(renderPreviewContactSheet(heroSheet), "png", previewFile)
-        ImageIO.write(renderSheetPng(heroSheet, palette), "png", sheetPngFile)
+        StudioImageCodec.writePng(renderPreviewContactSheet(heroSheet), previewFile)
+        StudioImageCodec.writePng(renderSheetPng(heroSheet, palette), sheetPngFile)
 
         return ExportedMeshAssets(
             meshFile = meshFile,
@@ -451,8 +449,8 @@ data class HybridMeshDocument(
         private fun renderSheetPng(
             heroSheet: ByteArray,
             palette: List<SnesColor>,
-        ): BufferedImage {
-            val img = BufferedImage(HERO_SHEET_WIDTH, HERO_SHEET_HEIGHT, BufferedImage.TYPE_INT_ARGB)
+        ): ArgbImage {
+            val img = ArgbImage(HERO_SHEET_WIDTH, HERO_SHEET_HEIGHT)
             val argbPal = IntArray(16) { idx -> if (idx == 0) 0 else palette[idx].argb }
             for (y in 0 until HERO_SHEET_HEIGHT) {
                 for (x in 0 until HERO_SHEET_WIDTH) {

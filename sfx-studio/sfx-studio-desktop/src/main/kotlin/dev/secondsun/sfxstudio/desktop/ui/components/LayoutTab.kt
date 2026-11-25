@@ -54,7 +54,6 @@ import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.isCtrlPressed
 import androidx.compose.ui.input.pointer.isMetaPressed
 import androidx.compose.ui.input.pointer.isTertiaryPressed
-import androidx.compose.ui.input.pointer.onPointerEvent
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
@@ -454,13 +453,13 @@ private fun AtlasOnboardingStage(
                             if (state.studio != null) {
                                 state.studio.promptOpenDocument()
                             } else {
-                                val picked =
-                                    state.platform.chooseOpenFile(
-                                        title = "Open Atlas Document",
-                                        initialDir = state.lastImportDirectory,
-                                        allowedExtensions = setOf(SFX_PROJ_EXTENSION, SFX_ATLAS_EXTENSION),
-                                    )
-                                if (picked != null) state.openProject(picked)
+                                state.platform.requestOpenFile(
+                                    title = "Open Atlas Document",
+                                    initialDir = state.lastImportDirectory,
+                                    allowedExtensions = setOf(SFX_PROJ_EXTENSION, SFX_ATLAS_EXTENSION),
+                                ) { picked ->
+                                    if (picked != null) state.openProject(picked)
+                                }
                             }
                         },
                         modifier = Modifier.weight(1f),
@@ -504,13 +503,13 @@ private fun AtlasOnboardingStage(
                             if (state.studio != null) {
                                 state.studio.promptOpenDocument()
                             } else {
-                                val picked =
-                                    state.platform.chooseOpenFile(
-                                        title = "Open Atlas Document",
-                                        initialDir = state.lastImportDirectory,
-                                        allowedExtensions = setOf(SFX_PROJ_EXTENSION, SFX_ATLAS_EXTENSION),
-                                    )
-                                if (picked != null) state.openProject(picked)
+                                state.platform.requestOpenFile(
+                                    title = "Open Atlas Document",
+                                    initialDir = state.lastImportDirectory,
+                                    allowedExtensions = setOf(SFX_PROJ_EXTENSION, SFX_ATLAS_EXTENSION),
+                                ) { picked ->
+                                    if (picked != null) state.openProject(picked)
+                                }
                             }
                         },
                         modifier = Modifier.fillMaxWidth(),
@@ -649,19 +648,26 @@ private fun AtlasCanvasStage(
             modifier
                 .background(colors.bgCanvas)
                 .clipToBounds()
-                .onPointerEvent(PointerEventType.Scroll) { event ->
-                    val scrollDelta = event.changes.firstOrNull()?.scrollDelta ?: return@onPointerEvent
-                    val ctrl = event.keyboardModifiers.isCtrlPressed || event.keyboardModifiers.isMetaPressed
-                    if (ctrl) {
-                        val nextZ =
-                            if (scrollDelta.y < 0f) {
-                                (curZoom + 1f).coerceAtMost(8f)
-                            } else {
-                                (curZoom - 1f).coerceAtLeast(1f)
+                .pointerInput("scrollZoomPan") {
+                    awaitPointerEventScope {
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            if (event.type == PointerEventType.Scroll) {
+                                val scrollDelta = event.changes.firstOrNull()?.scrollDelta ?: continue
+                                val ctrl = event.keyboardModifiers.isCtrlPressed || event.keyboardModifiers.isMetaPressed
+                                if (ctrl) {
+                                    val nextZ =
+                                        if (scrollDelta.y < 0f) {
+                                            (curZoom + 1f).coerceAtMost(8f)
+                                        } else {
+                                            (curZoom - 1f).coerceAtLeast(1f)
+                                        }
+                                    state.zoom = nextZ
+                                } else {
+                                    state.canvasPanOffset += Offset(-scrollDelta.x * 24f, -scrollDelta.y * 24f)
+                                }
                             }
-                        state.zoom = nextZ
-                    } else {
-                        state.canvasPanOffset += Offset(-scrollDelta.x * 24f, -scrollDelta.y * 24f)
+                        }
                     }
                 }.pointerInput(Unit) {
                     // Empty-stage background pan gesture

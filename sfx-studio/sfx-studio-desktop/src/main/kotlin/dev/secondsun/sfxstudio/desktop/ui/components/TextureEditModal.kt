@@ -39,7 +39,6 @@ import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.isCtrlPressed
 import androidx.compose.ui.input.pointer.isMetaPressed
 import androidx.compose.ui.input.pointer.isTertiaryPressed
-import androidx.compose.ui.input.pointer.onPointerEvent
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
@@ -464,18 +463,25 @@ fun TextureEditModal(state: AtlasEditorState) {
                     Modifier
                         .fillMaxSize()
                         .clipToBounds()
-                        .onPointerEvent(PointerEventType.Scroll) { event ->
-                            val delta = event.changes.firstOrNull()?.scrollDelta ?: return@onPointerEvent
-                            val ctrl = event.keyboardModifiers.isCtrlPressed || event.keyboardModifiers.isMetaPressed
-                            if (ctrl) {
-                                zoomScale =
-                                    if (delta.y < 0f) {
-                                        (curZoomScale * 1.25f).coerceAtMost(8f)
-                                    } else {
-                                        (curZoomScale / 1.25f).coerceAtLeast(0.5f)
+                        .pointerInput("scrollZoomPan") {
+                            awaitPointerEventScope {
+                                while (true) {
+                                    val event = awaitPointerEvent()
+                                    if (event.type == PointerEventType.Scroll) {
+                                        val delta = event.changes.firstOrNull()?.scrollDelta ?: continue
+                                        val ctrl = event.keyboardModifiers.isCtrlPressed || event.keyboardModifiers.isMetaPressed
+                                        if (ctrl) {
+                                            zoomScale =
+                                                if (delta.y < 0f) {
+                                                    (curZoomScale * 1.25f).coerceAtMost(8f)
+                                                } else {
+                                                    (curZoomScale / 1.25f).coerceAtLeast(0.5f)
+                                                }
+                                        } else {
+                                            panOffset += Offset(-delta.x * 20f, -delta.y * 20f)
+                                        }
                                     }
-                            } else {
-                                panOffset += Offset(-delta.x * 20f, -delta.y * 20f)
+                                }
                             }
                         }.pointerInput(w, h) {
                             awaitEachGesture {

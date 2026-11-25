@@ -37,7 +37,7 @@ import dev.secondsun.sfxstudio.core.level.PlayerSpawn
 import dev.secondsun.sfxstudio.core.level.SFX_LEVEL_EXTENSION
 import dev.secondsun.sfxstudio.core.level.ShapeArchetype
 import dev.secondsun.sfxstudio.core.level.WalkabilityOverride
-import dev.secondsun.sfxstudio.desktop.shell.AwtStudioPlatform
+import dev.secondsun.sfxstudio.desktop.awt.createDefaultStudioPlatform
 import dev.secondsun.sfxstudio.desktop.shell.LevelCommandBarSession
 import dev.secondsun.sfxstudio.desktop.shell.LevelEditMode
 import dev.secondsun.sfxstudio.desktop.shell.StudioPlatform
@@ -233,7 +233,7 @@ class LevelEditorState(
     override val defaultExtension: String = SFX_LEVEL_EXTENSION
     override val documentTypeLabel: String = "Level Document"
 
-    private val fallbackPlatform by lazy { AwtStudioPlatform() }
+    private val fallbackPlatform by lazy { createDefaultStudioPlatform() }
     val platform: StudioPlatform
         get() = studio?.platform ?: standalonePlatform ?: fallbackPlatform
 
@@ -1604,13 +1604,15 @@ class LevelEditorState(
     }
 
     fun promptLinkAtlas() {
-        val picked =
-            platform.chooseOpenFile(
-                title = "Link Texture Atlas",
-                initialDir = studio?.lastImportDirectory ?: currentLevelFile?.parentFile?.absolutePath,
-                allowedExtensions = setOf(SFX_PROJ_EXTENSION, SFX_ATLAS_EXTENSION),
-            ) ?: return
-        linkAtlasFile(picked)
+        platform.requestOpenFile(
+            title = "Link Texture Atlas",
+            initialDir = studio?.lastImportDirectory ?: currentLevelFile?.parentFile?.absolutePath,
+            allowedExtensions = setOf(SFX_PROJ_EXTENSION, SFX_ATLAS_EXTENSION),
+        ) { picked ->
+            if (picked != null) {
+                linkAtlasFile(picked)
+            }
+        }
     }
 
     fun linkAtlasFile(atlasFile: File) {
@@ -1822,14 +1824,16 @@ class LevelEditorState(
         }
 
     fun promptImportCa65Map() {
-        val picked =
-            platform.chooseOpenFile(
-                title = "Import Legacy ca65 Map (.i)",
-                initialDir = studio?.lastImportDirectory ?: currentLevelFile?.parentFile?.absolutePath,
-                allowedExtensions = setOf("i"),
-            ) ?: return
-        picked.parentFile?.absolutePath?.let { studio?.updateLastImportDirectory(it) }
-        importCa65Map(picked)
+        platform.requestOpenFile(
+            title = "Import Legacy ca65 Map (.i)",
+            initialDir = studio?.lastImportDirectory ?: currentLevelFile?.parentFile?.absolutePath,
+            allowedExtensions = setOf("i"),
+        ) { picked ->
+            if (picked != null) {
+                picked.parentFile?.absolutePath?.let { studio?.updateLastImportDirectory(it) }
+                importCa65Map(picked)
+            }
+        }
     }
 
     fun importCa65Map(
@@ -1870,6 +1874,14 @@ class LevelEditorState(
         }
 
     fun requestSave(): Boolean = studio?.saveSession(this) ?: save()
+
+    fun requestSaveAction() {
+        if (studio != null) {
+            studio.requestSaveSession(this)
+        } else {
+            save()
+        }
+    }
 
     override fun save(): Boolean {
         val target = currentLevelFile ?: return false

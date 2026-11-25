@@ -12,6 +12,7 @@ import dev.secondsun.sfxstudio.core.level.MapCell
 import dev.secondsun.sfxstudio.core.level.MapGrid
 import dev.secondsun.sfxstudio.core.level.SFX_LEVEL_EXTENSION
 import dev.secondsun.sfxstudio.desktop.atlas.AtlasEditorState
+import dev.secondsun.sfxstudio.desktop.awt.createDefaultStudioPlatform
 import dev.secondsun.sfxstudio.desktop.level.LevelEditorState
 import dev.secondsun.sfxstudio.desktop.ui.theme.AccentColorPreset
 import dev.secondsun.sfxstudio.desktop.ui.theme.StudioColors
@@ -27,7 +28,7 @@ enum class TouchModePreference {
 
 class StudioState(
     initialFiles: List<File> = emptyList(),
-    val platform: StudioPlatform = AwtStudioPlatform(),
+    val platform: StudioPlatform = createDefaultStudioPlatform(),
 ) {
     fun getPreference(
         key: String,
@@ -313,15 +314,15 @@ class StudioState(
     }
 
     fun promptOpenDocument() {
-        val picked =
-            platform.chooseOpenFile(
-                title = "Open SuperFX Document",
-                initialDir = lastImportDirectory ?: lastExportDirectory,
-                allowedExtensions = setOf(SFX_PROJ_EXTENSION, SFX_ATLAS_EXTENSION, SFX_LEVEL_EXTENSION),
-            )
-        if (picked != null) {
-            picked.parentFile?.absolutePath?.let { updateLastImportDirectory(it) }
-            openDocument(picked)
+        platform.requestOpenFile(
+            title = "Open SuperFX Document",
+            initialDir = lastImportDirectory ?: lastExportDirectory,
+            allowedExtensions = setOf(SFX_PROJ_EXTENSION, SFX_ATLAS_EXTENSION, SFX_LEVEL_EXTENSION),
+        ) { picked ->
+            if (picked != null) {
+                picked.parentFile?.absolutePath?.let { updateLastImportDirectory(it) }
+                openDocument(picked)
+            }
         }
     }
 
@@ -410,6 +411,65 @@ class StudioState(
     fun saveActiveSession(): Boolean = activeSession?.let { saveSession(it) } ?: false
 
     fun saveActiveSessionAs(): Boolean = activeSession?.let { saveSessionAs(it) } ?: false
+
+    /**
+     * Non-blocking save entrypoint suitable for both Desktop and Android UI event handlers.
+     */
+    fun requestSaveSession(
+        session: EditorSession,
+        onSaved: (Boolean) -> Unit = {},
+    ) {
+        if (session.documentFile != null) {
+            onSaved(session.save())
+        } else {
+            requestSaveSessionAs(session, onSaved)
+        }
+    }
+
+    fun requestSaveSessionAs(
+        session: EditorSession,
+        onSaved: (Boolean) -> Unit = {},
+    ) {
+        val ext = session.defaultExtension
+        val baseTitle =
+            if (session.displayTitle.endsWith(".$ext", ignoreCase = true)) {
+                session.displayTitle
+            } else {
+                "${session.displayTitle}.$ext"
+            }
+        val initialDir =
+            session.documentFile?.parentFile?.absolutePath
+                ?: lastExportDirectory
+                ?: lastImportDirectory
+        platform.requestSaveFile(
+            title = "Save ${session.documentTypeLabel}",
+            defaultFileName = baseTitle,
+            initialDir = initialDir,
+        ) { chosen ->
+            if (chosen == null) {
+                onSaved(false)
+            } else {
+                val normalizedFile =
+                    if (chosen.extension.isEmpty()) {
+                        File(chosen.parentFile, "${chosen.name}.$ext")
+                    } else {
+                        chosen
+                    }
+                normalizedFile.parentFile?.absolutePath?.let { updateLastExportDirectory(it) }
+                onSaved(session.saveAs(normalizedFile))
+            }
+        }
+    }
+
+    fun requestSaveActiveSession() {
+        val cur = activeSession ?: return
+        requestSaveSession(cur)
+    }
+
+    fun requestSaveActiveSessionAs() {
+        val cur = activeSession ?: return
+        requestSaveSessionAs(cur)
+    }
 
     fun undoActiveSession() {
         activeSession?.undo()

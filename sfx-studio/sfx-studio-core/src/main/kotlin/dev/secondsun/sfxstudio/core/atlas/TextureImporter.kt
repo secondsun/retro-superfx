@@ -1,8 +1,8 @@
 package dev.secondsun.sfxstudio.core.atlas
 
-import java.awt.image.BufferedImage
+import dev.secondsun.sfxstudio.core.image.ArgbImage
+import dev.secondsun.sfxstudio.core.image.StudioImageCodec
 import java.io.File
-import javax.imageio.ImageIO
 
 /**
  * Result of attempting to import a bitmap file.
@@ -14,7 +14,7 @@ internal sealed class ImportResult {
     ) : ImportResult()
 
     data class NeedsRemapping(
-        val rawImage: BufferedImage,
+        val rawImage: ArgbImage,
         val suggestedName: String,
         val uniqueColors: List<SnesColor>,
         val currentPalette: SnesPalette,
@@ -31,12 +31,12 @@ internal object TextureImporter {
         file: File,
         currentPalette: SnesPalette,
     ): ImportResult {
-        val image: BufferedImage
-        try {
-            image = ImageIO.read(file) ?: return ImportResult.Error("Could not decode image from '${file.name}'")
-        } catch (e: Exception) {
-            return ImportResult.Error("Failed to read image '${file.name}': ${e.message}")
-        }
+        val image: ArgbImage =
+            try {
+                StudioImageCodec.read(file) ?: return ImportResult.Error("Could not decode image from '${file.name}'")
+            } catch (e: Exception) {
+                return ImportResult.Error("Failed to read image '${file.name}': ${e.message}")
+            }
 
         val baseName = file.nameWithoutExtension
         val suggestedName = SourceTexture.sanitizeToIdentifier(baseName)
@@ -44,7 +44,7 @@ internal object TextureImporter {
     }
 
     fun importFromImage(
-        image: BufferedImage,
+        image: ArgbImage,
         name: String,
         currentPalette: SnesPalette,
     ): ImportResult {
@@ -109,10 +109,10 @@ internal object TextureImporter {
     }
 
     /**
-     * Converts a BufferedImage to a SourceTexture using the supplied color mapping.
+     * Converts an [ArgbImage] to a [SourceTexture] using the supplied color mapping.
      */
     fun createTextureFromImage(
-        image: BufferedImage,
+        image: ArgbImage,
         name: String,
         colorMapping: Map<SnesColor, Int>,
         fallbackPalette: SnesPalette? = null,
@@ -149,7 +149,7 @@ internal object TextureImporter {
         )
     }
 
-    fun extractOpaquePixelColors(image: BufferedImage): List<SnesColor> {
+    fun extractOpaquePixelColors(image: ArgbImage): List<SnesColor> {
         val colors = ArrayList<SnesColor>(image.width * image.height)
         for (y in 0 until image.height) {
             for (x in 0 until image.width) {

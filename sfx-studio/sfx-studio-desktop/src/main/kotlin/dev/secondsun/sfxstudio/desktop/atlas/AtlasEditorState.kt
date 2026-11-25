@@ -17,7 +17,7 @@ import dev.secondsun.sfxstudio.core.atlas.SnesPalette
 import dev.secondsun.sfxstudio.core.atlas.SourceTexture
 import dev.secondsun.sfxstudio.core.atlas.TextureAtlas
 import dev.secondsun.sfxstudio.core.atlas.VirtualSlice
-import dev.secondsun.sfxstudio.desktop.shell.AwtStudioPlatform
+import dev.secondsun.sfxstudio.desktop.awt.createDefaultStudioPlatform
 import dev.secondsun.sfxstudio.desktop.shell.EditorSession
 import dev.secondsun.sfxstudio.desktop.shell.StudioPlatform
 import dev.secondsun.sfxstudio.desktop.shell.StudioState
@@ -64,7 +64,7 @@ class AtlasEditorState(
     override val defaultExtension: String = SFX_PROJ_EXTENSION
     override val documentTypeLabel: String = "Atlas Document"
 
-    private val fallbackPlatform by lazy { AwtStudioPlatform() }
+    private val fallbackPlatform by lazy { createDefaultStudioPlatform() }
     val platform: StudioPlatform
         get() = studio?.platform ?: standalonePlatform ?: fallbackPlatform
 
@@ -453,94 +453,106 @@ class AtlasEditorState(
 
     fun chooseExportDirectory(initialDir: String?): File? = platform.chooseDirectory("Select Export Directory", initialDir)
 
+    fun requestExportDirectory(
+        initialDir: String?,
+        onResult: (File?) -> Unit,
+    ) {
+        platform.requestDirectory("Select Export Directory", initialDir, onResult)
+    }
+
     fun copyTextToClipboard(text: String) {
         platform.copyToClipboard(text)
         statusMessage = "Copied ca65 .i index to clipboard"
     }
 
     fun promptExportPng() {
-        val file =
-            platform.chooseSaveFile(
-                title = "Export Atlas PNG",
-                defaultFileName = "${projectName}_atlas.png",
-                initialDir = lastExportDirectory ?: lastImportDirectory,
-            ) ?: return
-        try {
-            TextureComposeRenderer.writeAtlasPng(atlas, palette, file)
-            file.parentFile?.absolutePath?.let { updateLastExportDirectory(it) }
-            statusMessage = "Exported PNG to '${file.name}'"
-        } catch (e: Exception) {
-            reportError("Failed to export PNG: ${e.message}")
+        platform.requestSaveFile(
+            title = "Export Atlas PNG",
+            defaultFileName = "${projectName}_atlas.png",
+            initialDir = lastExportDirectory ?: lastImportDirectory,
+        ) { file ->
+            if (file == null) return@requestSaveFile
+            try {
+                TextureComposeRenderer.writeAtlasPng(atlas, palette, file)
+                file.parentFile?.absolutePath?.let { updateLastExportDirectory(it) }
+                statusMessage = "Exported PNG to '${file.name}'"
+            } catch (e: Exception) {
+                reportError("Failed to export PNG: ${e.message}")
+            }
         }
     }
 
     fun promptExportPaletteBin() {
-        val file =
-            platform.chooseSaveFile(
-                title = "Export Palette Binary",
-                defaultFileName = "$projectName.pal",
-                initialDir = lastExportDirectory ?: lastImportDirectory,
-            ) ?: return
-        try {
-            file.parentFile?.mkdirs()
-            file.writeBytes(palette.toBgr555Binary())
-            file.parentFile?.absolutePath?.let { updateLastExportDirectory(it) }
-            statusMessage = "Exported palette binary to '${file.name}'"
-        } catch (e: Exception) {
-            reportError("Failed to export palette: ${e.message}")
+        platform.requestSaveFile(
+            title = "Export Palette Binary",
+            defaultFileName = "$projectName.pal",
+            initialDir = lastExportDirectory ?: lastImportDirectory,
+        ) { file ->
+            if (file == null) return@requestSaveFile
+            try {
+                file.parentFile?.mkdirs()
+                file.writeBytes(palette.toBgr555Binary())
+                file.parentFile?.absolutePath?.let { updateLastExportDirectory(it) }
+                statusMessage = "Exported palette binary to '${file.name}'"
+            } catch (e: Exception) {
+                reportError("Failed to export palette: ${e.message}")
+            }
         }
     }
 
     fun promptExportGraphicsBin() {
-        val file =
-            platform.chooseSaveFile(
-                title = "Export Graphics Binary",
-                defaultFileName = "$projectName.bin",
-                initialDir = lastExportDirectory ?: lastImportDirectory,
-            ) ?: return
-        try {
-            file.parentFile?.mkdirs()
-            file.writeBytes(atlas.generateBinary())
-            file.parentFile?.absolutePath?.let { updateLastExportDirectory(it) }
-            statusMessage = "Exported graphics binary to '${file.name}'"
-        } catch (e: Exception) {
-            reportError("Failed to export graphics: ${e.message}")
+        platform.requestSaveFile(
+            title = "Export Graphics Binary",
+            defaultFileName = "$projectName.bin",
+            initialDir = lastExportDirectory ?: lastImportDirectory,
+        ) { file ->
+            if (file == null) return@requestSaveFile
+            try {
+                file.parentFile?.mkdirs()
+                file.writeBytes(atlas.generateBinary())
+                file.parentFile?.absolutePath?.let { updateLastExportDirectory(it) }
+                statusMessage = "Exported graphics binary to '${file.name}'"
+            } catch (e: Exception) {
+                reportError("Failed to export graphics: ${e.message}")
+            }
         }
     }
 
     fun promptExportIndexFile() {
-        val file =
-            platform.chooseSaveFile(
-                title = "Export ca65 Index File",
-                defaultFileName = "$projectName.i",
-                initialDir = lastExportDirectory ?: lastImportDirectory,
-            ) ?: return
-        document.renderIndexPreview(projectName).fold(
-            onSuccess = { text ->
-                try {
-                    file.parentFile?.mkdirs()
-                    file.writeText(text)
-                    file.parentFile?.absolutePath?.let { updateLastExportDirectory(it) }
-                    statusMessage = "Exported ca65 index file to '${file.name}'"
-                } catch (e: Exception) {
-                    reportError("Failed to export .i file: ${e.message}")
-                }
-            },
-            onFailure = { err ->
-                reportError("Failed to generate .i file: ${err.message}")
-            },
-        )
+        platform.requestSaveFile(
+            title = "Export ca65 Index File",
+            defaultFileName = "$projectName.i",
+            initialDir = lastExportDirectory ?: lastImportDirectory,
+        ) { file ->
+            if (file == null) return@requestSaveFile
+            document.renderIndexPreview(projectName).fold(
+                onSuccess = { text ->
+                    try {
+                        file.parentFile?.mkdirs()
+                        file.writeText(text)
+                        file.parentFile?.absolutePath?.let { updateLastExportDirectory(it) }
+                        statusMessage = "Exported ca65 index file to '${file.name}'"
+                    } catch (e: Exception) {
+                        reportError("Failed to export .i file: ${e.message}")
+                    }
+                },
+                onFailure = { err ->
+                    reportError("Failed to generate .i file: ${err.message}")
+                },
+            )
+        }
     }
 
     fun promptImportFile() {
-        val file =
-            platform.chooseOpenFile(
-                title = "Import Bitmap",
-                initialDir = lastImportDirectory,
-                allowedExtensions = setOf("png", "bmp", "gif", "jpg", "jpeg"),
-            ) ?: return
-        file.parentFile?.absolutePath?.let { updateLastImportDirectory(it) }
-        importFile(file)
+        platform.requestOpenFile(
+            title = "Import Bitmap",
+            initialDir = lastImportDirectory,
+            allowedExtensions = setOf("png", "bmp", "gif", "jpg", "jpeg"),
+        ) { file ->
+            if (file == null) return@requestOpenFile
+            file.parentFile?.absolutePath?.let { updateLastImportDirectory(it) }
+            importFile(file)
+        }
     }
 
     fun importFile(file: File) {

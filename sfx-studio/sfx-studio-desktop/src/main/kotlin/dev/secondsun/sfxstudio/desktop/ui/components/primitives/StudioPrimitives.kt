@@ -1,8 +1,5 @@
 package dev.secondsun.sfxstudio.desktop.ui.components.primitives
 
-import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.TooltipArea
-import androidx.compose.foundation.TooltipPlacement
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -17,6 +14,7 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -52,10 +50,11 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
+import dev.secondsun.sfxstudio.desktop.awt.PlatformStudioTooltip
+import dev.secondsun.sfxstudio.desktop.awt.STUDIO_MODAL_DRAWS_OWN_SCRIM
+import dev.secondsun.sfxstudio.desktop.awt.studioModalDialogProperties
 import dev.secondsun.sfxstudio.desktop.ui.icons.StudioIcons
 import dev.secondsun.sfxstudio.desktop.ui.theme.HairlineEdge
 import dev.secondsun.sfxstudio.desktop.ui.theme.ProvideStudioTheme
@@ -716,11 +715,7 @@ fun StudioModalDialog(
 
     Dialog(
         onDismissRequest = onDismissRequest,
-        properties =
-            DialogProperties(
-                usePlatformDefaultWidth = false,
-                scrimColor = parentColors.scrim,
-            ),
+        properties = studioModalDialogProperties(parentColors.scrim),
     ) {
         CompositionLocalProvider(LocalDensity provides parentDensity) {
             ProvideStudioTheme(
@@ -737,103 +732,135 @@ fun StudioModalDialog(
                 val maxModalHeight = (viewport.heightDp * 0.90f).coerceAtLeast(280.dp)
                 val shape = RoundedCornerShape(metrics.radiusLG)
 
-                Surface(
-                    modifier =
-                        Modifier
-                            .width(modalWidth)
-                            .heightIn(max = maxModalHeight)
-                            .shadow(16.dp, shape)
-                            .border(1.dp, colors.borderStrong, shape),
-                    shape = shape,
-                    color = colors.surface1,
-                ) {
-                    Column(modifier = Modifier.fillMaxWidth()) {
-                        // 1. Sticky Header
-                        Row(
-                            modifier =
-                                Modifier
-                                    .fillMaxWidth()
-                                    .drawEdgeHairline(HairlineEdge.BOTTOM, colors.borderSubtle)
-                                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Column(
-                                modifier = Modifier.weight(1f).padding(end = 12.dp),
-                                verticalArrangement = Arrangement.spacedBy(2.dp),
+                val card: @Composable () -> Unit = {
+                    Surface(
+                        modifier =
+                            Modifier
+                                .width(modalWidth)
+                                .heightIn(max = maxModalHeight)
+                                .shadow(16.dp, shape)
+                                .border(1.dp, colors.borderStrong, shape),
+                        shape = shape,
+                        color = colors.surface1,
+                    ) {
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            // 1. Sticky Header
+                            Row(
+                                modifier =
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .drawEdgeHairline(HairlineEdge.BOTTOM, colors.borderSubtle)
+                                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                Text(
-                                    text = title,
-                                    style = typography.titleModal,
-                                    color = colors.textPrimary,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                                if (!subtitle.isNullOrBlank()) {
+                                Column(
+                                    modifier = Modifier.weight(1f).padding(end = 12.dp),
+                                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                                ) {
                                     Text(
-                                        text = subtitle,
-                                        style = typography.caption,
-                                        color = colors.textSecondary,
+                                        text = title,
+                                        style = typography.titleModal,
+                                        color = colors.textPrimary,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
                                     )
+                                    if (!subtitle.isNullOrBlank()) {
+                                        Text(
+                                            text = subtitle,
+                                            style = typography.caption,
+                                            color = colors.textSecondary,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    }
                                 }
+                                StudioIconButton(
+                                    icon = StudioIcons.Close,
+                                    contentDescription = "Close dialog",
+                                    onClick = onDismissRequest,
+                                )
                             }
-                            StudioIconButton(
-                                icon = StudioIcons.Close,
-                                contentDescription = "Close dialog",
-                                onClick = onDismissRequest,
-                            )
-                        }
 
-                        // 2. Body (Scrollable or Bounded Flex)
-                        if (scrollableBody) {
-                            Column(
-                                modifier =
-                                    Modifier
-                                        .weight(1f, fill = false)
-                                        .fillMaxWidth()
-                                        .verticalScroll(rememberScrollState())
-                                        .padding(16.dp),
-                                verticalArrangement = Arrangement.spacedBy(12.dp),
-                                content = content,
-                            )
-                        } else {
-                            Column(
-                                modifier =
-                                    Modifier
-                                        .weight(1f)
-                                        .fillMaxWidth()
-                                        .padding(16.dp),
-                                verticalArrangement = Arrangement.spacedBy(10.dp),
-                                content = content,
-                            )
-                        }
+                            // 2. Body (Scrollable or Bounded Flex)
+                            if (scrollableBody) {
+                                Column(
+                                    modifier =
+                                        Modifier
+                                            .weight(1f, fill = false)
+                                            .fillMaxWidth()
+                                            .verticalScroll(rememberScrollState())
+                                            .padding(16.dp),
+                                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                                    content = content,
+                                )
+                            } else {
+                                Column(
+                                    modifier =
+                                        Modifier
+                                            .weight(1f)
+                                            .fillMaxWidth()
+                                            .padding(16.dp),
+                                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                                    content = content,
+                                )
+                            }
 
-                        // 3. Sticky Footer
-                        Row(
-                            modifier =
-                                Modifier
-                                    .fillMaxWidth()
-                                    .background(colors.surface0)
-                                    .drawEdgeHairline(HairlineEdge.TOP, colors.borderSubtle)
-                                    .padding(horizontal = 16.dp, vertical = 10.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
+                            // 3. Sticky Footer
                             Row(
+                                modifier =
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .background(colors.surface0)
+                                        .drawEdgeHairline(HairlineEdge.TOP, colors.borderSubtle)
+                                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
                             ) {
-                                footerLeading?.invoke(this)
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    footerLeading?.invoke(this)
+                                }
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    content = footerActions,
+                                )
                             }
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                content = footerActions,
-                            )
                         }
                     }
+                }
+
+                if (STUDIO_MODAL_DRAWS_OWN_SCRIM) {
+                    val backdropInteraction = remember { MutableInteractionSource() }
+                    val cardConsumeInteraction = remember { MutableInteractionSource() }
+                    Box(
+                        modifier =
+                            Modifier
+                                .fillMaxSize()
+                                .background(colors.scrim)
+                                .clickable(
+                                    interactionSource = backdropInteraction,
+                                    indication = null,
+                                    onClick = onDismissRequest,
+                                ),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Box(
+                            modifier =
+                                Modifier.clickable(
+                                    interactionSource = cardConsumeInteraction,
+                                    indication = null,
+                                    onClick = {},
+                                ),
+                        ) {
+                            card()
+                        }
+                    }
+                } else {
+                    card()
                 }
             }
         }
@@ -900,7 +927,6 @@ fun StudioKeycap(
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun StudioTooltip(
     label: String?,
@@ -916,7 +942,7 @@ fun StudioTooltip(
     val typography = StudioTheme.typography
     val shape = RoundedCornerShape(StudioTheme.metrics.radiusSM)
 
-    TooltipArea(
+    PlatformStudioTooltip(
         tooltip = {
             Row(
                 modifier =
@@ -939,11 +965,6 @@ fun StudioTooltip(
                 }
             }
         },
-        delayMillis = 450,
-        tooltipPlacement =
-            TooltipPlacement.CursorPoint(
-                offset = DpOffset(0.dp, 16.dp),
-            ),
         content = content,
     )
 }

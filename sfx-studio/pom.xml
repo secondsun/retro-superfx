@@ -139,6 +139,7 @@
                         <kotlin>
                             <includes>
                                 <include>src/main/kotlin/**/*.kt</include>
+                                <include>src/desktopMain/kotlin/**/*.kt</include>
                                 <include>src/test/kotlin/**/*.kt</include>
                             </includes>
                             <ktlint />

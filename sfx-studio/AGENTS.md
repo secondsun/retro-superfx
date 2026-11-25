@@ -6,34 +6,37 @@
 
 ## 1. Project Mission & Deepened Reactor Architecture
 
-The project is structured as a 3-module Maven reactor on Java 26 and Kotlin 2.4 under root package `dev.secondsun.sfxstudio`:
+The project combines a 3-module Maven reactor (Java 26 / Kotlin 2.4 for Core, CLI/MCP, and Desktop) with a companion Gradle Android build (`sfx-studio-android`, targeting Android API 26–37.2 & ChromeOS) under root package `dev.secondsun.sfxstudio`:
 
 ```
                                  [sfx-studio-core]
              (AtlasDocument, DescriptorTable, PendingTextureImport,
-              CellPatch, LevelValidator, IsoSoftwareRenderer,
-              StudioOperations + PathPolicy)
+              ArgbImage + StudioImageCodec, CellPatch, LevelValidator,
+              IsoSoftwareRenderer, StudioOperations + PathPolicy)
                                         │
-                       ┌────────────────┴────────────────┐
-                       ▼                                 ▼
-               [sfx-studio-cli]               [sfx-studio-desktop]
-          (Thin CliMain & strict-DTO       (Compose Multiplatform GUI,
-           StudioMcpServer adapters)        StudioState + StudioPlatform)
+            ┌───────────────────────────┼───────────────────────────┐
+            ▼                           ▼                           ▼
+    [sfx-studio-cli]          [sfx-studio-desktop]        [sfx-studio-android]
+  (Thin CliMain & DTO       (Shared Compose UI +        (Android / Chromebook APK,
+   StudioMcpServer)          src/desktopMain AWT)        SAF & Material You host)
 ```
 
 ### Module Breakdown
 1. **`sfx-studio-core`**:
    - **Deepened Domain Modules**:
      - `AtlasDocument`: Immutable value module owning `.sfxproj`/`.sfxatlas` persistence, pre-write atomic validation (`saveAndExport` / `exportOnly`), standalone 15-color Median-Cut `quantizePalette()`, cascading `renameTexture`, dependent-checked `removeTexture`, `PendingTextureImport`, and `PlacementPolicy` (`STRICT_BOUNDS` vs `AUTO_GROW_MAX_256`). Low-level DTOs, `MedianCutQuantizer`, `TextureImporter`, `AtlasIndexGenerator`, and `AtlasTableGenerator` are `internal`.
+     - `ArgbImage` & `StudioImageCodec`: Pure cross-platform 32-bit `0xAARRGGBB` pixel buffer and RFC-2083 PNG codec (zero `java.awt.image.BufferedImage` or `javax.imageio.ImageIO` dependencies in `sfx-studio-core`), backed by `BitmapFactory` on Android and reflective `ImageIO` + pure-Kotlin PNG on JVM.
      - `DescriptorTable` (`DescriptorLookup = Absent | Found | Unknown`): Single canonical symbolic/numeric Texture Descriptor resolver (`<= 256` entries), stripping `TEXTURE_ID_` and `TEX_` prefixes case-insensitively and extracting sub-rectangle pixels in `O(w*h)`.
      - Pure in-process `LevelValidator`, `LevelBinarySerializer`, `IsoSoftwareRenderer`, `Ca65MapImporter`, and shared `CellPatch` (`MapGrid.applyPatches`) — zero implicit disk `atlasPath` reads inside core validators/renderers.
      - `StudioOperations(pathPolicy: PathPolicy)`: Stdio-quiet orchestration facade with `PathPolicy.UNRESTRICTED` (CLI) and `PathPolicy.sandboxed(workspaceRoot)` (MCP — enforces normalized prefix + `toRealPath()` on existing ancestors to block `../`, `doc.atlasPath`, and symlink escapes).
-   - **Strict Headless Invariant**: Zero Compose Multiplatform, Skiko, or MCP dependencies. Never writes to `System.out`.
+   - **Strict Headless Invariant**: Zero Compose Multiplatform, Skiko, AWT, or MCP dependencies. Never writes to `System.out`.
 2. **`sfx-studio-cli`**:
    - Thin adapters over `StudioOperations`: `CliMain` (`atlas` and `level` command groups, including `level set-cells` and `atlas import --auto-grow`) and `StudioMcpServer` (`sfx_pack_textures` and `sfx_manage_level` backed by strict Jackson `@JsonAlias` DTOs that reject mistyped JSON scalars).
 3. **`sfx-studio-desktop`**:
-   - Interactive Compose Multiplatform Desktop UI centered on `StudioState`, `EditorSession` (`defaultExtension`, `documentTypeLabel`), and injected `StudioPlatform` (`AwtStudioPlatform` in production, `FakeStudioPlatform` in headless unit tests).
-   - Routes all save flows polymorphically through `StudioState.saveSession` / `saveSessionAs` / `saveAllDirtySessions`, resolves live unsaved atlases across open tabs before disk (`resolveLiveOrDiskAtlas`), and surfaces command/I/O failures through `StudioState.errorMessage` plus non-blocking workspace diagnostics banners.
+   - Shared cross-platform Compose UI (`src/main/kotlin`) + Desktop JVM/AWT host (`src/desktopMain/kotlin`: `Main.kt`, `AwtStudioPlatform`, `DesktopPlatformBridge`, `PlatformAppearance`, `PlatformDpi`).
+   - Routes all save flows polymorphically through `StudioState.saveSession` / `requestSaveSession` / `saveAllDirtySessions`, resolves live unsaved atlases across open tabs before disk (`resolveLiveOrDiskAtlas`), and surfaces command/I/O failures through `StudioState.errorMessage` plus non-blocking workspace diagnostics banners.
+4. **`sfx-studio-android`**:
+   - Android & Chromebook (`resizeableActivity="true"`) application module built via `./gradlew :sfx-studio-android:assembleDebug` (or `./scripts/install-android.sh`), compiling `sfx-studio-core` and `sfx-studio-desktop/src/main/kotlin` directly with zero duplicated UI code, paired with `MainActivity`, `AndroidStudioPlatform` (Material You `system_accent1_500`, `uiMode` dark/light sync, bundled sample project seeding, and non-blocking Workspace + Android SAF document pickers), and `AndroidPlatformBridge`.
 
 ---
 
@@ -81,6 +84,11 @@ Always use the project Maven Wrapper (`./mvnw`):
 - **Launch Interactive Desktop UI**:
   ```bash
   ./scripts/sfx-studio.sh [path/to/TEXTURES.sfxproj | path/to/courtyard.sfxlevel]
+  ```
+- **Build & Install Android / Chromebook APK**:
+  ```bash
+  ./gradlew :sfx-studio-android:assembleDebug
+  ./scripts/install-android.sh
   ```
 
 ---

@@ -1,50 +1,50 @@
 package dev.secondsun.sfxstudio.desktop.ui
 
 import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.toComposeImageBitmap
 import dev.secondsun.sfxstudio.core.atlas.AtlasImageRenderer
 import dev.secondsun.sfxstudio.core.atlas.SnesPalette
 import dev.secondsun.sfxstudio.core.atlas.SourceTexture
 import dev.secondsun.sfxstudio.core.atlas.TextureAtlas
-import java.awt.image.BufferedImage
+import dev.secondsun.sfxstudio.core.image.ArgbImage
+import dev.secondsun.sfxstudio.desktop.awt.toStudioImageBitmap
 import java.io.File
 
 object TextureComposeRenderer {
     /**
-     * Renders a SourceTexture into a BufferedImage using the specified palette.
-     * Slot 0 is rendered as ARGB transparent (0x00000000).
+     * Renders a [SourceTexture] into an [ArgbImage] using the specified palette.
+     * Slot 0 is rendered as ARGB transparent (`0x00000000`).
      */
-    fun renderToBufferedImage(
+    fun renderToArgbImage(
         texture: SourceTexture,
         palette: SnesPalette,
-    ): BufferedImage = AtlasImageRenderer.renderToBufferedImage(texture, palette)
+    ): ArgbImage = AtlasImageRenderer.renderToArgbImage(texture, palette)
 
     /**
-     * Converts a SourceTexture to Compose ImageBitmap.
+     * Converts a [SourceTexture] to Compose [ImageBitmap].
      */
     fun renderToImageBitmap(
         texture: SourceTexture,
         palette: SnesPalette,
-    ): ImageBitmap = renderToBufferedImage(texture, palette).toComposeImageBitmap()
+    ): ImageBitmap = renderToArgbImage(texture, palette).toStudioImageBitmap()
 
     /**
-     * Renders the entire TextureAtlas to a BufferedImage.
+     * Renders the entire [TextureAtlas] to an [ArgbImage].
      */
-    fun renderAtlasToBufferedImage(
+    fun renderAtlasToArgbImage(
         atlas: TextureAtlas,
         palette: SnesPalette,
-    ): BufferedImage = AtlasImageRenderer.renderAtlasToBufferedImage(atlas, palette)
+    ): ArgbImage = AtlasImageRenderer.renderAtlasToArgbImage(atlas, palette)
 
     /**
-     * Converts the entire TextureAtlas to Compose ImageBitmap.
+     * Converts the entire [TextureAtlas] to Compose [ImageBitmap].
      */
     fun renderAtlasToImageBitmap(
         atlas: TextureAtlas,
         palette: SnesPalette,
-    ): ImageBitmap = renderAtlasToBufferedImage(atlas, palette).toComposeImageBitmap()
+    ): ImageBitmap = renderAtlasToArgbImage(atlas, palette).toStudioImageBitmap()
 
     /**
-     * Exports the entire TextureAtlas to a PNG file with transparency on slot 0.
+     * Exports the entire [TextureAtlas] to a PNG file with transparency on slot 0.
      */
     fun writeAtlasPng(
         atlas: TextureAtlas,

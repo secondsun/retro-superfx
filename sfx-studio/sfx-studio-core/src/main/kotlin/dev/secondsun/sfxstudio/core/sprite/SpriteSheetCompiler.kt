@@ -4,11 +4,11 @@ import dev.secondsun.sfxstudio.core.atlas.MedianCutQuantizer
 import dev.secondsun.sfxstudio.core.atlas.SnesColor
 import dev.secondsun.sfxstudio.core.atlas.SnesPalette
 import dev.secondsun.sfxstudio.core.atlas.SourceTexture
-import java.awt.image.BufferedImage
+import dev.secondsun.sfxstudio.core.image.ArgbImage
+import dev.secondsun.sfxstudio.core.image.StudioImageCodec
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import javax.imageio.ImageIO
 
 /**
  * Compilation options for [SpriteSheetCompiler].
@@ -274,13 +274,13 @@ object SpriteSheetCompiler {
     ): CompiledSpriteSheet {
         require(pngFile.exists()) { "Sprite sheet file '${pngFile.path}' does not exist" }
         val image =
-            ImageIO.read(pngFile)
+            StudioImageCodec.read(pngFile)
                 ?: throw IllegalArgumentException("Failed to decode image '${pngFile.path}'")
         return compile(image = image, name = name, spec = spec)
     }
 
     fun compile(
-        image: BufferedImage,
+        image: ArgbImage,
         name: String,
         spec: SpriteSheetSpec = SpriteSheetSpec(),
     ): CompiledSpriteSheet {
@@ -300,7 +300,7 @@ object SpriteSheetCompiler {
             "Sprite sheet frame count must be in 1..${SpriteMaskPacker.MAX_FRAMES}, got $frameCount"
         }
 
-        val hasAlpha = image.colorModel.hasAlpha()
+        val hasAlpha = image.hasAlpha
         val transparentRgbMasked = spec.transparentRgb?.and(0x00FFFFFF)
 
         // Pass 1: Extract per-frame SnesColor? grids (null = transparent, non-null = opaque BGR555)

@@ -1,12 +1,12 @@
 package dev.secondsun.sfxstudio.core.atlas
 
+import dev.secondsun.sfxstudio.core.image.ArgbImage
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
-import java.awt.image.BufferedImage
 import java.io.File
 import javax.imageio.ImageIO
 
@@ -23,8 +23,8 @@ class AtlasDocumentTest {
         w: Int,
         h: Int,
         colors: List<SnesColor>,
-    ): BufferedImage {
-        val img = BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB)
+    ): ArgbImage {
+        val img = ArgbImage(w, h)
         for (y in 0 until h) {
             for (x in 0 until w) {
                 val c = colors[(y * w + x) % colors.size]

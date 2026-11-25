@@ -149,7 +149,9 @@ class SpriteSheetCompilerTest {
     @Test
     fun testCompile16x16AndColorKeyTransparency() {
         // Opaque RGB image using magenta (0xFF00FF) as color-key transparency
-        val img = BufferedImage(16, 16, BufferedImage.TYPE_INT_RGB)
+        val img =
+            dev.secondsun.sfxstudio.core.image
+                .ArgbImage(16, 16, hasAlpha = false)
         for (y in 0 until 16) {
             for (x in 0 until 16) {
                 img.setRGB(x, y, 0xFF00FF)
@@ -178,7 +180,9 @@ class SpriteSheetCompilerTest {
 
     @Test
     fun testQuantizationAndNoQuantizeRejection() {
-        val img = BufferedImage(16, 24, BufferedImage.TYPE_INT_ARGB)
+        val img =
+            dev.secondsun.sfxstudio.core.image
+                .ArgbImage(16, 24)
         // Paint 20 distinct opaque BGR555 colors in row 0..1
         for (i in 0 until 20) {
             val r = (i * 12 + 8).coerceAtMost(248)
@@ -214,7 +218,9 @@ class SpriteSheetCompilerTest {
     fun testDeterministicExport(
         @TempDir tempDir: File,
     ) {
-        val img = BufferedImage(16, 24, BufferedImage.TYPE_INT_ARGB)
+        val img =
+            dev.secondsun.sfxstudio.core.image
+                .ArgbImage(16, 24)
         img.setRGB(3, 5, Color(100, 200, 50, 255).rgb)
         val compiled1 = SpriteSheetCompiler.compile(img, "slime")
         val compiled2 = SpriteSheetCompiler.compile(img, "slime")
