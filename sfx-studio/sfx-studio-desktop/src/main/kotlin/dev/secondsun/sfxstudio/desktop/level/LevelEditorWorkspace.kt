@@ -35,6 +35,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -63,6 +64,7 @@ import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontFamily
@@ -1587,6 +1589,13 @@ private fun Iso3DViewport(
         }
 
     val panMode = state.isPanToolActive || spacePanHeld
+    val currentRenderResult by rememberUpdatedState(renderResult)
+    val currentEditMode by rememberUpdatedState(state.editMode)
+    val currentActiveTool by rememberUpdatedState(state.activeTool)
+    val currentGameplayTool by rememberUpdatedState(state.gameplayTool)
+    val currentPanMode by rememberUpdatedState(panMode)
+    val currentIsoZoom by rememberUpdatedState(state.isoZoom)
+    val currentGrid by rememberUpdatedState(state.document.grid)
 
     Box(
         modifier =
@@ -1600,42 +1609,28 @@ private fun Iso3DViewport(
             modifier =
                 Modifier
                     .fillMaxSize()
-                    .pointerInput(
-                        renderResult,
-                        state.editMode,
-                        state.activeTool,
-                        state.gameplayTool,
-                        panMode,
-                        state.isoZoom,
-                        state.document.grid,
-                    ) {
+                    .pointerInput(Unit) {
                         detectTapGestures { pos ->
-                            if (panMode) return@detectTapGestures
+                            if (currentPanMode) return@detectTapGestures
+                            val rr = currentRenderResult
+                            val gr = currentGrid
                             val (imgX, imgY) =
                                 mapCanvasToRenderPixel(
                                     pos = pos,
                                     canvasW = size.width,
                                     canvasH = size.height,
-                                    imgW = renderResult.width,
-                                    imgH = renderResult.height,
-                                    zoom = state.isoZoom,
+                                    imgW = rr.width,
+                                    imgH = rr.height,
+                                    zoom = currentIsoZoom,
                                 )
-                            val idx = renderResult.pickCellIndex(imgX, imgY)
+                            val idx = rr.pickCellIndex(imgX, imgY)
                             if (idx >= 0) {
-                                val col = idx % state.document.grid.cols
-                                val row = idx / state.document.grid.cols
+                                val col = idx % gr.cols
+                                val row = idx / gr.cols
                                 state.handleCellInteraction(col, row, isDragContinue = false)
                             }
                         }
-                    }.pointerInput(
-                        renderResult,
-                        state.editMode,
-                        state.activeTool,
-                        state.gameplayTool,
-                        panMode,
-                        state.isoZoom,
-                        state.document.grid,
-                    ) {
+                    }.pointerInput(Unit) {
                         var dragStartCoord: Pair<Int, Int>? = null
                         var panAccumX = 0f
                         var panAccumY = 0f
@@ -1643,44 +1638,48 @@ private fun Iso3DViewport(
                             onDragStart = { pos ->
                                 panAccumX = 0f
                                 panAccumY = 0f
-                                if (panMode) return@detectDragGestures
+                                if (currentPanMode) return@detectDragGestures
+                                val rr = currentRenderResult
+                                val gr = currentGrid
                                 val (imgX, imgY) =
                                     mapCanvasToRenderPixel(
                                         pos = pos,
                                         canvasW = size.width,
                                         canvasH = size.height,
-                                        imgW = renderResult.width,
-                                        imgH = renderResult.height,
-                                        zoom = state.isoZoom,
+                                        imgW = rr.width,
+                                        imgH = rr.height,
+                                        zoom = currentIsoZoom,
                                     )
-                                val idx = renderResult.pickCellIndex(imgX, imgY)
+                                val idx = rr.pickCellIndex(imgX, imgY)
                                 if (idx >= 0) {
-                                    val c = idx % state.document.grid.cols
-                                    val r = idx / state.document.grid.cols
+                                    val c = idx % gr.cols
+                                    val r = idx / gr.cols
                                     dragStartCoord = c to r
-                                    if (state.editMode == LevelEditMode.GAMEPLAY) {
-                                        if (state.gameplayTool == GameplayTool.PAINT_WALKABILITY) {
+                                    if (currentEditMode == LevelEditMode.GAMEPLAY) {
+                                        if (currentGameplayTool == GameplayTool.PAINT_WALKABILITY) {
                                             state.beginStroke()
                                         }
                                         state.handleCellInteraction(c, r, isDragContinue = false)
-                                    } else if (state.activeTool == LevelTool.BRUSH) {
+                                    } else if (currentActiveTool == LevelTool.BRUSH) {
                                         state.beginStroke()
                                         state.paintCell(c, r, recordImmediateUndo = false)
-                                    } else if (state.activeTool == LevelTool.SELECT) {
+                                    } else if (currentActiveTool == LevelTool.SELECT) {
                                         state.selectSingleCell(c, r)
                                     }
                                 }
                             },
                             onDrag = { change, dragAmount ->
                                 change.consume()
-                                if (panMode) {
+                                val rr = currentRenderResult
+                                val gr = currentGrid
+                                if (currentPanMode) {
                                     val layout =
                                         computeIsoViewportLayout(
                                             size.width,
                                             size.height,
-                                            renderResult.width,
-                                            renderResult.height,
-                                            state.isoZoom,
+                                            rr.width,
+                                            rr.height,
+                                            currentIsoZoom,
                                         )
                                     panAccumX += dragAmount.x / layout.scale
                                     panAccumY += dragAmount.y / layout.scale
@@ -1699,19 +1698,19 @@ private fun Iso3DViewport(
                                         pos = change.position,
                                         canvasW = size.width,
                                         canvasH = size.height,
-                                        imgW = renderResult.width,
-                                        imgH = renderResult.height,
-                                        zoom = state.isoZoom,
+                                        imgW = rr.width,
+                                        imgH = rr.height,
+                                        zoom = currentIsoZoom,
                                     )
-                                val idx = renderResult.pickCellIndex(imgX, imgY)
+                                val idx = rr.pickCellIndex(imgX, imgY)
                                 if (idx >= 0) {
-                                    val c = idx % state.document.grid.cols
-                                    val r = idx / state.document.grid.cols
-                                    if (state.editMode == LevelEditMode.GAMEPLAY) {
+                                    val c = idx % gr.cols
+                                    val r = idx / gr.cols
+                                    if (currentEditMode == LevelEditMode.GAMEPLAY) {
                                         state.handleCellInteraction(c, r, isDragContinue = true)
-                                    } else if (state.activeTool == LevelTool.BRUSH) {
+                                    } else if (currentActiveTool == LevelTool.BRUSH) {
                                         state.paintCell(c, r, recordImmediateUndo = false)
-                                    } else if (state.activeTool == LevelTool.SELECT) {
+                                    } else if (currentActiveTool == LevelTool.SELECT) {
                                         val start = dragStartCoord ?: (c to r)
                                         state.selectRect(start.first, start.second, c, r)
                                     }
@@ -2106,6 +2105,21 @@ private fun TopDownGridViewport(
             fontWeight = FontWeight.SemiBold,
         )
 
+    val currentGrid by rememberUpdatedState(grid)
+    val currentEditMode by rememberUpdatedState(state.editMode)
+    val currentActiveTool by rememberUpdatedState(state.activeTool)
+    val currentGameplayTool by rememberUpdatedState(state.gameplayTool)
+    val currentPanMode by rememberUpdatedState(panMode)
+    val currentGridZoom by rememberUpdatedState(state.gridZoom)
+    val currentGridPanOffset by rememberUpdatedState(state.gridPanOffset)
+    var gridCanvasSize by remember { mutableStateOf(IntSize.Zero) }
+
+    LaunchedEffect(state.gridZoom, grid.cols, grid.rows, gridCanvasSize) {
+        if (gridCanvasSize.width > 0 && gridCanvasSize.height > 0) {
+            state.clampGridPan(gridCanvasSize.width, gridCanvasSize.height)
+        }
+    }
+
     Box(
         modifier =
             Modifier
@@ -2118,91 +2132,83 @@ private fun TopDownGridViewport(
             modifier =
                 Modifier
                     .fillMaxSize()
-                    .pointerInput(
-                        grid,
-                        state.editMode,
-                        state.activeTool,
-                        state.gameplayTool,
-                        panMode,
-                        state.gridZoom,
-                        state.gridPanOffset,
-                    ) {
+                    .onSizeChanged { sz ->
+                        gridCanvasSize = sz
+                        if (sz.width > 0 && sz.height > 0) {
+                            state.clampGridPan(sz.width, sz.height)
+                        }
+                    }.pointerInput(Unit) {
                         detectTapGestures { pos ->
-                            if (panMode) return@detectTapGestures
+                            if (currentPanMode) return@detectTapGestures
+                            val gr = currentGrid
                             val coord =
                                 mapCanvasToGridCoord(
                                     pos = pos,
                                     canvasW = size.width,
                                     canvasH = size.height,
-                                    cols = grid.cols,
-                                    rows = grid.rows,
-                                    zoom = state.gridZoom,
-                                    panOffset = state.gridPanOffset,
+                                    cols = gr.cols,
+                                    rows = gr.rows,
+                                    zoom = currentGridZoom,
+                                    panOffset = currentGridPanOffset,
                                 )
                             if (coord != null) {
                                 state.handleCellInteraction(coord.first, coord.second, isDragContinue = false)
                             }
                         }
-                    }.pointerInput(
-                        grid,
-                        state.editMode,
-                        state.activeTool,
-                        state.gameplayTool,
-                        panMode,
-                        state.gridZoom,
-                        state.gridPanOffset,
-                    ) {
+                    }.pointerInput(Unit) {
                         var startCoord: Pair<Int, Int>? = null
                         detectDragGestures(
                             onDragStart = { pos ->
-                                if (panMode) return@detectDragGestures
+                                if (currentPanMode) return@detectDragGestures
+                                val gr = currentGrid
                                 val coord =
                                     mapCanvasToGridCoord(
                                         pos = pos,
                                         canvasW = size.width,
                                         canvasH = size.height,
-                                        cols = grid.cols,
-                                        rows = grid.rows,
-                                        zoom = state.gridZoom,
-                                        panOffset = state.gridPanOffset,
+                                        cols = gr.cols,
+                                        rows = gr.rows,
+                                        zoom = currentGridZoom,
+                                        panOffset = currentGridPanOffset,
                                     )
                                 if (coord != null) {
                                     startCoord = coord
-                                    if (state.editMode == LevelEditMode.GAMEPLAY) {
-                                        if (state.gameplayTool == GameplayTool.PAINT_WALKABILITY) {
+                                    if (currentEditMode == LevelEditMode.GAMEPLAY) {
+                                        if (currentGameplayTool == GameplayTool.PAINT_WALKABILITY) {
                                             state.beginStroke()
                                         }
                                         state.handleCellInteraction(coord.first, coord.second, isDragContinue = false)
-                                    } else if (state.activeTool == LevelTool.BRUSH) {
+                                    } else if (currentActiveTool == LevelTool.BRUSH) {
                                         state.beginStroke()
                                         state.paintCell(coord.first, coord.second, recordImmediateUndo = false)
-                                    } else if (state.activeTool == LevelTool.SELECT) {
+                                    } else if (currentActiveTool == LevelTool.SELECT) {
                                         state.selectSingleCell(coord.first, coord.second)
                                     }
                                 }
                             },
                             onDrag = { change, dragAmount ->
                                 change.consume()
-                                if (panMode) {
-                                    state.panGridBy(dragAmount)
+                                if (currentPanMode) {
+                                    state.panGridBy(dragAmount, canvasW = size.width, canvasH = size.height)
                                     return@detectDragGestures
                                 }
+                                val gr = currentGrid
                                 val coord =
                                     mapCanvasToGridCoord(
                                         pos = change.position,
                                         canvasW = size.width,
                                         canvasH = size.height,
-                                        cols = grid.cols,
-                                        rows = grid.rows,
-                                        zoom = state.gridZoom,
-                                        panOffset = state.gridPanOffset,
+                                        cols = gr.cols,
+                                        rows = gr.rows,
+                                        zoom = currentGridZoom,
+                                        panOffset = currentGridPanOffset,
                                     )
                                 if (coord != null) {
-                                    if (state.editMode == LevelEditMode.GAMEPLAY) {
+                                    if (currentEditMode == LevelEditMode.GAMEPLAY) {
                                         state.handleCellInteraction(coord.first, coord.second, isDragContinue = true)
-                                    } else if (state.activeTool == LevelTool.BRUSH) {
+                                    } else if (currentActiveTool == LevelTool.BRUSH) {
                                         state.paintCell(coord.first, coord.second, recordImmediateUndo = false)
-                                    } else if (state.activeTool == LevelTool.SELECT) {
+                                    } else if (currentActiveTool == LevelTool.SELECT) {
                                         val s = startCoord ?: coord
                                         state.selectRect(s.first, s.second, coord.first, coord.second)
                                     }

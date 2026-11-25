@@ -165,6 +165,28 @@ internal data class GridViewportLayout(
     val totalH: Float,
 )
 
+internal fun computeGridPanBounds(
+    canvasW: Int,
+    canvasH: Int,
+    cols: Int,
+    rows: Int,
+    zoom: Float = 0f,
+    rulerLeft: Float = 20f,
+    rulerTop: Float = 16f,
+): Offset {
+    val safeCols = cols.coerceAtLeast(1)
+    val safeRows = rows.coerceAtLeast(1)
+    val availW = (canvasW - rulerLeft - 8f).coerceAtLeast(48f)
+    val availH = (canvasH - rulerTop - 24f).coerceAtLeast(48f)
+    val fitCellPix = minOf(availW / safeCols, availH / safeRows).coerceAtLeast(12f)
+    val cellPix = if (zoom <= 0f) fitCellPix else (fitCellPix * zoom.coerceIn(0.5f, 6f)).coerceAtLeast(12f)
+    val totalW = cellPix * safeCols
+    val totalH = cellPix * safeRows
+    val maxPanX = ((totalW - availW) / 2f).coerceAtLeast(0f)
+    val maxPanY = ((totalH - availH) / 2f).coerceAtLeast(0f)
+    return Offset(maxPanX, maxPanY)
+}
+
 internal fun computeGridViewportLayout(
     canvasW: Int,
     canvasH: Int,
@@ -1721,12 +1743,55 @@ class LevelEditorState(
         camZQ6 = 0
     }
 
-    fun panGridBy(delta: Offset) {
-        gridPanOffset =
+    fun panGridBy(
+        delta: Offset,
+        canvasW: Int? = null,
+        canvasH: Int? = null,
+    ) {
+        val next =
             Offset(
                 x = (gridPanOffset.x + delta.x).coerceIn(-MAX_GRID_PAN_PX, MAX_GRID_PAN_PX),
                 y = (gridPanOffset.y + delta.y).coerceIn(-MAX_GRID_PAN_PX, MAX_GRID_PAN_PX),
             )
+        if (canvasW != null && canvasH != null) {
+            val bounds =
+                computeGridPanBounds(
+                    canvasW = canvasW,
+                    canvasH = canvasH,
+                    cols = document.grid.cols,
+                    rows = document.grid.rows,
+                    zoom = gridZoom,
+                )
+            gridPanOffset =
+                Offset(
+                    x = next.x.coerceIn(-bounds.x, bounds.x),
+                    y = next.y.coerceIn(-bounds.y, bounds.y),
+                )
+        } else {
+            gridPanOffset = next
+        }
+    }
+
+    fun clampGridPan(
+        canvasW: Int,
+        canvasH: Int,
+    ) {
+        val bounds =
+            computeGridPanBounds(
+                canvasW = canvasW,
+                canvasH = canvasH,
+                cols = document.grid.cols,
+                rows = document.grid.rows,
+                zoom = gridZoom,
+            )
+        val clamped =
+            Offset(
+                x = gridPanOffset.x.coerceIn(-bounds.x, bounds.x),
+                y = gridPanOffset.y.coerceIn(-bounds.y, bounds.y),
+            )
+        if (clamped != gridPanOffset) {
+            gridPanOffset = clamped
+        }
     }
 
     fun resetGridView() {

@@ -4,6 +4,8 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.ImageComposeScene
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
 import dev.secondsun.sfxstudio.core.atlas.AtlasDocument
@@ -674,6 +676,100 @@ class LevelEditorStateTest {
         assertEquals(0f, level.gridZoom)
         assertEquals(Offset.Zero, level.gridPanOffset)
         assertNotNull(mapCanvasToGridCoord(Offset(300f, 250f), 600, 500, 8, 8))
+    }
+
+    @Test
+    fun testContinuousTouchPanAndGridFitClamp(
+        @TempDir tempDir: File,
+    ) {
+        val atlasFile = createAtlasOnDisk(tempDir)
+        val studio = StudioState(platform = FakeStudioPlatform())
+        val level =
+            studio.newLevelSession(
+                name = "touch_pan_test",
+                atlasFile = atlasFile,
+                cols = 12,
+                rows = 12,
+            )
+
+        // 1. When full grid fits in viewport (Fit = 0f), panGridBy must stay at Offset.Zero
+        level.gridZoom = 0f
+        level.panGridBy(Offset(150f, 120f), canvasW = 600, canvasH = 800)
+        assertEquals(Offset.Zero, level.gridPanOffset, "2D Grid must not pan when entire grid fits in view")
+
+        // When zoomed in (2x), panGridBy must allow panning within overflow bounds
+        level.gridZoom = 2f
+        level.panGridBy(Offset(80f, -60f), canvasW = 600, canvasH = 800)
+        assertTrue(level.gridPanOffset.x > 50f, "2D Grid should pan when zoomed in 2x")
+
+        level.resetGridView()
+        level.resetCamera()
+        level.activeTool = LevelTool.PAN
+
+        // 2. Drive real multi-step touch drag through ImageComposeScene on 3D Iso & 2D Grid
+        val scene = ImageComposeScene(width = 1600, height = 960, density = Density(1f))
+        try {
+            scene.setContent {
+                StudioRootContent(studioState = studio)
+            }
+            scene.render()
+
+            fun sendTouchDrag(
+                startX: Float,
+                startY: Float,
+                deltaX: Float,
+                deltaY: Float,
+                steps: Int = 15,
+            ) {
+                scene.sendPointerEvent(
+                    eventType = PointerEventType.Press,
+                    position = Offset(startX, startY),
+                    type = PointerType.Touch,
+                )
+                scene.render()
+                for (i in 1..steps) {
+                    val t = i.toFloat() / steps.toFloat()
+                    scene.sendPointerEvent(
+                        eventType = PointerEventType.Move,
+                        position = Offset(startX + deltaX * t, startY + deltaY * t),
+                        type = PointerType.Touch,
+                    )
+                    scene.render()
+                }
+                scene.sendPointerEvent(
+                    eventType = PointerEventType.Release,
+                    position = Offset(startX + deltaX, startY + deltaY),
+                    type = PointerType.Touch,
+                )
+                scene.render()
+            }
+
+            // Drag 300px right in 3D Iso viewport (left half of split stage)
+            sendTouchDrag(startX = 360f, startY = 480f, deltaX = 300f, deltaY = 0f)
+            assertTrue(
+                level.cameraPanX >= 30,
+                "3D Iso drag should pan continuously (expected >= 30px, got ${level.cameraPanX})",
+            )
+
+            // Drag 250px right in 2D Grid viewport while Fit (gridZoom == 0f): must remain at Zero
+            sendTouchDrag(startX = 860f, startY = 480f, deltaX = 250f, deltaY = 0f)
+            assertEquals(
+                Offset.Zero,
+                level.gridPanOffset,
+                "2D Grid should not move on drag when full grid fits in view",
+            )
+
+            // Zoom 2D Grid to 2x and drag 220px right: must pan continuously beyond touch slop
+            level.gridZoom = 2f
+            scene.render()
+            sendTouchDrag(startX = 860f, startY = 480f, deltaX = 220f, deltaY = 0f)
+            assertTrue(
+                level.gridPanOffset.x >= 100f,
+                "Zoomed 2D Grid drag should pan continuously (expected >= 100px, got ${level.gridPanOffset.x})",
+            )
+        } finally {
+            scene.close()
+        }
     }
 
     @Test
